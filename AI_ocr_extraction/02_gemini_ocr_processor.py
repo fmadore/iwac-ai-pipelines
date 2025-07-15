@@ -6,7 +6,7 @@ It's specialized for French newspaper articles and produces research-grade text 
 with proper formatting, typography, and layout preservation.
 
 Usage:
-    python 02_OCR_Gemini.py
+    python 02_gemini_ocr_processor.py
 
 Requirements:
     - Environment variable: GEMINI_API_KEY
@@ -35,10 +35,13 @@ Image.MAX_IMAGE_PIXELS = None  # Disable decompression bomb check for our legiti
 ImageFile.LOAD_TRUNCATED_IMAGES = True  # Handle potentially truncated image files
 
 # Set up logging configuration for tracking OCR operations and errors
+# Save log file in the same directory as the script
+script_dir = Path(__file__).parent
+log_file = script_dir / 'ocr_gemini.log'
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='ocr_gemini.log'
+    filename=log_file
 )
 
 # Suppress PIL DecompressionBombWarning for our legitimate high-DPI newspaper images
