@@ -1,5 +1,5 @@
 .venv
 .env
 
-AI_ocr_correction_pipeline/Corrected_TXT
-AI_ocr_correction_pipeline/TXT
+AI_ocr_correction/Corrected_TXT
+AI_ocr_correction/TXT
