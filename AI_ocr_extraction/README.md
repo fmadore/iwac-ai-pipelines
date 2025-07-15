@@ -6,9 +6,9 @@ This pipeline provides a complete workflow for downloading PDFs from an Omeka S 
 
 The pipeline consists of three main scripts that work together:
 
-1. **`01_PDF_download.py`** - Downloads PDF files from Omeka S collections
-2. **`02_OCR_Gemini.py`** - Performs AI-powered OCR on PDFs using Google Gemini
-3. **`03_update_database.py`** - Updates Omeka S items with extracted text content
+1. **`01_omeka_pdf_downloader.py`** - Downloads PDF files from Omeka S collections
+2. **`02_gemini_ocr_processor.py`** - Performs AI-powered OCR on PDFs using Google Gemini
+3. **`03_omeka_content_updater.py`** - Updates Omeka S items with extracted text content
 
 ## Features
 
@@ -69,7 +69,7 @@ GEMINI_API_KEY=your_gemini_api_key
 ### Step 1: Download PDFs
 
 ```bash
-python 01_PDF_download.py
+python 01_omeka_pdf_downloader.py
 ```
 
 - Prompts for Omeka S item set ID
@@ -80,7 +80,7 @@ python 01_PDF_download.py
 ### Step 2: Perform OCR
 
 ```bash
-python 02_OCR_Gemini.py
+python 02_gemini_ocr_processor.py
 ```
 
 - Choose between Gemini 2.5 Flash (faster) or Pro (more accurate)
@@ -91,7 +91,7 @@ python 02_OCR_Gemini.py
 ### Step 3: Update Database
 
 ```bash
-python 03_update_database.py
+python 03_omeka_content_updater.py
 ```
 
 - Reads all `.txt` files from `OCR_Results/`
@@ -102,9 +102,9 @@ python 03_update_database.py
 
 ```
 AI_ocr_extraction/
-├── 01_PDF_download.py          # PDF download script
-├── 02_OCR_Gemini.py            # OCR processing script
-├── 03_update_database.py       # Database update script
+├── 01_omeka_pdf_downloader.py  # PDF download script
+├── 02_gemini_ocr_processor.py  # OCR processing script
+├── 03_omeka_content_updater.py # Database update script
 ├── ocr_system_prompt.md        # OCR system prompt configuration
 ├── README.md                   # This documentation
 ├── PDF/                        # Downloaded PDF files
