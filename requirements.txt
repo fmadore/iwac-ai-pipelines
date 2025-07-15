@@ -1,0 +1,7 @@
+google-genai
+python-dotenv
+tqdm
+requests
+urllib3
+pdf2image
+Pillow
