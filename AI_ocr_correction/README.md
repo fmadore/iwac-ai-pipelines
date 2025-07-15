@@ -51,7 +51,7 @@ The OCR post-correction pipeline processes raw OCR text extracted from Omeka S i
 ## Directory Structure
 
 ```
-AI_ocr_postcorrection/
+AI_ocr_correction_pipeline/
 ├── 01_extract_ocr_text.py          # Step 1: Extract raw OCR text
 ├── 02_correct_ocr_text.py          # Step 2: AI-powered correction
 ├── 03_update_database.py           # Step 3: Update database
@@ -70,7 +70,12 @@ AI_ocr_postcorrection/
 ## Setup
 
 1. **Environment Configuration**:
-   Create a `.env` file in the parent directory with:
+   Copy the example environment file and configure your API credentials:
+   ```bash
+   cp ../.env.example ../.env
+   ```
+   
+   Edit the `.env` file in the parent directory with your actual values:
    ```env
    OMEKA_BASE_URL=https://your-omeka-instance.com/api
    OMEKA_KEY_IDENTITY=your_key_identity
