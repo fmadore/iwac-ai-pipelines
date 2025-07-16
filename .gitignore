@@ -55,6 +55,8 @@ AI_ocr_correction/Corrected_TXT/
 AI_ocr_correction/TXT/
 AI_ocr_extraction/OCR_Results/
 AI_ocr_extraction/PDF/
+AI_summary/Summaries_FR_TXT/
+AI_summary/TXT/
 
 # Temporary files
 *.tmp
