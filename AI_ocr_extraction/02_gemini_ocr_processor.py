@@ -35,9 +35,11 @@ Image.MAX_IMAGE_PIXELS = None  # Disable decompression bomb check for our legiti
 ImageFile.LOAD_TRUNCATED_IMAGES = True  # Handle potentially truncated image files
 
 # Set up logging configuration for tracking OCR operations and errors
-# Save log file in the same directory as the script
+# Save log file in a dedicated log directory
 script_dir = Path(__file__).parent
-log_file = script_dir / 'ocr_gemini.log'
+log_dir = script_dir / 'log'
+log_dir.mkdir(exist_ok=True)
+log_file = log_dir / 'ocr_gemini.log'
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
