@@ -265,7 +265,11 @@ def setup_logging(script_dir: Path) -> None:
     Args:
         script_dir (Path): Directory where the log file should be created
     """
-    log_file = script_dir / 'pdf_download.log'
+    # Create log directory if it doesn't exist
+    log_dir = script_dir / 'log'
+    log_dir.mkdir(exist_ok=True)
+    
+    log_file = log_dir / 'pdf_download.log'
     logging.basicConfig(
         level=logging.INFO,
         filename=log_file,
