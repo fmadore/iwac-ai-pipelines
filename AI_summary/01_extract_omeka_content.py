@@ -1,6 +1,30 @@
 """
-This script retrieves OCR text from items in an Omeka S database and saves them as individual text files.
-It handles pagination, concurrent processing, and includes error handling and logging functionality.
+This script extracts OCR text content from items in an Omeka S database and saves them as individual text files.
+
+WORKFLOW:
+1. Connects to Omeka S API using environment credentials
+2. Prompts user for item set ID(s) to process
+3. Fetches all items from specified item sets using pagination
+4. Extracts OCR text from the 'bibo:content' field of each item
+5. Saves extracted content as individual .txt files in the TXT/ directory
+6. Provides detailed progress tracking and error reporting
+
+FEATURES:
+- Concurrent processing using thread pools for improved performance
+- Automatic retry mechanisms for API failures
+- Progress bars for user feedback
+- Comprehensive error handling and logging
+- Skips items with no OCR content
+- Preserves item IDs as filenames for downstream processing
+
+REQUIREMENTS:
+- Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
+- Items in Omeka S must have OCR text in the 'bibo:content' field
+- Network access to the Omeka S API endpoint
+
+OUTPUT:
+- Text files named {item_id}.txt in the TXT/ directory
+- Each file contains the OCR text content from the corresponding Omeka S item
 """
 
 import requests
@@ -12,20 +36,22 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
-# Configuration constants
-BASE_URL = os.getenv('OMEKA_BASE_URL')  # Base URL for the Omeka S API
-KEY_IDENTITY = os.getenv('OMEKA_KEY_IDENTITY')  # API key identity
-KEY_CREDENTIAL = os.getenv('OMEKA_KEY_CREDENTIAL')  # API key credential
+# Configuration constants for Omeka S API access
+BASE_URL = os.getenv('OMEKA_BASE_URL')  # Base URL for the Omeka S API (e.g., https://example.com/api)
+KEY_IDENTITY = os.getenv('OMEKA_KEY_IDENTITY')  # API key identity for authentication
+KEY_CREDENTIAL = os.getenv('OMEKA_KEY_CREDENTIAL')  # API key credential for authentication
 
-# Output directory is set relative to the script's location for portability
+# Directory configuration - output directory is relative to script location for portability
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TXT")
-ITEMS_PER_PAGE = 100  # Number of items to fetch per API request
-MAX_WORKERS = 5  # Maximum number of concurrent threads for processing
 
-# Configure logging to track script execution and errors
+# Performance and pagination configuration
+ITEMS_PER_PAGE = 100  # Number of items to fetch per API request (max: 100)
+MAX_WORKERS = 5  # Maximum number of concurrent threads for processing items
+
+# Configure logging to track script execution, errors, and progress
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
@@ -41,14 +67,17 @@ class ItemFetcher:
         """
         Initialize the ItemFetcher with API endpoint and output location.
         
+        Sets up the HTTP session with retry capabilities and configures
+        authentication parameters for Omeka S API access.
+        
         Args:
-            base_url (str): The base URL of the Omeka S API
+            base_url (str): The base URL of the Omeka S API (e.g., 'https://example.com/api')
             output_dir (str): Directory where extracted text files will be saved
         """
         self.base_url = base_url
         self.output_dir = output_dir
         self.session = self.create_session()
-        # Add authentication parameters
+        # Authentication parameters for all API requests
         self.auth_params = {
             'key_identity': KEY_IDENTITY,
             'key_credential': KEY_CREDENTIAL
@@ -59,12 +88,24 @@ class ItemFetcher:
         """
         Create a requests session with retry mechanism for robust API communication.
         
+        Configures automatic retries for common HTTP errors (5xx server errors)
+        with exponential backoff to handle temporary network issues gracefully.
+        
         Returns:
             requests.Session: Configured session object with retry capabilities
+            
+        Retry Configuration:
+            - Total retries: 5
+            - Backoff factor: 0.1 (exponential backoff)
+            - Status codes for retry: 500, 502, 503, 504 (server errors)
         """
         session = requests.Session()
-        # Configure automatic retries for failed requests
-        retries = Retry(total=5, backoff_factor=0.1, status_forcelist=[500, 502, 503, 504])
+        # Configure automatic retries for failed requests with exponential backoff
+        retries = Retry(
+            total=5,  # Maximum number of retry attempts
+            backoff_factor=0.1,  # Exponential backoff factor
+            status_forcelist=[500, 502, 503, 504]  # HTTP status codes to retry on
+        )
         session.mount('https://', HTTPAdapter(max_retries=retries))
         return session
 
@@ -106,35 +147,56 @@ class ItemFetcher:
 
     def extract_and_save_content(self, item):
         """
-        Extract OCR text from an item and save it to a file.
-        Skips items that don't have any content in bibo:content.
+        Extract OCR text from an Omeka S item and save it to a text file.
+        
+        This method processes individual items to extract OCR content from the
+        'bibo:content' field and saves it as a .txt file using the item ID as filename.
+        Items without content are skipped to avoid creating empty files.
         
         Args:
-            item (dict): Item data containing OCR text
+            item (dict): Item data dictionary from Omeka S API containing OCR text
             
         Returns:
             tuple: (item_id, success_status, skipped_status)
+                - item_id (str): The Omeka S item identifier
+                - success_status (bool): True if file was successfully created
+                - skipped_status (bool): True if item was skipped (no content)
+                
+        Content Processing:
+            1. Extracts item ID from 'o:id' field
+            2. Looks for OCR content in 'bibo:content' field
+            3. Filters out empty content values
+            4. Joins multiple content blocks with newlines
+            5. Saves to {item_id}.txt in the output directory
         """
         item_id = item["o:id"]
         
+        # Extract OCR text from the bibo:content field
         extracted_text = item.get("bibo:content", [])
-        content_values = [content["@value"] for content in extracted_text if "@value" in content and content["@value"].strip()]
+        # Filter out empty content and extract @value fields
+        content_values = [
+            content["@value"] 
+            for content in extracted_text 
+            if "@value" in content and content["@value"].strip()
+        ]
         
-        # Skip if no content is found
+        # Skip items with no OCR content to avoid creating empty files
         if not content_values:
             logging.info(f"Skipping item {item_id}: No content in bibo:content")
-            return item_id, False, True  # item_id, success, skipped
+            return item_id, False, True  # item_id, success=False, skipped=True
         
+        # Join multiple content blocks with newlines
         content_text = "\n".join(content_values)
         file_name = os.path.join(self.output_dir, f"{item_id}.txt")
 
         try:
+            # Save OCR content to text file with UTF-8 encoding
             with open(file_name, "w", encoding="utf-8") as file:
                 file.write(content_text)
-            return item_id, True, False  # item_id, success, not skipped
+            return item_id, True, False  # item_id, success=True, skipped=False
         except IOError as e:
             logging.error(f"Error writing file for item {item_id}: {e}")
-            return item_id, False, False  # item_id, not success, not skipped
+            return item_id, False, False  # item_id, success=False, skipped=False
 
     def process_items(self, items):
         """
