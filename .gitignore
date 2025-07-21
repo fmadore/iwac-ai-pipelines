@@ -48,7 +48,7 @@ Thumbs.db
 *.log
 AI_ocr_extraction/pdf_download.log
 AI_ocr_extraction/ocr_gemini.log
-AI_ocr_correction/*.log
+AI_ocr_correction/log
 
 # Output directories
 AI_NER/output/
