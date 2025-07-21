@@ -51,6 +51,7 @@ AI_ocr_extraction/ocr_gemini.log
 AI_ocr_correction/*.log
 
 # Output directories
+AI_NER/output/
 AI_ocr_correction/Corrected_TXT/
 AI_ocr_correction/TXT/
 AI_ocr_extraction/OCR_Results/
