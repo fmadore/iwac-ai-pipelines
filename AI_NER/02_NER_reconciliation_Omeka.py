@@ -321,56 +321,44 @@ def main():
         logger.info(f"Spatial reconciliation step complete. Main data at: {reconciled_after_spatial_path}")
         current_input_path = reconciled_after_spatial_path # Output of this step is input for the next
 
-        # 2. Subject Reconciliation
-        logger.info("--- Starting Subject Reconciliation ---")
+        # 2. Subject and Topic Reconciliation (Combined)
+        logger.info("--- Starting Combined Subject and Topic Reconciliation ---")
+        
+        # Build Subject authority dictionary
         subject_authority_item_sets = ["854", "2", "266"]
         logger.info(f"Building SUBJECT authority dictionary from item set(s): {subject_authority_item_sets}...")
-        subject_authority_dict, subject_ambiguous_dict = build_authority_dict(subject_authority_item_sets) # Capture both dicts
+        subject_authority_dict, subject_ambiguous_dict = build_authority_dict(subject_authority_item_sets)
         logger.info(f"SUBJECT authority dictionary built with {len(subject_authority_dict)} terms. Found {len(subject_ambiguous_dict)} ambiguous terms.")
 
-        # Write ambiguous subject terms
-        ambiguous_subject_tag = "subject"
-        ambiguous_subject_path = f"{initial_csv_base}_ambiguous_authorities_{ambiguous_subject_tag}.csv"
-        write_ambiguous_terms_to_file(subject_ambiguous_dict, ambiguous_subject_path)
-
-        logger.info(f"Processing SUBJECT reconciliation for column 'Subject AI'. Input: {current_input_path}, Output: {final_reconciled_csv_path}")
-        reconciled_after_subject_path = reconcile_column_values(
-            input_csv_path=current_input_path, 
-            output_reconciled_csv_path=final_reconciled_csv_path, 
-            authority_dict=subject_authority_dict,
-            source_column_name="Subject AI",
-            target_column_name="Subject AI Reconciled ID",
-            initial_csv_base_for_unreconciled=initial_csv_base, # Base for unreconciled file name
-            output_file_tag="subject",
-            ambiguous_authority_dict=subject_ambiguous_dict # Pass ambiguous dict
-        )
-        logger.info(f"Subject reconciliation step complete. Main data at: {reconciled_after_subject_path}")
-        current_input_path = reconciled_after_subject_path # Output of this step is input for the next
-
-        # 3. Topic Reconciliation
-        logger.info("--- Starting Topic Reconciliation ---")
+        # Build Topic authority dictionary
         topic_authority_item_sets = ["1"]
         logger.info(f"Building TOPIC authority dictionary from item set(s): {topic_authority_item_sets}...")
-        topic_authority_dict, topic_ambiguous_dict = build_authority_dict(topic_authority_item_sets) # Capture both dicts
+        topic_authority_dict, topic_ambiguous_dict = build_authority_dict(topic_authority_item_sets)
         logger.info(f"TOPIC authority dictionary built with {len(topic_authority_dict)} terms. Found {len(topic_ambiguous_dict)} ambiguous terms.")
 
-        # Write ambiguous topic terms
-        ambiguous_topic_tag = "topic"
-        ambiguous_topic_path = f"{initial_csv_base}_ambiguous_authorities_{ambiguous_topic_tag}.csv"
-        write_ambiguous_terms_to_file(topic_ambiguous_dict, ambiguous_topic_path)
+        # Combine both authority dictionaries for unified reconciliation
+        combined_authority_dict = {**subject_authority_dict, **topic_authority_dict}
+        combined_ambiguous_dict = {**subject_ambiguous_dict, **topic_ambiguous_dict}
+        logger.info(f"Combined authority dictionary has {len(combined_authority_dict)} unique terms.")
+        logger.info(f"Combined ambiguous terms: {len(combined_ambiguous_dict)} terms.")
 
-        logger.info(f"Processing TOPIC reconciliation for column 'Subject AI'. Input: {current_input_path}, Output: {final_reconciled_csv_path}")
+        # Write combined ambiguous terms
+        ambiguous_subject_tag = "subject_and_topic"
+        ambiguous_subject_path = f"{initial_csv_base}_ambiguous_authorities_{ambiguous_subject_tag}.csv"
+        write_ambiguous_terms_to_file(combined_ambiguous_dict, ambiguous_subject_path)
+
+        logger.info(f"Processing combined SUBJECT+TOPIC reconciliation for column 'Subject AI'. Input: {current_input_path}, Output: {final_reconciled_csv_path}")
         final_reconciled_path = reconcile_column_values(
             input_csv_path=current_input_path, 
             output_reconciled_csv_path=final_reconciled_csv_path, 
-            authority_dict=topic_authority_dict,
+            authority_dict=combined_authority_dict,
             source_column_name="Subject AI",
-            target_column_name="Topic AI Reconciled ID",
+            target_column_name="Subject AI Reconciled ID",
             initial_csv_base_for_unreconciled=initial_csv_base, # Base for unreconciled file name
-            output_file_tag="topic",
-            ambiguous_authority_dict=topic_ambiguous_dict # Pass ambiguous dict
+            output_file_tag="subject_and_topic",
+            ambiguous_authority_dict=combined_ambiguous_dict # Pass combined ambiguous dict
         )
-        logger.info(f"Topic reconciliation step complete. Final reconciled data at: {final_reconciled_path}")
+        logger.info(f"Combined subject and topic reconciliation complete. Final reconciled data at: {final_reconciled_path}")
         logger.info(f"--- Reconciliation Process Finished ---")
         
     except requests.exceptions.HTTPError as http_err:
