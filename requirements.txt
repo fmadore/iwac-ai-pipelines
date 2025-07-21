@@ -5,3 +5,5 @@ requests
 urllib3
 pdf2image
 Pillow
+ratelimit
+tenacity
