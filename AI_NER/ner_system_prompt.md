@@ -39,18 +39,23 @@ Effectuer la reconnaissance et la catégorisation des entités nommées à parti
 * **Exclusions :** Exclure les continents (Afrique, Europe) et les sous-régions larges (Afrique de l'Ouest, Afrique subsaharienne, Sahel)
 
 ### 4. Catégorie : Sujets
-* **Format :** Extraire les concepts, thèmes et sujets de discussion importants liés à l'islam et à la société
+* **Format :** Extraire UNIQUEMENT les mots-clés simples et généraux (maximum 5-8 sujets par texte). Privilégier les termes de base plutôt que les expressions complexes.
+* **Instructions :**
+   * Utiliser des mots simples, pas d'expressions longues
+   * Maximum 8 sujets par texte pour éviter la surcharge
+   * Éviter les termes trop abstraits ou techniques
+   * Préférer les concepts généraux aux détails spécifiques
 * **Types de sujets à identifier :**
-   * Concepts religieux : Fiqh, Sharia, Sunna, Bid'a, Tawhid, Zakat, Hajj
-   * Pratiques sociales : mariage, divorce, polygamie, abstinence, jeûne
-   * Phénomènes sociopolitiques : laïcité, djihadisme, radicalisation, extrémisme
-   * Mouvements religieux : salafisme, soufisme, wahhabisme, tabligh
-   * Questions sociétales : démocratie, éducation islamique, droits des femmes, vie chère, environnement
-   * Organisations non formelles : secte, confrérie, mouvement
+   * Religion : islam, christianisme, fiqh, sharia, hajj, ramadan, prière, zakat, sunna, bidah, tawhid, salafisme, soufisme, wahhabisme, tabligh, imam, mosquée, confrérie
+   * Société : mariage, divorce, éducation, jeunesse, femmes, famille, polygamie, jeûne, abstinence
+   * Politique : laïcité, démocratie, gouvernement, élections, conflit, djihadisme, radicalisation, extrémisme
+   * Économie : commerce, agriculture, pauvreté, développement, vie chère
+   * Social : tribalisme, division, unité, tradition, modernité, environnement
 * **Exemples :**
-   * "le débat sur la laïcité" → "laïcité"
-   * "la question du mariage précoce" → "mariage précoce"
-   * "les principes du Fiqh malékite" → "Fiqh malékite"
+   * "Politique de division" → "division"
+   * "débat sur la laïcité dans l'éducation" → "laïcité, éducation"
+   * "questions du mariage précoce et des droits des femmes" → "mariage, femmes"
+   * "Principes Intangibles de la République" → "démocratie"
 
 ## Format de sortie attendu
 
