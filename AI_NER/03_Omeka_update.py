@@ -60,7 +60,8 @@ def update_item_fields(item_id: str, spatial_ids_str: str | None, subject_ids_st
         
         existing_spatial_resource_ids = set()
         for entry in item_data['dcterms:spatial']:
-            if isinstance(entry, dict) and entry.get('type') == 'resource:item' and 'value_resource_id' in entry:
+            if isinstance(entry, dict) and 'value_resource_id' in entry:
+                # Check for any type that has a value_resource_id (resource:item, customvocab:*, etc.)
                 try:
                     existing_spatial_resource_ids.add(int(entry['value_resource_id']))
                 except ValueError:
@@ -93,7 +94,8 @@ def update_item_fields(item_id: str, spatial_ids_str: str | None, subject_ids_st
 
         existing_subject_resource_ids = set()
         for entry in item_data['dcterms:subject']:
-            if isinstance(entry, dict) and entry.get('type') == 'resource:item' and 'value_resource_id' in entry:
+            if isinstance(entry, dict) and 'value_resource_id' in entry:
+                # Check for any type that has a value_resource_id (resource:item, customvocab:*, etc.)
                 try:
                     existing_subject_resource_ids.add(int(entry['value_resource_id']))
                 except ValueError:
@@ -154,14 +156,14 @@ def main():
         logger.error(f"Output directory not found: {output_dir}")
         return
 
-    # Find the latest main reconciled CSV file (exclude ambiguous authorities files)
+    # Find the latest main reconciled CSV file (exclude ambiguous authorities and unreconciled files)
     reconciled_csv_files = [
         f for f in os.listdir(output_dir)
-        if f.endswith('_reconciled.csv') and 'ambiguous_authorities' not in f
+        if f.endswith('_reconciled.csv') and '_ambiguous_authorities' not in f and '_unreconciled' not in f
     ]
 
     if not reconciled_csv_files:
-        logger.error(f"No main '*_reconciled.csv' files found in {output_dir}. (Ambiguous authorities files are excluded)")
+        logger.error(f"No main '*_reconciled.csv' files found in {output_dir}. (Ambiguous authorities and unreconciled files are excluded)")
         return
 
     latest_reconciled_csv_filename = max(reconciled_csv_files, key=lambda x: os.path.getmtime(os.path.join(output_dir, x)))
