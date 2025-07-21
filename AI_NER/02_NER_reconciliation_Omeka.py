@@ -277,7 +277,7 @@ def main():
 
         csv_files = [
             f for f in os.listdir(output_dir) 
-            if f.endswith('.csv') and '_reconciled' not in f and '_unreconciled' not in f
+            if f.endswith('.csv') and '_reconciled' not in f and '_unreconciled' not in f and '_ambiguous_authorities' not in f
         ]
         if not csv_files:
             logger.error("No suitable CSV files found in output directory for initial processing.")
