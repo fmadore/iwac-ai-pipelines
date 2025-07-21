@@ -154,14 +154,14 @@ def main():
         logger.error(f"Output directory not found: {output_dir}")
         return
 
-    # Find the latest reconciled CSV file directly
+    # Find the latest main reconciled CSV file (exclude ambiguous authorities files)
     reconciled_csv_files = [
         f for f in os.listdir(output_dir)
-        if f.endswith('_reconciled.csv')
+        if f.endswith('_reconciled.csv') and 'ambiguous_authorities' not in f
     ]
 
     if not reconciled_csv_files:
-        logger.error(f"No '*_reconciled.csv' files found in {output_dir}.")
+        logger.error(f"No main '*_reconciled.csv' files found in {output_dir}. (Ambiguous authorities files are excluded)")
         return
 
     latest_reconciled_csv_filename = max(reconciled_csv_files, key=lambda x: os.path.getmtime(os.path.join(output_dir, x)))
