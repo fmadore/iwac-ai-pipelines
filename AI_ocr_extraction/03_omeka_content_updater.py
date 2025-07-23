@@ -17,8 +17,12 @@ import os
 import requests
 from tqdm import tqdm
 
-# Load API credentials from environment variables
-# These should be set in a .env file or system environment
+# Load environment variables from .env if present
+from dotenv import load_dotenv
+load_dotenv()
+
+
+# Load API credentials from environment variables (now loaded from .env if present)
 base_url = os.environ.get('OMEKA_BASE_URL')
 key_identity = os.environ.get('OMEKA_KEY_IDENTITY')
 key_credential = os.environ.get('OMEKA_KEY_CREDENTIAL')
