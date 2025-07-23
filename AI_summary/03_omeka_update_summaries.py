@@ -21,6 +21,10 @@ import requests
 from tqdm import tqdm
 import logging
 
+# Load environment variables from .env if present
+from dotenv import load_dotenv
+load_dotenv()
+
 # Configure logging to track script execution and errors
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
