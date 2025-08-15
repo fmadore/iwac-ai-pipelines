@@ -7,3 +7,4 @@ pdf2image
 Pillow
 ratelimit
 tenacity
+openai
