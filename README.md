@@ -4,12 +4,12 @@ AI-powered processing pipelines for the [Islam West Africa Collection](https://i
 
 ## Overview
 
-This repository contains Python-based pipelines that leverage Large Language Models (primarily Google's Gemini) to process, enhance, and analyze documents in the IWAC database. These tools were developed to handle the collection's 25+ million words of historical documentation, making it more accessible and searchable for researchers.
+This repository contains Python-based pipelines that leverage Large Language Models (primarily Google's Gemini and OpenAI's ChatGPT) to process, enhance, and analyze documents in the IWAC database. These tools were developed to handle the collection's 25+ million words of historical documentation, making it more accessible and searchable for researchers.
 
 ## Available Pipelines
 
 ### 🔍 Named Entity Recognition (`AI_NER/`)
-Extracts and reconciles named entities (persons, organizations, locations, subjects) from Omeka S collections using Gemini AI, with specialized prompts for West African Islamic contexts.
+Extracts and reconciles named entities (persons, organizations, locations, subjects) from Omeka S collections using Gemini AI or OpenAI ChatGPT, with specialized prompts for West African Islamic contexts.
 
 ### 📝 OCR Correction (`AI_ocr_correction/`)
 Post-processes raw OCR text to fix common errors, improve formatting, and enhance readability using AI-powered correction.
@@ -28,6 +28,7 @@ Generates concise French summaries of documents for improved searchability and q
 2. **API Keys:**
    - Omeka S API credentials
    - Google Gemini API key
+   - OpenAI API key (for ChatGPT features)
 3. **For OCR extraction:** Poppler PDF utilities
 
 ### Installation
@@ -57,6 +58,9 @@ OMEKA_KEY_CREDENTIAL=your_key_credential
 
 # Google Gemini API
 GEMINI_API_KEY=your_gemini_api_key
+
+# OpenAI API (for ChatGPT features)
+OPENAI_API_KEY=your_openai_api_key
 ```
 
 ## Basic Usage
@@ -69,7 +73,10 @@ Each pipeline follows a numbered sequence of scripts:
 cd AI_NER/
 
 # Step 1: Extract entities from Omeka S items
+# Using Gemini AI:
 python 01_NER_AI_Gemini.py --item-set-id 123
+# OR using ChatGPT:
+python 01_NER_AI_ChatGPT.py --item-set-id 123
 
 # Step 2: Reconcile entities with authority records
 python 02_NER_reconciliation_Omeka.py
