@@ -20,6 +20,7 @@ Identifier et extraire les entités nommées du texte fourni, réparties en quat
 - Supprimer tous les titres (civils, religieux, honorifiques) tels que M., Mme, Mlle, Dr., Prof., Imam, Sheikh, Cheikh, El Hadj, Hadj, Alhaji, Ustaz, Malam, etc.
 - **Exception :** Si le nom après suppression des titres n'est constitué que d'un seul mot (par exemple uniquement un nom de famille comme "Traoré"), conserver le titre d'origine (ex : "Imam Traoré").
 - **Exception pour le Prophète :** Pour « Prophète Mohammed » ou toute référence au prophète de l’islam, conserver le titre « Prophète » (ex : « Prophète Mohammed » et non seulement « Mohammed »).
+- **Exception :** Si l'article est signé (présence explicite de l'auteur en signature à la fin ou au début du texte), ne pas inclure l'auteur comme une entité nommée.
 - Exemples :
     - "El Hadj Kassim Mensah" → "Kassim Mensah"
     - "Imam Abdoulaye Traoré" → "Abdoulaye Traoré"
