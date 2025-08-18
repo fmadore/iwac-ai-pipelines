@@ -39,13 +39,11 @@ Identifier et extraire les entités nommées du texte fourni, réparties en quat
 ### 3. Lieux
 - Extraire le nom principal du lieu géographique.
   - Supprimer : « Royaume », « République », « État », etc.
-  - Enlever les qualificatifs « Grand »/« Grands » et tout numéro d’arrondissement ou zone.
+  - Enlever les qualificatifs « Grand »/« Grands ».
 - Exemples :
     - "République du Niger" → "Niger"
     - "République Fédérale du Nigéria" → "Nigéria"
     - "Grand Lomé" → "Lomé"
-    - "Haho 1" → "Haho"
-    - "Kpendjal 2" → "Kpendjal"
 - Exclure les continents (Afrique, Europe) et les sous-régions larges (Afrique de l’Ouest, Afrique subsaharienne, Sahel).
 
 ### 4. Sujets
