@@ -6,6 +6,7 @@ import csv # Added csv
 import logging # Ensure logging, os, requests are imported
 import os
 import requests
+import unicodedata
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,16 +30,44 @@ def make_api_request(endpoint: str, params: Dict = None) -> Dict:
     response.raise_for_status()
     return response.json()
 
+def _strip_diacritics(text: str) -> str:
+    """Remove accents/diacritics while preserving base characters."""
+    return ''.join(ch for ch in unicodedata.normalize('NFD', text) if unicodedata.category(ch) != 'Mn')
+
 def normalize_location_name(name: str) -> str:
-    """Normalize location names for better matching."""
-    # Convert to lowercase
-    normalized = name.lower().strip()
-    
-    # Normalize various forms of apostrophes and dashes
-    normalized = normalized.replace("'", "'").replace("'", "'")
-    normalized = normalized.replace("-", "").replace(" ", "")
-    
-    return normalized
+    """Normalize location names for better matching (case, spacing, punctuation, accents).
+
+    Steps:
+      - Trim
+      - Lowercase
+      - Standardize apostrophes/quotes/dashes
+      - Remove diacritics
+      - Collapse whitespace
+      - Remove spaces and dashes entirely (for a compact key)
+    """
+    if not name:
+        return ''
+    text = name.strip().lower()
+    # Standardize common apostrophes / quotes / dashes
+    replacements = {
+        '’': "'",
+        '´': "'",
+        '‘': "'",
+        '‐': '-',  # hyphen variants
+        '‑': '-',
+        '‒': '-',
+        '–': '-',
+        '—': '-',
+        '―': '-',
+    }
+    text = ''.join(replacements.get(c, c) for c in text)
+    # Collapse multiple whitespace
+    text = ' '.join(text.split())
+    # Remove diacritics AFTER standardization
+    text_no_diacritics = _strip_diacritics(text)
+    # Build compact key (remove spaces & dashes)
+    compact = text_no_diacritics.replace('-', '').replace(' ', '')
+    return compact
 
 def build_authority_dict(item_set_ids: List[str]) -> Tuple[Dict[str, str], Dict[str, List[str]]]: # Signature changed
     """Build dictionary of authority terms from specified item sets and identify ambiguous terms."""
@@ -81,10 +110,13 @@ def build_authority_dict(item_set_ids: List[str]) -> Tuple[Dict[str, str], Dict[
                             titles_to_process.append(alt_value)
 
                 for title_text in titles_to_process:
-                    potential_lookups.append((title_text.lower(), item_id))
+                    lower_variant = title_text.lower()
                     normalized_title = normalize_location_name(title_text)
-                    if normalized_title: # Ensure normalized_title is not empty
-                        potential_lookups.append((normalized_title, item_id))
+                    # Also add diacritic-stripped spaced form to broaden matches
+                    diacritic_stripped_spaced = _strip_diacritics(lower_variant)
+                    for variant in {lower_variant, normalized_title, diacritic_stripped_spaced}:
+                        if variant:
+                            potential_lookups.append((variant, item_id))
             
             if len(items) < 100:
                 break
@@ -180,9 +212,12 @@ def reconcile_column_values(input_csv_path: str,
                             
                             value_lower = value_stripped.lower()
                             value_normalized = normalize_location_name(value_stripped)
+                            value_diacritic_free = _strip_diacritics(value_lower)
                             
                             # Check if the term is ambiguous first
-                            if value_lower in ambiguous_authority_dict or value_normalized in ambiguous_authority_dict:
+                            if (value_lower in ambiguous_authority_dict or
+                                value_normalized in ambiguous_authority_dict or
+                                value_diacritic_free in ambiguous_authority_dict):
                                 logger.warning(f"Term '{value_stripped}' is ambiguous and will not be reconciled. Found in row: {row}")
                                 unreconciled_counts[f"{value_stripped} (Ambiguous)"] += 1
                                 # Do not add to reconciled_ids, effectively skipping it for reconciliation
@@ -197,6 +232,11 @@ def reconcile_column_values(input_csv_path: str,
                             elif value_normalized in authority_dict:
                                 reconciled_id = authority_dict[value_normalized]
                                 reconciled_ids.append(reconciled_id) 
+                                matched_count += 1
+                                found_match = True
+                            elif value_diacritic_free in authority_dict:
+                                reconciled_id = authority_dict[value_diacritic_free]
+                                reconciled_ids.append(reconciled_id)
                                 matched_count += 1
                                 found_match = True
                                 
