@@ -95,7 +95,7 @@ ONE_MINUTE = 60
 BATCH_SIZE = 10
 DEFAULT_TIMEOUT = 30
 OPENAI_MODEL = "gpt-5-mini"
-GEMINI_MODEL = "gemini-2.5-flash-preview-05-20"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
@@ -357,36 +357,25 @@ def perform_ner_gemini(text_content: str, temperature: float = 0.2) -> EntityLis
     prompt_template = load_ner_prompt()
     system_prompt = prompt_template
     user_prompt = f"{NER_JSON_INSTRUCTION}\n\nTEXT TO ANALYZE:\n{text_content}\n"
-    # Attempt structured JSON response (if mime supported); fallback to text parsing
+    # Combine prompts (Gemini generate_content doesn't use role separation the same way)
+    full_prompt = system_prompt + "\n\n" + user_prompt + "\nReturn ONLY the JSON object."
+    # Build generation config (omit response_mime_type for wider compatibility)
     gen_config = None
     if genai_types is not None:
         try:
-            gen_config = genai_types.GenerateConfig(temperature=temperature, response_mime_type="application/json")
+            gen_config = genai_types.GenerateContentConfig(temperature=temperature)
         except Exception:
             gen_config = None
     try:
-        response = _gemini_client.responses.create(
+        response = _gemini_client.models.generate_content(
             model=GEMINI_MODEL,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
+            contents=full_prompt,
             config=gen_config
         )
     except Exception as e:
         logger.error(f"Gemini API error: {e}")
         return EntityList(persons=[], organizations=[], locations=[], subjects=[])
-    raw_output = getattr(response, 'output_text', None)
-    if not raw_output:
-        # Fallback similar to OpenAI
-        segments = []
-        for seg in getattr(response, 'output', []) or []:
-            if isinstance(seg, dict):
-                txt = seg.get('content') or seg.get('text') or ''
-                if isinstance(txt, list):
-                    txt = ''.join(str(t) for t in txt)
-                segments.append(str(txt))
-        raw_output = '\n'.join(filter(None, segments))
+    raw_output = getattr(response, 'text', None)
     if not raw_output:
         return EntityList(persons=[], organizations=[], locations=[], subjects=[])
     json_text = extract_json_block(raw_output)
