@@ -1,6 +1,6 @@
 # AI Named Entity Recognition (NER) Module
 
-This module provides a complete Named Entity Recognition pipeline for Omeka S Collections. You can choose between **Google Gemini** or **OpenAI ChatGPT (gpt-5-mini)** for the entity extraction phase. The rest of the pipeline (reconciliation + update) is model-agnostic and works with the CSV produced by either extraction script. The pipeline consists of three sequential stages that extract, reconcile, and update named entities in the IWAC (Islam West Africa Collection) database.
+This module provides a complete Named Entity Recognition pipeline for Omeka S Collections. A **single unified script** (`01_NER_AI.py`) now supports both **Google Gemini** and **OpenAI ChatGPT (gpt-5-mini)**. You can select the provider interactively (prompt 1 or 2) or via the `--model` flag. The remainder of the pipeline (reconciliation + update) is model-agnostic and consumes the CSV produced by the unified extraction script. The pipeline consists of three sequential stages that extract, reconcile, and update named entities in the IWAC (Islam West Africa Collection) database.
 
 ## Pipeline Overview
 
@@ -13,8 +13,7 @@ The NER module operates as a three-stage pipeline:
 ## Files
 
 ### Core Scripts
-- `01_NER_AI_Gemini.py` - **Entity Extraction (Gemini)**: Uses Google Gemini AI to extract named entities (persons, organizations, locations, subjects) from Omeka S collection items
-- `01_NER_AI_ChatGPT.py` - **Entity Extraction (ChatGPT)**: Uses OpenAI Responses API (model: `gpt-5-mini`) with the same prompt to extract entities
+- `01_NER_AI.py` - **Entity Extraction (Gemini or OpenAI)**: Unified script that extracts named entities (persons, organizations, locations, subjects) from Omeka S collection items. Choose provider interactively or via `--model gemini|openai`.
 - `02_NER_reconciliation_Omeka.py` - **Authority Reconciliation**: Matches AI-extracted entities against existing Omeka S authority records (spatial coverage, subjects)
 - `03_Omeka_update.py` - **Database Update**: Updates Omeka S items with reconciled entity links, preserving existing data and avoiding duplicates
 
@@ -23,24 +22,16 @@ The NER module operates as a three-stage pipeline:
 
 ## Features
 
-### Script 1A: Entity Extraction (Gemini) `01_NER_AI_Gemini.py`
-- Asynchronous and synchronous processing modes
-- Configurable batch size for optimized performance  
-- Rate limiting to avoid API throttling
-- Proper error handling and retry mechanisms
-- Command-line argument support
-- Detailed progress tracking and statistics
-- **Modular prompt system using external markdown file**
-- Spatial coverage filtering capabilities
-- Structured output with Pydantic models
-
-### Script 1B: Entity Extraction (ChatGPT) `01_NER_AI_ChatGPT.py`
-- Uses OpenAI Responses API (`gpt-5-mini`) with a fixed settings block
-- Same prompt content (`ner_system_prompt.md`) ensuring identical extraction criteria
-- Async + sync modes with batch control
-- Rate limiting, retries, and progress statistics
-- Outputs CSV with same schema for seamless downstream processing
-- Optional if you prefer OpenAI ecosystem or already have credits there
+### Script 1: Unified Entity Extraction `01_NER_AI.py`
+- Supports both Google Gemini and OpenAI ChatGPT via flag or interactive selection
+- Asynchronous and synchronous modes
+- Configurable batch size & concurrency
+- Rate limiting, retries (tenacity), and progress statistics
+- Single shared French prompt (`ner_system_prompt.md`) for consistent extraction rules
+- Spatial coverage filtering (removes collection-wide spatial term from per-item results)
+- Produces provider-specific output filename suffix (e.g., `_processed_openai.csv`, `_processed_gemini.csv`)
+- OpenAI path preserves required Responses API settings block
+- Gemini path requests JSON-style output (parsed with fallback regex)
 
 ### Script 2: Authority Reconciliation (`02_NER_reconciliation_Omeka.py`)
 - Multi-stage reconciliation process (spatial → subject/topic)
@@ -99,55 +90,63 @@ To modify the NER extraction behavior:
 
 ### Choosing the NER Provider
 
-| Aspect | Gemini (`01_NER_AI_Gemini.py`) | ChatGPT (`01_NER_AI_ChatGPT.py`) |
-|--------|--------------------------------|----------------------------------|
-| Model name | gemini-2.5-flash-* (configurable) | gpt-5-mini (fixed in script) |
-| Output handling | Structured via Pydantic intent | JSON parsed from model text |
-| Dependencies | `google-genai` | `openai` |
-| Env var required | `GEMINI_API_KEY` | `OPENAI_API_KEY` |
-| Prompt | Shared `ner_system_prompt.md` | Same file (identical behavior) |
-| CSV schema | Unified | Unified |
+You now select the provider inside the unified script:
 
-Pick one (no need to run both) unless you want to compare quality.
+Interactive (script will prompt):
+```bash
+python 01_NER_AI.py --item-set-id 123
+```
+
+Explicit provider flag:
+```bash
+python 01_NER_AI.py --item-set-id 123 --model gemini --async --batch-size 20
+python 01_NER_AI.py --item-set-id 123 --model openai --async --batch-size 20
+```
+
+Comparison:
+
+| Aspect | Gemini (via unified) | OpenAI (via unified) |
+|--------|----------------------|----------------------|
+| Model name | `gemini-2.5-flash-preview-05-20` | `gpt-5-mini` |
+| Env var | `GEMINI_API_KEY` | `OPENAI_API_KEY` |
+| Dependency | `google-genai` | `openai` |
+| Output filename suffix | `_processed_gemini.csv` | `_processed_openai.csv` |
+| Prompt | Shared `ner_system_prompt.md` | Shared `ner_system_prompt.md` |
 
 ### Complete Pipeline Execution
 
-1. **Run Entity Extraction (choose ONE)**:
-    Gemini example:
-    ```bash
-    python 01_NER_AI_Gemini.py --item-set-id 123 --async --batch-size 20 --timeout 30
-    ```
-    ChatGPT example:
-    ```bash
-    python 01_NER_AI_ChatGPT.py --item-set-id 123 --async --batch-size 20 --timeout 30
-    ```
-    - Output file name pattern:
-       - Gemini: `item_set_123_processed.csv`
-       - ChatGPT: `item_set_123_processed_chatgpt.csv`
+1. **Run Entity Extraction (unified)**:
+   ```bash
+   # interactive model choice
+   python 01_NER_AI.py --item-set-id 123
+
+   # or specify provider
+   python 01_NER_AI.py --item-set-id 123 --model gemini --async --batch-size 20
+   python 01_NER_AI.py --item-set-id 123 --model openai --async --batch-size 20
+   ```
+   Output filename pattern: `item_set_<ID>_processed_<provider>.csv`
 
 2. **Run Authority Reconciliation**:
    ```bash
    python 02_NER_reconciliation_Omeka.py
    ```
-   - Automatically finds latest CSV from step 1
-   - Outputs: `*_reconciled.csv`, `*_unreconciled_*.csv`, `*_ambiguous_authorities_*.csv`
+   Automatically finds the latest provider CSV.
 
 3. **Update Database**:
    ```bash
    python 03_Omeka_update.py
    ```
-   - Automatically finds latest reconciled CSV from step 2
-   - Updates Omeka S items with reconciled entity links
+   Applies reconciled entities to Omeka S items.
 
 ### Output Files
 
-- **After Script 1**: `item_set_[ID]_processed.csv` - Raw AI-extracted entities
+- **After Script 1**: `item_set_<ID>_processed_<provider>.csv` (e.g., `_processed_openai.csv`, `_processed_gemini.csv`)
 - **After Script 2**: 
-  - `*_reconciled.csv` - Main file with reconciled entity IDs
-  - `*_unreconciled_spatial.csv` - Unmatched spatial entities
-  - `*_unreconciled_subject.csv` - Unmatched subject entities  
-  - `*_ambiguous_authorities_*.csv` - Ambiguous authority matches
-- **After Script 3**: Database updated, no additional files
+   - `*_reconciled.csv` - Reconciled entity IDs
+   - `*_unreconciled_spatial.csv` - Unmatched spatial entities
+   - `*_unreconciled_subject.csv` - Unmatched subject entities  
+   - `*_ambiguous_authorities_*.csv` - Ambiguous authority matches
+- **After Script 3**: Database updated (no new files)
 
 ## Requirements
 
@@ -158,8 +157,8 @@ Pick one (no need to run both) unless you want to compare quality.
    - `OMEKA_BASE_URL` - Base URL for Omeka S instance
    - `OMEKA_KEY_IDENTITY` - Omeka S API key identity  
    - `OMEKA_KEY_CREDENTIAL` - Omeka S API key credential
-   - `GEMINI_API_KEY` (if using Gemini script)
-   - `OPENAI_API_KEY` (if using ChatGPT script)
+   - `GEMINI_API_KEY` (if selecting Gemini)
+   - `OPENAI_API_KEY` (if selecting OpenAI)
 
 ### Required Files
 - `ner_system_prompt.md` - Shared by both extraction scripts
@@ -172,8 +171,8 @@ The reconciliation script expects specific Omeka S item sets:
 
 ## Notes
 
-- All scripts include comprehensive logging and error handling
-- The pipeline preserves existing Omeka S data and relationships
-- Batch processing and rate limiting prevent API overload
-- French language support throughout the pipeline
+- Unified extraction simplifies maintenance (legacy `01_NER_AI_Gemini.py` and `01_NER_AI_ChatGPT.py` can be removed)
+- Comprehensive logging, retries, and rate limiting remain
+- Batch processing & async improve throughput
+- French language support throughout
 - Designed specifically for Islamic studies collections in West Africa

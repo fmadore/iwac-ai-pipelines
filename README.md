@@ -9,7 +9,7 @@ This repository contains Python-based pipelines that leverage Large Language Mod
 ## Available Pipelines
 
 ### 🔍 Named Entity Recognition (`AI_NER/`)
-Extracts and reconciles named entities (persons, organizations, locations, subjects) from Omeka S collections using Gemini AI or OpenAI ChatGPT, with specialized prompts for West African Islamic contexts.
+Extracts and reconciles named entities (persons, organizations, locations, subjects) from Omeka S collections using a unified script supporting either Gemini AI or OpenAI ChatGPT. Specialized French prompt tuned for West African Islamic contexts.
 
 ### 📝 OCR Correction (`AI_ocr_correction/`)
 Post-processes raw OCR text to fix common errors, improve formatting, and enhance readability using AI-powered correction.
@@ -72,11 +72,10 @@ Each pipeline follows a numbered sequence of scripts:
 ```bash
 cd AI_NER/
 
-# Step 1: Extract entities from Omeka S items
-# Using Gemini AI:
-python 01_NER_AI_Gemini.py --item-set-id 123
-# OR using ChatGPT:
-python 01_NER_AI_ChatGPT.py --item-set-id 123
+# Step 1: Extract entities (unified script; choose provider interactively or with --model)
+python 01_NER_AI.py --item-set-id 123            # interactive model choice
+python 01_NER_AI.py --item-set-id 123 --model gemini --async --batch-size 20
+python 01_NER_AI.py --item-set-id 123 --model openai --async --batch-size 20
 
 # Step 2: Reconcile entities with authority records
 python 02_NER_reconciliation_Omeka.py
