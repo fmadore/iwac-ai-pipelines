@@ -1,23 +1,32 @@
-# AI OCR Extraction Pipeline
+# AI OCR & HTR Extraction Pipeline
 
-This pipeline provides a complete workflow for downloading PDFs from an Omeka S digital collection, performing OCR (Optical Character Recognition) using Google's Gemini AI, and updating the database with the extracted text content.
+This pipeline provides a complete workflow for downloading PDFs from an Omeka S digital collection and performing either:
+
+1. OCR (Optical Character Recognition) for printed / typeset French documents (e.g. newspapers)
+2. HTR (Handwritten Text Recognition) for French handwritten manuscripts, marginalia, annotations
+
+Both modes use Google's Gemini AI vision models and produce research‑grade, archival-quality text which can be synced back into Omeka S.
 
 ## Overview
 
-The pipeline consists of three main scripts that work together:
+The pipeline consists of core scripts plus two alternative processing paths (choose OCR or HTR depending on source material):
 
-1. **`01_omeka_pdf_downloader.py`** - Downloads PDF files from Omeka S collections
-2. **`02_gemini_ocr_processor.py`** - Performs AI-powered OCR on PDFs using Google Gemini
-3. **`03_omeka_content_updater.py`** - Updates Omeka S items with extracted text content
+1. **`01_omeka_pdf_downloader.py`** – Downloads PDF files from Omeka S collections
+2a. **`02_gemini_ocr_processor.py`** – (Printed) AI-powered OCR using Gemini
+2b. **`02_gemini_htr_processor.py`** – (Handwritten) High-precision HTR using Gemini
+3. **`03_omeka_content_updater.py`** – Updates Omeka S items with extracted text content
+
+You can keep both processing scripts; simply run the one appropriate for the collection type.
 
 ## Features
 
 - **Multi-threaded PDF downloading** with progress tracking
-- **High-precision OCR** specialized for French newspaper articles
+- **High-precision OCR / HTR** for French printed & handwritten sources
 - **Robust error handling** with comprehensive logging
-- **Academic-grade text extraction** with proper formatting
+- **Academic-grade text extraction** with proper formatting & French typography
 - **Automatic database updates** preserving existing metadata
 - **Configurable AI models** (Gemini 2.5 Flash or Pro)
+- **Dedicated system prompts** for printed (`ocr_system_prompt.md`) and handwritten (`htr_system_prompt.md`) material
 
 ## Prerequisites
 
@@ -77,16 +86,29 @@ python 01_omeka_pdf_downloader.py
 - Saves files to `PDF/` directory
 - Creates `pdf_download.log` for tracking
 
-### Step 2: Perform OCR
+### Step 2 (Option A): Perform OCR (Printed / Typeset)
 
 ```bash
 python 02_gemini_ocr_processor.py
 ```
 
-- Choose between Gemini 2.5 Flash (faster) or Pro (more accurate)
+- Select Gemini model (2.5 Flash or 2.5 Pro)
+- Uses `ocr_system_prompt.md`
 - Processes all PDFs in the `PDF/` directory
 - Saves extracted text to `OCR_Results/` directory
-- Creates `ocr_gemini.log` for detailed logging
+- Logs to `ocr_gemini.log`
+
+### Step 2 (Option B): Perform HTR (Handwritten)
+
+```bash
+python 02_gemini_htr_processor.py
+```
+
+- Select Gemini model (2.5 Flash or 2.5 Pro)
+- Uses `htr_system_prompt.md` (falls back to OCR prompt if missing)
+- Applies stricter line joining, de-hyphenation & zone handling for manuscripts
+- Saves extracted text to `OCR_Results/`
+- Logs to `ocr_gemini.log` (consider archiving if you need separate logs per mode)
 
 ### Step 3: Update Database
 
@@ -102,28 +124,40 @@ python 03_omeka_content_updater.py
 
 ```
 AI_ocr_extraction/
-├── 01_omeka_pdf_downloader.py  # PDF download script
-├── 02_gemini_ocr_processor.py  # OCR processing script
-├── 03_omeka_content_updater.py # Database update script
-├── ocr_system_prompt.md        # OCR system prompt configuration
-├── README.md                   # This documentation
-├── PDF/                        # Downloaded PDF files
-├── OCR_Results/                # Extracted text files
-├── pdf_download.log            # Download activity log
-└── ocr_gemini.log             # OCR processing log
+├── 01_omeka_pdf_downloader.py   # PDF download script
+├── 02_gemini_ocr_processor.py   # OCR processing script (printed)
+├── 02_gemini_htr_processor.py   # HTR processing script (handwritten)
+├── 03_omeka_content_updater.py  # Database update script
+├── ocr_system_prompt.md         # OCR system prompt (printed French articles)
+├── htr_system_prompt.md         # HTR system prompt (handwritten French documents)
+├── README.md                    # This documentation
+├── PDF/                         # Downloaded PDF files
+├── OCR_Results/                 # Extracted text files
+├── pdf_download.log             # Download activity log
+└── ocr_gemini.log               # Processing log
 ```
 
-## OCR System Prompt
+## System Prompts (Printed vs Handwritten)
 
-The OCR system uses a specialized prompt optimized for French newspaper articles, stored in `ocr_system_prompt.md`. This prompt can be modified to adjust the OCR behavior without changing the code.
+Two dedicated prompt files control extraction behavior:
 
-### Key OCR Features
+1. `ocr_system_prompt.md` – Printed French newspapers / typeset PDFs (multi-column layout, reading order preservation).
+2. `htr_system_prompt.md` – Handwritten French manuscripts & annotations (zone ordering, semantic line joining, de-hyphenation, French typography, self-review checklist).
 
-- **French typography support** with proper spacing rules
-- **Multi-column layout handling** with reading order preservation
-- **Hyphenation correction** for end-of-line breaks
-- **Paragraph semantic analysis** for proper text flow
-- **Academic-grade accuracy** for research purposes
+Edit these Markdown files to refine behavior without modifying Python code.
+
+### Key OCR Features (Printed)
+- Multi-column layout handling & reading order preservation
+- French typography spacing & diacritics
+- Hyphenation correction (end-of-line) & paragraph reconstruction
+- Stable output suited for research indexing
+
+### Key HTR Features (Handwritten)
+- Strict zone segmentation (headers, marginalia, notes, captions)
+- Semantic line joining & controlled paragraph spacing (`\n\n` only between paragraphs)
+- Aggressive de-hyphenation while preserving legitimate compounds
+- Preservation of diacritics & archival fidelity
+- Built-in self-review checklist to ensure formatting consistency
 
 ## Error Handling
 
@@ -151,10 +185,11 @@ Log files use timestamps and severity levels for easy debugging.
 - Streams large files to minimize memory usage
 - Implements connection pooling for efficiency
 
-### OCR Processing
+### OCR / HTR Processing
 - Processes one PDF at a time to respect API limits
-- Uses temporary files for image processing
-- Includes retry logic for transient failures
+- Uses temporary files for image processing (cleaned up automatically)
+- Retry logic for transient failures (timeouts / 503 / network)
+- Unified logging for traceability
 
 ### Memory Management
 - Configured for large image processing
@@ -177,9 +212,9 @@ Log files use timestamps and severity levels for easy debugging.
    - PDF may be corrupted or protected
    - Try manual conversion with different settings
 
-4. **"OCR timeout"**
+4. **"OCR/HTR timeout"**
    - Large or complex PDFs may exceed timeout
-   - Consider splitting large documents
+   - Consider splitting large documents or reducing DPI if acceptable
 
 ### Debug Mode
 
@@ -200,10 +235,10 @@ logging.basicConfig(level=logging.DEBUG)
 When modifying the pipeline:
 
 1. Test with small datasets first
-2. Update the system prompt for OCR changes
-3. Maintain backward compatibility
-4. Add appropriate error handling
-5. Update documentation
+2. Update / version the relevant system prompt (`ocr_system_prompt.md` or `htr_system_prompt.md`) when changing extraction logic
+3. Maintain backward compatibility (avoid breaking existing scripts)
+4. Add appropriate error handling & logging
+5. Update documentation (README + prompt comments)
 
 ## Support
 
@@ -215,4 +250,4 @@ For issues or questions:
 
 ## License
 
-This pipeline is designed for academic research and archival purposes under fair use principles.
+This pipeline is designed for academic research and archival purposes under fair use principles. Choose the processing mode (OCR vs HTR) that matches your source material for optimal accuracy.
