@@ -1,13 +1,18 @@
-# AI Summary Pipeline
+# AI Summary Pipeline (Gemini or OpenAI)
 
-This pipeline automatically generates French summaries of text content from an Omeka S database using Google's Gemini 2.5 Flash model. The pipeline consists of three main steps that work together to extract, summarize, and update content.
+This pipeline automatically generates French summaries of text content from an Omeka S database using either:
+
+1. Google Gemini (gemini-2.5-flash by default), or
+2. OpenAI Responses API (gpt-5-mini)
+
+The user selects the provider interactively at runtime. The workflow extracts full text, generates concise French summaries (RAG-friendly), then updates Omeka S with the results.
 
 ## Pipeline Overview
 
 The pipeline follows this workflow:
 
 1. **Extract Content** (`01_extract_omeka_content.py`) - Retrieves OCR text from Omeka S items
-2. **Generate Summaries** (`02_gemini_generate_summaries.py`) - Creates French summaries using Gemini AI
+2. **Generate Summaries** (`02_AI_generate_summaries.py`) - Creates French summaries (OpenAI or Gemini)
 3. **Update Summaries** (`03_omeka_update_summaries.py`) - Updates Omeka S items with generated summaries
 
 ## Files Structure
@@ -15,7 +20,7 @@ The pipeline follows this workflow:
 ```
 AI_summary/
 ├── 01_extract_omeka_content.py    # Step 1: Extract OCR text from Omeka S
-├── 02_gemini_generate_summaries.py # Step 2: Generate French summaries
+├── 02_AI_generate_summaries.py     # Step 2: Generate French summaries (Gemini or OpenAI)
 ├── 03_omeka_update_summaries.py   # Step 3: Update Omeka S with summaries
 ├── summary_prompt.md              # AI prompt template for summary generation
 ├── README.md                      # This file
@@ -35,10 +40,13 @@ OMEKA_BASE_URL=https://your-omeka-instance.com/api
 OMEKA_KEY_IDENTITY=your_api_key_identity
 OMEKA_KEY_CREDENTIAL=your_api_key_credential
 
-# Google Gemini API Configuration
+# OpenAI API (optional if you choose OpenAI)
+OPENAI_API_KEY=your_openai_api_key
+
+# Google Gemini API (one of these)
 GEMINI_API_KEY=your_gemini_api_key
-# OR use Google Application Default Credentials
-GOOGLE_APPLICATION_CREDENTIALS=path/to/your/service-account.json
+# OR Google Application Default Credentials
+GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
 ```
 
 ### Required Python Packages
@@ -52,6 +60,7 @@ Required packages:
 - `tqdm` - For progress bars
 - `python-dotenv` - For environment variables
 - `google-genai` - For Gemini AI integration
+- `openai` - For OpenAI Responses API integration
 
 ## Step-by-Step Usage
 
@@ -71,25 +80,31 @@ python 01_extract_omeka_content.py
 
 **Output:** Text files named `{item_id}.txt` in the `TXT/` directory
 
-### Step 2: Generate French Summaries
+### Step 2: Generate French Summaries (Select AI Provider at Runtime)
 
 ```bash
-python 02_gemini_generate_summaries.py
+python 02_AI_generate_summaries.py
 ```
 
-**What it does:**
-- Reads all `.txt` files from the `TXT/` directory
-- Uses the prompt template from `summary_prompt.md`
-- Generates French summaries using Google's Gemini 2.5 Flash model
-- Saves summaries to the `Summaries_FR_TXT/` directory
-- Provides progress tracking and error handling
+You will be prompted:
 
-**Requirements:**
-- `summary_prompt.md` file must exist (contains the AI prompt template)
-- Valid Gemini API key or Google Application Default Credentials
-- Text files in the `TXT/` directory from Step 1
+```
+Select AI model: 1) ChatGPT (OpenAI)  2) Google Gemini  >
+```
 
-**Output:** Summary files named `{item_id}.txt` in the `Summaries_FR_TXT/` directory
+Enter `1` for OpenAI (gpt-5-mini) or `2` for Gemini (gemini-2.5-flash). The script then:
+
+* Reads all `.txt` files from `TXT/`
+* Loads the shared prompt template `summary_prompt.md`
+* Calls the chosen provider's API
+* Writes summaries to `Summaries_FR_TXT/`
+* Shows progress with a `tqdm` bar and logs errors
+
+Provider-specific requirements:
+* OpenAI: `OPENAI_API_KEY`
+* Gemini: `GEMINI_API_KEY` OR `GOOGLE_APPLICATION_CREDENTIALS`
+
+Output: One summary file per input (`{item_id}.txt`) in `Summaries_FR_TXT/`.
 
 ### Step 3: Update Omeka S Items
 
@@ -110,7 +125,7 @@ python 03_omeka_update_summaries.py
 
 ### `summary_prompt.md`
 
-This file contains the prompt template used by the Gemini AI model. The template includes:
+This file contains the prompt template used by both AI providers. The template includes:
 
 - Instructions for generating concise French summaries
 - Specific requirements for RAG (Retrieval-Augmented Generation) compatibility
@@ -131,17 +146,12 @@ All scripts include comprehensive error handling and logging:
 
 ## Authentication Methods
 
-The pipeline supports two authentication methods for Google Gemini:
+| Provider | Primary Auth | Alternative | Notes |
+|----------|--------------|-------------|-------|
+| OpenAI   | `OPENAI_API_KEY` | — | Required if selecting option 1 |
+| Gemini   | `GOOGLE_APPLICATION_CREDENTIALS` (ADC) | `GEMINI_API_KEY` | Script attempts ADC first, then API key |
 
-1. **API Key Method:**
-   - Set `GEMINI_API_KEY` in your `.env` file
-   - Simpler setup, good for development
-
-2. **Application Default Credentials (ADC):**
-   - Set `GOOGLE_APPLICATION_CREDENTIALS` pointing to your service account JSON
-   - More secure, recommended for production
-
-The script will try ADC first, then fall back to API key if ADC fails.
+If both OpenAI and Gemini credentials are present you can switch freely per run.
 
 ## Troubleshooting
 
@@ -151,9 +161,9 @@ The script will try ADC first, then fall back to API key if ADC fails.
    - Ensure all required variables are set in your `.env` file
    - Check that the `.env` file is in the correct location
 
-2. **Gemini API authentication failures:**
-   - Verify your API key is valid and has appropriate permissions
-   - Check if you have sufficient quota/credits
+2. **AI provider authentication failures:**
+   - OpenAI: confirm `OPENAI_API_KEY` value and account quota
+   - Gemini: verify ADC path or `GEMINI_API_KEY` and quota
 
 3. **Omeka S connection issues:**
    - Verify your Omeka S base URL and API credentials
@@ -167,7 +177,7 @@ The script will try ADC first, then fall back to API key if ADC fails.
 
 - Adjust `MAX_WORKERS` in `01_extract_omeka_content.py` for concurrent processing
 - Modify `ITEMS_PER_PAGE` for API pagination size
-- Configure Gemini model parameters (temperature, etc.) in `02_gemini_generate_summaries.py`
+- Adjust temperature or model constants inside `02_AI_generate_summaries.py` (`GEMINI_MODEL`, `OPENAI_MODEL`)
 
 ## Customization
 
@@ -181,10 +191,11 @@ Edit `summary_prompt.md` to change:
 
 ### Changing the AI Model
 
-In `02_gemini_generate_summaries.py`, modify the `MODEL_NAME` constant to use a different Gemini model:
+Edit `02_AI_generate_summaries.py` to change:
 
 ```python
-MODEL_NAME = 'gemini-2.0-flash-001'  # or another available model
+GEMINI_MODEL = "gemini-2.5-flash"   # Change to another available Gemini model
+OPENAI_MODEL = "gpt-5-mini"         # Change if you have access to another OpenAI Responses model
 ```
 
 ### Adjusting Omeka S Properties
@@ -207,5 +218,5 @@ In `03_omeka_update_summaries.py`, modify the property ID and label if using dif
 
 For issues related to:
 - **Omeka S API:** Check your Omeka S documentation and API configuration
-- **Google Gemini API:** Refer to the Google AI documentation
+- **Google Gemini / OpenAI APIs:** Refer to respective provider documentation
 - **Pipeline-specific issues:** Check the logs for detailed error messages
