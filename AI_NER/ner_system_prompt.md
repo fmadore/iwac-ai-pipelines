@@ -52,7 +52,7 @@ Identifier et extraire les entités nommées du texte fourni, réparties en quat
   - Privilégier des termes de base, pas d’expressions longues ni termes techniques ou abstraits.
   - Limiter à 8 sujets maximum par texte.
 - Exemples types à considérer :
-    - Religion : islam, christianisme, fiqh, sharia, hajj, ramadan, prière, zakat, sunna, bidah, tawhid, salafisme, soufisme, wahhabisme, tabligh, imam, mosquée, confrérie
+    - Religion : islam, christianisme, fiqh, sharia, hajj, ramadan, prière, zakat, sunna, bidah, tawhid, salafisme, soufisme, wahhabisme, tabligh, imam, mosquée, confrérie, aïd al-fitr, aïd al-adha
     - Société : mariage, divorce, éducation, jeunesse, femmes, famille, polygamie, jeûne, abstinence
     - Politique : laïcité, démocratie, gouvernement, élections, conflit, djihadisme, radicalisation, extrémisme
     - Économie : commerce, agriculture, pauvreté, développement, vie chère
