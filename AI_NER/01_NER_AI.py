@@ -210,6 +210,16 @@ def get_items_from_set(item_set_id: str, *, max_retries: int, timeout: int) -> L
         page += 1
     return items
 
+def get_items_from_multiple_sets(item_set_ids: List[str], *, max_retries: int, timeout: int) -> List[Dict[str, Any]]:
+    """Get items from multiple item sets and combine them into a single list."""
+    all_items: List[Dict[str, Any]] = []
+    for item_set_id in item_set_ids:
+        logger.info(f"Fetching items from set {item_set_id}...")
+        items = get_items_from_set(item_set_id, max_retries=max_retries, timeout=timeout)
+        logger.info(f"Found {len(items)} items in set {item_set_id}")
+        all_items.extend(items)
+    return all_items
+
 # ---------------------------------------------------------------------------
 # Data Utilities
 # ---------------------------------------------------------------------------
@@ -263,6 +273,21 @@ def validate_item_set_id(item_set_id: str) -> bool:
         return int(item_set_id) > 0
     except (TypeError, ValueError):
         return False
+
+def parse_item_set_ids(input_str: str) -> List[str]:
+    """Parse comma-separated item set IDs and validate them."""
+    # Split by comma and clean whitespace
+    ids = [id_str.strip() for id_str in input_str.split(',') if id_str.strip()]
+    
+    # Validate each ID
+    valid_ids = []
+    for id_str in ids:
+        if validate_item_set_id(id_str):
+            valid_ids.append(id_str)
+        else:
+            logger.warning(f"Invalid item set ID: '{id_str}' - skipping")
+    
+    return valid_ids
 
 # ---------------------------------------------------------------------------
 # JSON Extraction Helper
@@ -447,6 +472,15 @@ def get_item_set_spatial_coverage(item_set_id: str, *, timeout: int) -> str:
             return val.strip()
     return ''
 
+def get_combined_spatial_coverage(item_set_ids: List[str], *, timeout: int) -> Optional[str]:
+    """Get spatial coverage from multiple item sets. Returns the first non-empty one found."""
+    for item_set_id in item_set_ids:
+        coverage = get_item_set_spatial_coverage(item_set_id, timeout=timeout)
+        if coverage:
+            logger.info(f"Using spatial coverage from set {item_set_id}: {coverage}")
+            return coverage
+    return None
+
 # ---------------------------------------------------------------------------
 # Processing Functions
 # ---------------------------------------------------------------------------
@@ -549,7 +583,7 @@ def summarize(stats: ProcessingStats, output_csv: str) -> None:
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Unified NER extraction for Omeka S (OpenAI or Gemini)")
-    parser.add_argument("--item-set-id", type=str, help="Item set ID to process")
+    parser.add_argument("--item-set-id", type=str, help="Item set ID(s) to process (comma-separated)")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Batch size (default {BATCH_SIZE})")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"Timeout seconds (default {DEFAULT_TIMEOUT})")
     parser.add_argument("--max-retries", type=int, default=3, help="Max retries for Omeka requests")
@@ -572,22 +606,33 @@ async def async_main(args) -> None:
     provider = args.model or interactive_select_provider()
     config = load_config(provider=provider, batch_size=args.batch_size, max_retries=args.max_retries,
                          timeout=args.timeout, temperature=args.temperature)
-    item_set_id = args.item_set_id or input("Enter the item set ID: ")
-    if not validate_item_set_id(item_set_id):
-        raise ValueError("Invalid item set ID")
-    spatial_filter = get_item_set_spatial_coverage(item_set_id, timeout=config['timeout'])
+    item_set_input = args.item_set_id or input("Enter item set ID(s) (comma-separated): ")
+    item_set_ids = parse_item_set_ids(item_set_input)
+    if not item_set_ids:
+        raise ValueError("No valid item set IDs provided")
+    
+    logger.info(f"Processing item sets: {', '.join(item_set_ids)}")
+    spatial_filter = get_combined_spatial_coverage(item_set_ids, timeout=config['timeout'])
     if spatial_filter:
         logger.info(f"Spatial coverage filter: {spatial_filter}")
-    logger.info(f"Fetching items from set {item_set_id}...")
-    items = get_items_from_set(item_set_id, max_retries=config['max_retries'], timeout=config['timeout'])
+    
+    items = get_items_from_multiple_sets(item_set_ids, max_retries=config['max_retries'], timeout=config['timeout'])
     if not items:
         logger.warning("No items found.")
         return
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     default_output_dir = os.path.join(script_dir, 'output')
     output_dir = args.output_dir or default_output_dir
     os.makedirs(output_dir, exist_ok=True)
-    output_csv = os.path.join(output_dir, f'item_set_{item_set_id}_processed_{provider}.csv')
+    
+    # Create filename for multiple sets
+    if len(item_set_ids) == 1:
+        output_csv = os.path.join(output_dir, f'item_set_{item_set_ids[0]}_processed_{provider}.csv')
+    else:
+        sets_str = '_'.join(item_set_ids)
+        output_csv = os.path.join(output_dir, f'item_sets_{sets_str}_processed_{provider}.csv')
+    
     stats = ProcessingStats(total_items=len(items))
     logger.info(f"Processing {stats.total_items} items (async) using {provider}...")
     ner_fn = get_ner_callable(provider, config['temperature'])
@@ -604,22 +649,33 @@ def main() -> None:
         return
     config = load_config(provider=provider, batch_size=args.batch_size, max_retries=args.max_retries,
                          timeout=args.timeout, temperature=args.temperature)
-    item_set_id = args.item_set_id or input("Enter the item set ID: ")
-    if not validate_item_set_id(item_set_id):
-        raise ValueError("Invalid item set ID")
-    spatial_filter = get_item_set_spatial_coverage(item_set_id, timeout=config['timeout'])
+    item_set_input = args.item_set_id or input("Enter item set ID(s) (comma-separated): ")
+    item_set_ids = parse_item_set_ids(item_set_input)
+    if not item_set_ids:
+        raise ValueError("No valid item set IDs provided")
+    
+    logger.info(f"Processing item sets: {', '.join(item_set_ids)}")
+    spatial_filter = get_combined_spatial_coverage(item_set_ids, timeout=config['timeout'])
     if spatial_filter:
         logger.info(f"Spatial coverage filter: {spatial_filter}")
-    logger.info(f"Fetching items from set {item_set_id}...")
-    items = get_items_from_set(item_set_id, max_retries=config['max_retries'], timeout=config['timeout'])
+    
+    items = get_items_from_multiple_sets(item_set_ids, max_retries=config['max_retries'], timeout=config['timeout'])
     if not items:
         logger.warning("No items found.")
         return
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     default_output_dir = os.path.join(script_dir, 'output')
     output_dir = args.output_dir or default_output_dir
     os.makedirs(output_dir, exist_ok=True)
-    output_csv = os.path.join(output_dir, f'item_set_{item_set_id}_processed_{provider}.csv')
+    
+    # Create filename for multiple sets
+    if len(item_set_ids) == 1:
+        output_csv = os.path.join(output_dir, f'item_set_{item_set_ids[0]}_processed_{provider}.csv')
+    else:
+        sets_str = '_'.join(item_set_ids)
+        output_csv = os.path.join(output_dir, f'item_sets_{sets_str}_processed_{provider}.csv')
+    
     stats = ProcessingStats(total_items=len(items))
     fieldnames = ['o:id', 'Title', 'bibo:content', 'Subject AI', 'Spatial AI']
     logger.info(f"Processing {stats.total_items} items (sync) using {provider}...")
