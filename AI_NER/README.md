@@ -34,12 +34,14 @@ The NER module operates as a three-stage pipeline:
 - Gemini path requests JSON-style output (parsed with fallback regex)
 
 ### Script 2: Authority Reconciliation (`02_NER_reconciliation_Omeka.py`)
-- Multi-stage reconciliation process (spatial → subject/topic)
+- Multi-stage reconciliation process (spatial → combined subject+topic)
 - Authority dictionary building from multiple item sets
-- Ambiguous term detection and reporting
+- Ambiguous term detection & export (values mapping to >1 authority ID are NOT auto-linked)
 - Unreconciled entity tracking and export
+- Conservative fuzzy suggestion engine (token overlap + similarity thresholds)
+- Configurable tuning constants to control strictness & volume of suggestions
 - Comprehensive matching statistics
-- Preserves original data through iterative processing
+- Iterative update preserves original CSV columns
 
 ### Script 3: Database Update (`03_Omeka_update.py`)
 - Safe item updating with duplicate prevention
@@ -141,12 +143,64 @@ Comparison:
 ### Output Files
 
 - **After Script 1**: `item_set_<ID>_processed_<provider>.csv` (e.g., `_processed_openai.csv`, `_processed_gemini.csv`)
-- **After Script 2**: 
-   - `*_reconciled.csv` - Reconciled entity IDs
-   - `*_unreconciled_spatial.csv` - Unmatched spatial entities
-   - `*_unreconciled_subject.csv` - Unmatched subject entities  
-   - `*_ambiguous_authorities_*.csv` - Ambiguous authority matches
-- **After Script 3**: Database updated (no new files)
+- **After Script 2** (reconciliation): 
+   - `*_reconciled.csv` – Main CSV augmented with `Spatial AI Reconciled ID` & `Subject AI Reconciled ID`
+   - `*_unreconciled_spatial.csv` – Unmatched spatial values + counts
+   - `*_unreconciled_subject_and_topic.csv` – Unmatched subject/topic values + counts
+   - `*_ambiguous_authorities_spatial.csv` – Spatial terms that map to multiple authority records
+   - `*_ambiguous_authorities_subject_and_topic.csv` – Subject/topic ambiguous terms
+   - `*_potential_reconciliation_spatial.csv` – (Optional) Suggested spatial matches above thresholds
+   - `*_potential_reconciliation_subject_and_topic.csv` – Suggested subject/topic matches
+- **After Script 3**: Database updated (no new files created)
+
+> Note: The suggestion CSVs are intentionally small after recent tightening (from tens of thousands down to a few hundred). Further tuning instructions below.
+
+### Reconciliation Tuning (Script 2)
+
+The reconciliation script exposes **tunable constants** near the top of `02_NER_reconciliation_Omeka.py` so you can adjust recall vs precision without diving into function bodies.
+
+| Constant | Purpose | Typical Effect When Increased |
+|----------|---------|--------------------------------|
+| `BASE_MIN_SIMILARITY` | Minimum similarity for single-word values | Fewer suggestions overall |
+| `MULTI_WORD_MIN_SIMILARITY` | Baseline similarity for multi-word values | Stricter multi-token matching |
+| `STRONG_MATCH_THRESHOLD` | Threshold considered a “very strong” match (narrows band) | Narrows kept candidate band |
+| `MIN_TOKEN_OVERLAP` | Jaccard-like required overlap after stopword removal | Removes matches sharing only generic tokens |
+| `DEFAULT_MAX_CANDIDATES` | Max suggestions per unreconciled value | Caps review workload |
+| `GENERIC_TERMS` | Set of broad words that only allow near-exact matches | Blocks noisy generic suggestions |
+| `STOPWORDS` | Tokens excluded before overlap calc | Adjust if domain terms wrongly discarded |
+
+Core heuristics now in place:
+- Require token overlap (after stopword & diacritic normalization) for multi-word comparisons.
+- Generic / thematic vocabulary (e.g., *religion*, *transport*, *formation*) is suppressed unless near-exact.
+- Only the best variant per authority item is kept (deduplicated by item ID).
+- A narrow score band (±0.02–0.03) retains only candidates nearly as good as the top one.
+- Default: **1 suggestion per unreconciled value** to minimize triage effort.
+
+#### Common Adjustments
+
+| Goal | Recommended Change |
+|------|--------------------|
+| Even fewer suggestions | Raise `BASE_MIN_SIMILARITY` to 0.85–0.90; raise `MULTI_WORD_MIN_SIMILARITY` to 0.92–0.95 |
+| Allow more variants | Lower `MIN_TOKEN_OVERLAP` to 0.4 and raise `DEFAULT_MAX_CANDIDATES` to 2–3 |
+| Eliminate generic one-word suggestions | Add them to `GENERIC_TERMS` or set their branch threshold to 1.0 |
+| Too many near-identical org names | Raise `STRONG_MATCH_THRESHOLD` to 0.95 and keep `band` narrow |
+| Missing true matches due to token filtering | Remove that token from `STOPWORDS` |
+
+#### Adding a Frequency Gate (Optional)
+If you only want suggestions for unreconciled terms appearing at least N times, you can insert a check in `create_potential_reconciliation_csv` after reading the `Count` column:
+
+```python
+MIN_COUNT_FOR_SUGGESTION = 3
+if int(count) < MIN_COUNT_FOR_SUGGESTION:
+      continue
+```
+
+#### Disabling Suggestions Entirely
+Set `DEFAULT_MAX_CANDIDATES = 0` (or short‑circuit `create_potential_reconciliation_csv` early) to skip producing the potential reconciliation CSVs.
+
+### Ambiguous Terms Handling
+
+Any value that resolves to **multiple authority IDs** (same normalized forms) is written to the `*_ambiguous_authorities_*.csv` files and **not** auto-reconciled. These should be manually reviewed—typically by refining authority records (adding/clarifying alternative titles) or pruning duplicates.
 
 ## Requirements
 
@@ -167,7 +221,7 @@ Comparison:
 ### Authority Item Sets (for Script 2)
 The reconciliation script expects specific Omeka S item sets:
 - **Spatial authorities**: Item set 268 (spatial coverage terms)
-- **Subject authorities**: Item sets 854, 2, 266 (subject/topic terms)
+- **Subject authorities**: Item sets 854, 2, 266 (subject/topic terms) — combined during processing with topic set(s)
 
 ## Notes
 
