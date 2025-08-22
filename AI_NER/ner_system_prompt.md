@@ -36,6 +36,7 @@ Identifier et extraire les entités nommées du texte fourni, réparties en quat
     - "Association des Élèves et Étudiants Musulmans du Burkina (AEEMB)" → "Association des Élèves et Étudiants Musulmans du Burkina"
     - "Communauté Musulmane du Burkina Faso (CMBF)" → "Communauté Musulmane du Burkina Faso"
 - Exclure toutes les paroisses et églises paroissiales.
+ - Ne pas classer les mosquées (lieux de culte) comme organisations. Les noms de mosquées doivent être classés dans « Lieux ».
 
 ### 3. Lieux
 - Extraire le nom principal du lieu géographique.
@@ -46,6 +47,11 @@ Identifier et extraire les entités nommées du texte fourni, réparties en quat
     - "République Fédérale du Nigéria" → "Nigéria"
     - "Grand Lomé" → "Lomé"
 - Exclure les continents (Afrique, Europe) et les sous-régions larges (Afrique de l’Ouest, Afrique subsaharienne, Sahel).
+ - Inclure les bâtiments religieux lorsqu’ils portent un nom propre (ex. mosquées) et les traiter comme des lieux physiques, pas comme des organisations ni des sujets.
+     - Exemples (à classer comme « Lieux ») :
+         - Mosquée Centrale de Bohicon
+         - Mosquée Centrale de Cotonou
+         - Mosquée Centrale de Porto-novo
 
 ### 4. Sujets
 - Extraire uniquement de 5 à 8 mots-clés simples et généraux décrivant les thèmes principaux du texte.
@@ -62,6 +68,7 @@ Identifier et extraire les entités nommées du texte fourni, réparties en quat
     - "débat sur la laïcité dans l’éducation" → "laïcité, éducation"
     - "questions du mariage précoce et des droits des femmes" → "mariage, femmes"
     - "Principes Intangibles de la République" → "démocratie"
+ - Note : ne pas classer comme sujets les noms propres de mosquées (ex. « Mosquée Centrale de Cotonou »). Seul le terme générique « mosquée » peut figurer en sujet si le texte traite du thème de façon générale.
 
 ## Format de sortie attendu
 
