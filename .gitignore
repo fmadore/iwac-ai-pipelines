@@ -58,6 +58,7 @@ AI_ocr_extraction/OCR_Results/
 AI_ocr_extraction/PDF/
 AI_summary/Summaries_FR_TXT/
 AI_summary/TXT/
+NotebookLM/extracted_articles/
 
 # Temporary files
 *.tmp
