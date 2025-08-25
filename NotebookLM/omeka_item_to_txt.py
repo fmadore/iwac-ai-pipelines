@@ -21,6 +21,12 @@ How it works
      - CONTENT: bibo:content (first @value)
 6) Writes a structured, human-readable TXT with clear separators per article
 
+Alternative flow (Item Set)
+- Instead of a single item, you can choose an Item Set ID. The script fetches
+    all items in that set (paginated), keeps those of type "bibo:Article", and
+    produces the same NotebookLM-friendly TXT. The Item Set title is taken from
+    dcterms:title[0].@value.
+
 Output
 - File path: NotebookLM/extracted_articles/<item-title>_articles.txt
 - Encoding: UTF-8
@@ -194,19 +200,77 @@ def format_article(article: JSONObj) -> str:
     return "\n".join(lines)
 
 
+def fetch_item_set(env: Dict[str, str], set_id: str) -> Optional[JSONObj]:
+    """Fetch a single Item Set resource by ID.
+
+    Args:
+        env: Environment dict from load_env().
+        set_id: Numeric string ID for the item set.
+
+    Returns:
+        The item set JSON object, or None if not found.
+    """
+    url = f"{env['base']}/item_sets/{set_id}"
+    params = {
+        "key_identity": env["kid"],
+        "key_credential": env["kcr"],
+    }
+    data = get_json(url, params)
+    return data if isinstance(data, dict) else None
+
+
+def fetch_items_in_set(env: Dict[str, str], set_id: str, per_page: int = 100) -> List[JSONObj]:
+    """Fetch all items that belong to the given Item Set (paginated).
+
+    Args:
+        env: Environment dict from load_env().
+        set_id: Numeric string ID for the item set.
+        per_page: Page size to request from Omeka API.
+
+    Returns:
+        List of item JSON objects (may be empty).
+    """
+    base_items_url = f"{env['base']}/items"
+    all_items: List[JSONObj] = []
+    page = 1
+    while True:
+        params = {
+            "key_identity": env["kid"],
+            "key_credential": env["kcr"],
+            "item_set_id": set_id,
+            "per_page": str(per_page),
+            "page": str(page),
+        }
+        data = get_json(base_items_url, params)
+        if not isinstance(data, list) or not data:
+            break
+        # Ensure dict objects only
+        page_items = [d for d in data if isinstance(d, dict)]
+        all_items.extend(page_items)
+        if len(page_items) < per_page:
+            break
+        page += 1
+    return all_items
+
+
 def main():
-    print("\n=== Omeka Item -> Single TXT Export (NotebookLM-ready) ===")
+    print("\n=== Omeka -> TXT Export (NotebookLM-ready) ===")
     env = load_env()
 
-    # Determine the target item ID from the CLI (preferred) or prompt.
-    if len(sys.argv) > 1:
-        item_id = sys.argv[1].strip()
-        print(f"Using item ID from arguments: {item_id}")
+    # Mode selection: Item (reverse subjects) or Item Set.
+    mode = None
+    cli_arg = sys.argv[1].strip() if len(sys.argv) > 1 else None
+    if cli_arg and cli_arg.isdigit():
+        # Backward-compatible: single numeric arg implies Item mode with that ID
+        mode = "item"
+        item_id = cli_arg
+        print(f"Using Item mode with ID from arguments: {item_id}")
     else:
-        item_id = input("Enter the Omeka item ID: ").strip()
-    if not item_id.isdigit():
-        print("Item ID must be a number.")
-        sys.exit(1)
+        print("Choose source mode:")
+        print("  1) Item (via @reverse.dcterms:subject) [default]")
+        print("  2) Item Set (all items in the set)")
+        choice = input("Enter 1 or 2: ").strip() or "1"
+        mode = "set" if choice == "2" else "item"
 
     # Prepare output directory relative to this script. NotebookLM can then
     # ingest the generated TXT directly from NotebookLM/extracted_articles.
@@ -214,55 +278,104 @@ def main():
     out_dir = os.path.join(script_dir, "extracted_articles")
     os.makedirs(out_dir, exist_ok=True)
 
-    # Fetch the main Omeka item to discover related content.
-    item_url = f"{env['base']}/items/{item_id}"
     params = {
         "key_identity": env["kid"],
         "key_credential": env["kcr"],
     }
-    item = get_json(item_url, params)
-    if not item:
-        print("Could not fetch the main item. Exiting.")
-        sys.exit(1)
-
-    item_title = item.get("o:title") or f"omeka_item_{item_id}"
-    safe_title = sanitize_filename(item_title)
-
-    # Collect candidate related items from @reverse.dcterms:subject.
-    # Omeka places reverse references under the "@reverse" key; we filter for
-    # items that actually are of type bibo:Article a few lines below.
-    reverse = item.get("@reverse", {})
-    related = reverse.get("dcterms:subject") or []
-    candidate_urls: List[str] = []
-    for entry in related:
-        if isinstance(entry, dict) and "@id" in entry:
-            candidate_urls.append(entry["@id"])
-
-    if not candidate_urls:
-        print("No related items found under dcterms:subject.")
-        sys.exit(0)
-
-    print(f"Found {len(candidate_urls)} related items. Fetching articles...")
 
     articles: List[Dict[str, Any]] = []
-    for idx, url in enumerate(candidate_urls, start=1):
-        data = get_json(url, params)
-        if not data:
-            continue
-        types = data.get("@type", [])
-        if isinstance(types, list) and "bibo:Article" in types:
-            articles.append(data)
-            title = data.get("o:title", "Untitled")
-            print(f"  [{idx}/{len(candidate_urls)}] Article: {title}")
+    header_title = ""
+    header_prefix = ""
+    file_stub = ""
+
+    if mode == "item":
+        # Determine the target item ID from CLI fallback or prompt.
+        if not cli_arg:
+            item_id = input("Enter the Omeka item ID: ").strip()
+        if not item_id.isdigit():
+            print("Item ID must be a number.")
+            sys.exit(1)
+
+        # Fetch the main Omeka item to discover related content.
+        item_url = f"{env['base']}/items/{item_id}"
+        item = get_json(item_url, params)
+        if not item or not isinstance(item, dict):
+            print("Could not fetch the main item. Exiting.")
+            sys.exit(1)
+
+        item_title = item.get("o:title") or f"omeka_item_{item_id}"
+        safe_title = sanitize_filename(item_title)
+
+        # Collect candidate related items from @reverse.dcterms:subject.
+        reverse = item.get("@reverse", {})
+        related = reverse.get("dcterms:subject") or []
+        candidate_urls: List[str] = []
+        for entry in related:
+            if isinstance(entry, dict) and "@id" in entry:
+                candidate_urls.append(entry["@id"])
+
+        if not candidate_urls:
+            print("No related items found under dcterms:subject.")
+            sys.exit(0)
+
+        print(f"Found {len(candidate_urls)} related items. Fetching articles...")
+        for idx, url in enumerate(candidate_urls, start=1):
+            data = get_json(url, params)
+            if not isinstance(data, dict):
+                continue
+            types = data.get("@type", [])
+            if isinstance(types, list) and "bibo:Article" in types:
+                articles.append(data)
+                title = data.get("o:title", "Untitled")
+                print(f"  [{idx}/{len(candidate_urls)}] Article: {title}")
+
+        header_title = f"Item: {item_title} (ID {item_id})"
+        header_prefix = "Item"
+        file_stub = safe_title
+
+    else:  # mode == "set"
+        set_id = input("Enter the Omeka item set ID: ").strip()
+        if not set_id.isdigit():
+            print("Item set ID must be a number.")
+            sys.exit(1)
+
+        # Fetch item set (for title) and then all items in the set.
+        item_set = fetch_item_set(env, set_id)
+        if not item_set:
+            print("Could not fetch the item set. Exiting.")
+            sys.exit(1)
+
+        set_title = extract_first_value(item_set.get("dcterms:title")) or f"item_set_{set_id}"
+        safe_set_title = sanitize_filename(set_title)
+
+        print("Listing items in the set (may take a moment)...")
+        items = fetch_items_in_set(env, set_id, per_page=100)
+        print(f"Found {len(items)} items in the set. Filtering bibo:Article and bibo:Issue...")
+
+        for idx, it in enumerate(items, start=1):
+            types = it.get("@type", [])
+            if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
+                articles.append(it)
+                title = it.get("o:title", "Untitled")
+                label = "Article" if "bibo:Article" in types else ("Issue" if "bibo:Issue" in types else "Item")
+                print(f"  [{idx}/{len(items)}] {label}: {title}")
+
+        header_title = f"Item Set: {set_title} (ID {set_id})"
+        header_prefix = "Item Set"
+        file_stub = safe_set_title
 
     if not articles:
         print("No bibo:Article items found.")
         sys.exit(0)
 
     # Build TXT: one header for the whole export, then a block per article.
-    txt_path = os.path.join(out_dir, f"{safe_title}_articles.txt")
+    txt_path = os.path.join(out_dir, f"{file_stub}_articles.txt")
     with open(txt_path, "w", encoding="utf-8") as f:
-        header = f"Item: {item_title} (ID {item_id})\nExported: {datetime.now().isoformat(timespec='seconds')}\nArticles: {len(articles)}\n"
+        header = (
+            f"{header_title}\n"
+            f"Exported: {datetime.now().isoformat(timespec='seconds')}\n"
+            f"Articles: {len(articles)}\n"
+        )
         f.write(header + "\n" + ("-" * 80) + "\n\n")
         for art in articles:
             f.write(format_article(art))
