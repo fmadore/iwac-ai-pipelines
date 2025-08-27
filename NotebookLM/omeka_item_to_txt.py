@@ -27,8 +27,16 @@ Alternative flow (Item Set)
     produces the same NotebookLM-friendly TXT. The Item Set title is taken from
     dcterms:title[0].@value.
 
+Multi-part Output
+- If more than 500 articles are found (to respect NotebookLM's 500k word limit),
+    the output is automatically split into multiple files:
+    - <item-title>_articles_part1.txt
+    - <item-title>_articles_part2.txt
+    - etc.
+
 Output
 - File path: NotebookLM/extracted_articles/<item-title>_articles.txt
+    (or _part1.txt, _part2.txt, etc. for large collections)
 - Encoding: UTF-8
 - Layout per article:
 
@@ -44,6 +52,7 @@ Notes
 - The format favors readability and simple chunking for tools like NotebookLM.
 - Only the first value is taken for multi-valued fields (date/content) to avoid
     duplications and keep the file compact.
+- Maximum 500 articles per file to stay within NotebookLM's word limits.
 """
 
 import os
@@ -253,9 +262,33 @@ def fetch_items_in_set(env: Dict[str, str], set_id: str, per_page: int = 100) ->
     return all_items
 
 
+def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title: str, part_num: int = None) -> None:
+    """Write a batch of articles to a single TXT file.
+    
+    Args:
+        articles: List of article JSON objects to write.
+        file_path: Full path to the output file.
+        header_title: Title for the file header.
+        part_num: Part number for multi-part exports (None for single file).
+    """
+    with open(file_path, "w", encoding="utf-8") as f:
+        part_suffix = f" (Part {part_num})" if part_num else ""
+        header = (
+            f"{header_title}{part_suffix}\n"
+            f"Exported: {datetime.now().isoformat(timespec='seconds')}\n"
+            f"Articles: {len(articles)}\n"
+        )
+        f.write(header + "\n" + ("-" * 80) + "\n\n")
+        for art in articles:
+            f.write(format_article(art))
+
+
 def main():
     print("\n=== Omeka -> TXT Export (NotebookLM-ready) ===")
     env = load_env()
+
+    # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
+    MAX_ITEMS_PER_FILE = 500
 
     # Mode selection: Item (reverse subjects) or Item Set.
     mode = None
@@ -368,19 +401,33 @@ def main():
         print("No bibo:Article items found.")
         sys.exit(0)
 
-    # Build TXT: one header for the whole export, then a block per article.
-    txt_path = os.path.join(out_dir, f"{file_stub}_articles.txt")
-    with open(txt_path, "w", encoding="utf-8") as f:
-        header = (
-            f"{header_title}\n"
-            f"Exported: {datetime.now().isoformat(timespec='seconds')}\n"
-            f"Articles: {len(articles)}\n"
-        )
-        f.write(header + "\n" + ("-" * 80) + "\n\n")
-        for art in articles:
-            f.write(format_article(art))
-
-    print(f"\nDone. Wrote {len(articles)} articles to:\n{txt_path}")
+    # Split articles into chunks of MAX_ITEMS_PER_FILE
+    total_articles = len(articles)
+    if total_articles <= MAX_ITEMS_PER_FILE:
+        # Single file output
+        txt_path = os.path.join(out_dir, f"{file_stub}_articles.txt")
+        write_articles_to_file(articles, txt_path, header_title)
+        print(f"\nDone. Wrote {total_articles} articles to:\n{txt_path}")
+    else:
+        # Multi-part output
+        num_parts = (total_articles + MAX_ITEMS_PER_FILE - 1) // MAX_ITEMS_PER_FILE  # Ceiling division
+        print(f"\nTotal articles ({total_articles}) exceeds limit of {MAX_ITEMS_PER_FILE} per file.")
+        print(f"Splitting into {num_parts} parts...")
+        
+        written_files = []
+        for part_num in range(1, num_parts + 1):
+            start_idx = (part_num - 1) * MAX_ITEMS_PER_FILE
+            end_idx = min(start_idx + MAX_ITEMS_PER_FILE, total_articles)
+            part_articles = articles[start_idx:end_idx]
+            
+            txt_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.txt")
+            write_articles_to_file(part_articles, txt_path, header_title, part_num)
+            written_files.append(txt_path)
+            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(txt_path)}")
+        
+        print(f"\nDone. Created {num_parts} files with {total_articles} total articles:")
+        for file_path in written_files:
+            print(f"  {file_path}")
 
 
 if __name__ == "__main__":
