@@ -108,6 +108,24 @@ class GeminiOCR:
             max_output_tokens=65535,  # Support for long documents
             response_mime_type="text/plain",  # Ensure text output
             thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
+            safety_settings=[
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                )
+            ]
         )
     
     def _get_system_instruction(self):
@@ -268,9 +286,41 @@ class GeminiOCR:
                 config=self.generation_config
             )
             
-            # Validate response
-            if not response.candidates or not response.candidates[0].content:
-                raise Exception("No valid response from Gemini")
+            # Validate response and handle RECITATION errors
+            if not response.candidates:
+                raise Exception("No candidates in Gemini response")
+            
+            candidate = response.candidates[0]
+            
+            # Check for RECITATION errors in inline processing
+            if not candidate.content or not candidate.content.parts:
+                finish_reason = candidate.finish_reason
+                if finish_reason == types.FinishReason.RECITATION:
+                    print("  └─ ⚠️ Inline processing hit copyright detection, trying alternative...")
+                    # Try a simpler prompt for inline processing
+                    simple_prompt = (
+                        "Please extract the text content from this document image for educational purposes. "
+                        "Focus on accurate transcription of all visible text."
+                    )
+                    
+                    retry_response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=[simple_prompt, image_part],
+                        config=self.generation_config
+                    )
+                    
+                    if (retry_response.candidates and 
+                        retry_response.candidates[0].content and 
+                        retry_response.candidates[0].content.parts):
+                        text_content = retry_response.text.replace('\xa0', ' ').strip()
+                        if text_content:
+                            print("  └─ ✅ OCR complete (inline with alternative prompt)")
+                            return text_content
+                    
+                    # If still failing, let it fall back to file upload
+                    raise Exception("Inline copyright retry failed")
+                else:
+                    raise Exception(f"No valid response from Gemini. Finish reason: {finish_reason}")
             
             text_content = response.text.replace('\xa0', ' ').strip()
             if not text_content:
@@ -377,30 +427,62 @@ class GeminiOCR:
                         if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
                             safety_info = f" Safety ratings: {candidate.safety_ratings}"
                         
-                        if finish_reason == 4:  # Copyright detection
-                            print("  └─ ⚠️ Copyright detection triggered, trying alternative prompt...")
-                            alternative_prompt = (
-                                self._get_system_instruction() + "\n\n" +
-                                "This is a fair use academic OCR request for historical document preservation. "
-                                "Please extract the text content from this historical document image."
-                            )
-                            retry_response = self.client.models.generate_content(
-                                model=self.model_name,
-                                contents=[alternative_prompt, image_file],
-                                config=self.generation_config
-                            )
+                        # Handle RECITATION errors (copyright detection) with multiple strategies
+                        if finish_reason == types.FinishReason.RECITATION:
+                            print("  └─ ⚠️ Copyright detection triggered, trying alternative approaches...")
                             
-                            if (retry_response.candidates and 
-                                retry_response.candidates[0].content and 
-                                retry_response.candidates[0].content.parts):
-                                text_content = retry_response.text.replace('\xa0', ' ').strip()
-                                if text_content:
-                                    print("  └─ ✅ OCR complete (after copyright retry)")
-                                    return text_content
-                                else:
-                                    raise Exception("Empty response after copyright retry")
-                            else:
-                                raise Exception(f"Failed after copyright retry. Finish reason: {retry_response.candidates[0].finish_reason if retry_response.candidates else 'Unknown'}")
+                            # Strategy 1: Academic fair use prompt
+                            alternative_prompts = [
+                                (
+                                    "Academic Fair Use Request",
+                                    "This is a legitimate academic research request for historical document preservation and scholarly analysis. "
+                                    "Under fair use principles, please perform OCR text extraction from this historical newspaper document. "
+                                    "The purpose is archival preservation and academic research, not commercial reproduction. "
+                                    "Please extract all visible text while maintaining original formatting and structure."
+                                ),
+                                (
+                                    "Educational OCR Request", 
+                                    "Please assist with educational OCR processing of this historical document image. "
+                                    "Extract the text content for research and educational purposes. "
+                                    "Focus on accuracy and completeness of the text transcription."
+                                ),
+                                (
+                                    "Technical OCR Analysis",
+                                    "Perform technical optical character recognition analysis on this document image. "
+                                    "Output the detected text content with preserved formatting. "
+                                    "This is for document digitization and preservation purposes."
+                                )
+                            ]
+                            
+                            for strategy_name, alternative_prompt in alternative_prompts:
+                                try:
+                                    print(f"  └─ 🔄 Trying {strategy_name}...")
+                                    retry_response = self.client.models.generate_content(
+                                        model=self.model_name,
+                                        contents=[alternative_prompt, image_file],
+                                        config=self.generation_config
+                                    )
+                                    
+                                    if (retry_response.candidates and 
+                                        retry_response.candidates[0].content and 
+                                        retry_response.candidates[0].content.parts):
+                                        text_content = retry_response.text.replace('\xa0', ' ').strip()
+                                        if text_content:
+                                            print(f"  └─ ✅ OCR complete (using {strategy_name})")
+                                            return text_content
+                                        else:
+                                            print(f"  └─ ⚠️ {strategy_name} returned empty response")
+                                    else:
+                                        retry_finish_reason = retry_response.candidates[0].finish_reason if retry_response.candidates else 'Unknown'
+                                        print(f"  └─ ⚠️ {strategy_name} failed. Finish reason: {retry_finish_reason}")
+                                        
+                                except Exception as e:
+                                    print(f"  └─ ⚠️ {strategy_name} error: {str(e)}")
+                                    continue
+                            
+                            # If all strategies failed, raise the original error
+                            raise Exception(f"All copyright retry strategies failed. Original finish reason: {finish_reason}")
+                            
                         else:
                             raise Exception(f"Response lacks content. Finish reason: {finish_reason}.{safety_info}")
                     
@@ -592,15 +674,16 @@ def main():
         
         try:
             ocr.process_pdf(pdf_path, output_dir)
-            overall_stats['processed_pdfs'] += 1
             
-            # Check if output file has content
+            # Check if output file has content before marking as successful
             output_file = output_dir / f"{pdf_path.stem}.txt"
             if output_file.exists() and output_file.stat().st_size > 100:  # At least 100 bytes
+                overall_stats['processed_pdfs'] += 1
                 logging.info(f"Successfully processed {pdf_path.name}")
             else:
                 overall_stats['empty_outputs'] += 1
-                logging.warning(f"Output file for {pdf_path.name} is empty or very small")
+                overall_stats['failed_pdfs'] += 1  # Empty output counts as failure
+                logging.warning(f"Output file for {pdf_path.name} is empty or very small - counting as failed")
                 
         except Exception as e:
             overall_stats['failed_pdfs'] += 1
@@ -614,7 +697,7 @@ def main():
     print(f"Total PDFs found: {overall_stats['total_pdfs']}")
     print(f"Successfully processed: {overall_stats['processed_pdfs']}")
     print(f"Failed to process: {overall_stats['failed_pdfs']}")
-    print(f"Empty/small outputs: {overall_stats['empty_outputs']}")
+    print(f"  └─ Empty/small outputs: {overall_stats['empty_outputs']}")
     
     if overall_stats['total_pdfs'] > 0:
         success_rate = (overall_stats['processed_pdfs'] / overall_stats['total_pdfs']) * 100

@@ -27,6 +27,8 @@ You can keep both processing scripts; simply run the one appropriate for the col
 - **Automatic database updates** preserving existing metadata
 - **Configurable AI models** (Gemini 2.5 Flash or Pro)
 - **Dedicated system prompts** for printed (`ocr_system_prompt.md`) and handwritten (`htr_system_prompt.md`) material
+- **Intelligent copyright handling** with automatic RECITATION error recovery using multiple fallback strategies
+- **Fair use compliance** with academic research-focused prompts and safety configurations
 
 ## Prerequisites
 
@@ -58,6 +60,29 @@ Required packages:
 1. Download Poppler from: https://github.com/oschwartz10612/poppler-windows/releases
 2. Extract to `C:\Program Files\poppler\`
 3. The pipeline expects Poppler at: `C:\Program Files\poppler\Library\bin`
+
+## Model Selection Considerations
+
+Both OCR and HTR scripts offer two Gemini model options:
+
+### Gemini 2.5 Flash
+- **Faster processing** and lower cost
+- **Good accuracy** for most documents
+- **More conservative** copyright detection (higher RECITATION rate)
+- **Best for**: Modern documents, clear scans, non-copyrighted content
+- **Fallback handling**: Automatic alternative prompts for RECITATION errors
+
+### Gemini 2.5 Pro  
+- **Higher accuracy** and more sophisticated reasoning
+- **Slower processing** and higher cost
+- **Less restrictive** copyright detection (lower RECITATION rate)
+- **Best for**: Complex layouts, poor quality scans, historical copyrighted material
+- **Thinking mode**: Uses enhanced reasoning for difficult documents
+
+### Recommendation
+- **Start with Flash** for speed and cost efficiency
+- **Switch to Pro** if experiencing frequent RECITATION errors
+- **Use Pro** for challenging historical documents or newspapers with complex layouts
 
 ## Configuration
 
@@ -168,6 +193,54 @@ The pipeline includes comprehensive error handling:
 - **File corruption** detection and recovery
 - **Missing dependencies** with clear error messages
 - **Partial processing** continuation after errors
+- **RECITATION errors** with intelligent fallback strategies (see below)
+
+### RECITATION Error Handling (Copyright Detection)
+
+Gemini models (especially Flash) may trigger `FinishReason.RECITATION` when they detect potentially copyrighted content in historical documents. The pipeline automatically handles this with multi-layered fallback strategies:
+
+#### When RECITATION Errors Occur
+- **Primary trigger**: Gemini returns `FinishReason.RECITATION` 
+- **Secondary trigger**: Empty response with no content/parts
+- **Common cause**: Historical newspaper content triggering overly conservative copyright detection
+
+#### Automatic Fallback Strategies
+
+**1. Inline Processing Fallback**
+When smaller images (<15MB) hit RECITATION during inline processing:
+```
+"Please extract the text content from this document image for educational purposes. 
+Focus on accurate transcription of all visible text."
+```
+
+**2. File Upload Multi-Strategy Approach**
+When larger images hit RECITATION during file upload, the system tries three escalating strategies:
+
+- **Academic Fair Use**: Emphasizes legitimate research, archival preservation, and fair use principles
+- **Educational Request**: Focuses on educational and research purposes
+- **Technical Analysis**: Frames as technical OCR analysis for digitization
+
+#### Safety Settings Configuration
+The pipeline configures Gemini with permissive safety settings for legitimate OCR tasks:
+- Harassment: `BLOCK_NONE`
+- Hate Speech: `BLOCK_NONE` 
+- Sexually Explicit: `BLOCK_NONE`
+- Dangerous Content: `BLOCK_NONE`
+
+#### Processing Flow
+1. **First attempt**: Uses full detailed system prompt
+2. **RECITATION detected**: Automatically tries alternative prompts
+3. **Success**: Continues with extracted text
+4. **All strategies fail**: Logs error and continues to next page/document
+
+#### Monitoring RECITATION Errors
+Watch for these log messages:
+- `"Copyright detection triggered, trying alternative approaches..."`
+- `"Trying Academic Fair Use Request..."`
+- `"OCR complete (using [Strategy Name])"`
+- `"All copyright retry strategies failed"`
+
+This ensures maximum success rate even when processing historical copyrighted material under fair use principles.
 
 ## Logging
 
@@ -215,6 +288,19 @@ Log files use timestamps and severity levels for easy debugging.
 4. **"OCR/HTR timeout"**
    - Large or complex PDFs may exceed timeout
    - Consider splitting large documents or reducing DPI if acceptable
+
+5. **"Response lacks content. Finish reason: FinishReason.RECITATION"**
+   - Gemini detected potential copyright content
+   - The pipeline automatically tries alternative prompts
+   - If all strategies fail, consider:
+     - Using Gemini Pro instead of Flash (less restrictive)
+     - Processing individual pages instead of full documents
+     - Manually reviewing content for copyright concerns
+
+6. **"All copyright retry strategies failed"**
+   - All RECITATION fallback strategies were exhausted
+   - Document may contain heavily copyrighted content
+   - Consider manual review or different processing approach
 
 ### Debug Mode
 
