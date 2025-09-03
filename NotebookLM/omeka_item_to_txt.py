@@ -28,7 +28,7 @@ Alternative flow (legacy Item mode)
     explicit Item Set export modes above.
 
 Multi-part Output
-- If more than 500 articles are found (to respect NotebookLM's 500k word limit),
+- If more than 250 articles are found (to respect NotebookLM's 500k word limit),
     the output is automatically split into multiple files:
     - <item-title>_articles_part1.txt
     - <item-title>_articles_part2.txt
@@ -52,7 +52,7 @@ Notes
 - The format favors readability and simple chunking for tools like NotebookLM.
 - Only the first value is taken for multi-valued fields (date/content) to avoid
     duplications and keep the file compact.
-- Maximum 500 articles per file to stay within NotebookLM's word limits.
+- Maximum 250 articles per file to stay within NotebookLM's word limits.
 """
 
 import os
@@ -379,7 +379,7 @@ def main():
     env = load_env()
 
     # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
-    MAX_ITEMS_PER_FILE = 500
+    MAX_ITEMS_PER_FILE = 250
 
     # Output directory relative to this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
