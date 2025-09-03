@@ -6,14 +6,15 @@ exports them to one consolidated UTF-8 text file that’s easy to ingest into
 NotebookLM.
 
 Input
-- An Omeka "item ID" (CLI arg or interactive prompt)
+- Option A: Export the whole IWAC collection (predefined country -> item set IDs)
+- Option B: Export a single Item Set by ID
 - Environment: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL in .env
 
 How it works
 1) Loads credentials from .env
-2) Downloads the main item: GET {OMEKA_BASE_URL}/items/{item_id}
-3) Looks at "@reverse.dcterms:subject" to find related items
-4) Keeps only items with type "bibo:Article"
+2) In "Whole IWAC" mode: iterate predefined Item Set IDs per country
+3) In "Single Item Set" mode: process only the provided Item Set ID
+4) For each item set, list items (paginated), keep "bibo:Article" (and "bibo:Issue")
 5) For each article, extracts:
      - TITLE: o:title
      - NEWSPAPER: dcterms:publisher (display_title)
@@ -21,11 +22,10 @@ How it works
      - CONTENT: bibo:content (first @value)
 6) Writes a structured, human-readable TXT with clear separators per article
 
-Alternative flow (Item Set)
-- Instead of a single item, you can choose an Item Set ID. The script fetches
-    all items in that set (paginated), keeps those of type "bibo:Article", and
-    produces the same NotebookLM-friendly TXT. The Item Set title is taken from
-    dcterms:title[0].@value.
+Alternative flow (legacy Item mode)
+- Previous versions supported exporting articles linked to a single Item via
+    "@reverse.dcterms:subject". That flow has been removed in favor of the
+    explicit Item Set export modes above.
 
 Multi-part Output
 - If more than 500 articles are found (to respect NotebookLM's 500k word limit),
@@ -60,7 +60,7 @@ import re
 import sys
 import json
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -68,6 +68,28 @@ from dotenv import load_dotenv
 # Lightweight aliases to make intent clearer when reading types
 JSONObj = Dict[str, Any]
 JSONLike = Union[Dict[str, Any], List[Any]]
+
+# -----------------------------------------------------------------------------
+# Configuration: Country -> Item Set IDs mapping for "Whole IWAC" export
+# Fill these lists with the Omeka Item Set IDs (as strings) that belong to each
+# country. Leave a list empty to skip that country.
+COUNTRY_ITEM_SETS: Dict[str, List[str]] = {
+    "Benin": [
+        "60638", "61062", "2185", "5502", "75959", "2186", "2188", "2187", "2191", "2190", "2189", "4922", "76053", "76081", "76059", "5501", "76070", "75960", "76071", "61063", "5500", "76072", "76073"
+    ],
+    "Burkina Faso": [
+        "2199", "2200", "23448", "23273", "23449", "5503", "2215", "2214", "2207", "2209", "2210", "2213", "2201", "75969"
+    ],
+    "Côte d'Ivoire": [
+        "43051",
+    ],
+    "Niger": [
+        "62021",
+    ],
+    "Togo": [
+        # "56789",
+    ],
+}
 
 
 def sanitize_filename(name: str) -> str:
@@ -262,6 +284,83 @@ def fetch_items_in_set(env: Dict[str, str], set_id: str, per_page: int = 100) ->
     return all_items
 
 
+def process_item_set(
+    env: Dict[str, str],
+    set_id: str,
+    out_dir: str,
+    max_items_per_file: int,
+    country_label: Optional[str] = None,
+) -> Tuple[int, List[str]]:
+    """Process a single Item Set ID: fetch, filter, and export to TXT.
+
+    Args:
+        env: Loaded environment dict with base URL and API keys.
+        set_id: The Omeka Item Set ID (string).
+        out_dir: Output directory for TXT files.
+        max_items_per_file: Max articles per file before splitting.
+        country_label: Optional country name for logging; not used in filenames.
+
+    Returns:
+        (article_count, [written_file_paths])
+    """
+    item_set = fetch_item_set(env, set_id)
+    if not item_set:
+        print(f"- Skipping Item Set {set_id}: not found or inaccessible.")
+        return 0, []
+
+    set_title = extract_first_value(item_set.get("dcterms:title")) or f"item_set_{set_id}"
+    safe_set_title = sanitize_filename(set_title)
+
+    prefix = f"[{country_label}] " if country_label else ""
+    print(f"{prefix}Listing items in Item Set {set_id} (\"{set_title}\")...")
+    items = fetch_items_in_set(env, set_id, per_page=100)
+    print(f"{prefix}Found {len(items)} items. Filtering bibo:Article and bibo:Issue…")
+
+    articles: List[JSONObj] = []
+    for idx, it in enumerate(items, start=1):
+        types = it.get("@type", [])
+        if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
+            articles.append(it)
+            if idx % 50 == 0:
+                # Periodic progress ping without flooding the console
+                print(f"  Processed {idx}/{len(items)}…")
+
+    if not articles:
+        print(f"{prefix}No bibo:Article items found in Item Set {set_id}.")
+        return 0, []
+
+    header_title = f"Item Set: {set_title} (ID {set_id})"
+    # Include set ID in file name to avoid collisions across countries/sets with similar titles
+    file_stub = f"{safe_set_title}_{set_id}"
+
+    written_files: List[str] = []
+    total_articles = len(articles)
+    # If a country label is provided, write into a country subfolder
+    target_dir = out_dir
+    if country_label:
+        country_dir = sanitize_filename(country_label)
+        target_dir = os.path.join(out_dir, country_dir)
+        os.makedirs(target_dir, exist_ok=True)
+    if total_articles <= max_items_per_file:
+        txt_path = os.path.join(target_dir, f"{file_stub}_articles.txt")
+        write_articles_to_file(articles, txt_path, header_title)
+        written_files.append(txt_path)
+        print(f"{prefix}Wrote {total_articles} articles -> {os.path.basename(txt_path)}")
+    else:
+        num_parts = (total_articles + max_items_per_file - 1) // max_items_per_file
+        print(f"{prefix}Total articles ({total_articles}) exceed {max_items_per_file}; splitting into {num_parts} parts…")
+        for part_num in range(1, num_parts + 1):
+            start_idx = (part_num - 1) * max_items_per_file
+            end_idx = min(start_idx + max_items_per_file, total_articles)
+            part_articles = articles[start_idx:end_idx]
+            txt_path = os.path.join(target_dir, f"{file_stub}_articles_part{part_num}.txt")
+            write_articles_to_file(part_articles, txt_path, header_title, part_num)
+            written_files.append(txt_path)
+            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(txt_path)}")
+
+    return total_articles, written_files
+
+
 def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title: str, part_num: int = None) -> None:
     """Write a batch of articles to a single TXT file.
     
@@ -290,144 +389,73 @@ def main():
     # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
     MAX_ITEMS_PER_FILE = 500
 
-    # Mode selection: Item (reverse subjects) or Item Set.
-    mode = None
-    cli_arg = sys.argv[1].strip() if len(sys.argv) > 1 else None
-    if cli_arg and cli_arg.isdigit():
-        # Backward-compatible: single numeric arg implies Item mode with that ID
-        mode = "item"
-        item_id = cli_arg
-        print(f"Using Item mode with ID from arguments: {item_id}")
-    else:
-        print("Choose source mode:")
-        print("  1) Item (via @reverse.dcterms:subject) [default]")
-        print("  2) Item Set (all items in the set)")
-        choice = input("Enter 1 or 2: ").strip() or "1"
-        mode = "set" if choice == "2" else "item"
-
-    # Prepare output directory relative to this script. NotebookLM can then
-    # ingest the generated TXT directly from NotebookLM/extracted_articles.
+    # Output directory relative to this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(script_dir, "extracted_articles")
     os.makedirs(out_dir, exist_ok=True)
 
-    params = {
-        "key_identity": env["kid"],
-        "key_credential": env["kcr"],
-    }
+    # Convenience CLI args (optional):
+    # - "all" or "--all" => whole collection
+    # - a number           => single item set ID
+    cli_arg = sys.argv[1].strip() if len(sys.argv) > 1 else None
+    export_whole = False
+    single_set_id: Optional[str] = None
+    if cli_arg:
+        if cli_arg.lower() in ("all", "--all"):
+            export_whole = True
+        elif cli_arg.isdigit():
+            single_set_id = cli_arg
+        else:
+            print(f"Unrecognized CLI arg '{cli_arg}'. Ignoring and switching to interactive mode…")
 
-    articles: List[Dict[str, Any]] = []
-    header_title = ""
-    header_prefix = ""
-    file_stub = ""
+    if not cli_arg:
+        ans = input("Export the whole IWAC Collection? (y/N): ").strip().lower()
+        export_whole = ans in ("y", "yes")
 
-    if mode == "item":
-        # Determine the target item ID from CLI fallback or prompt.
-        if not cli_arg:
-            item_id = input("Enter the Omeka item ID: ").strip()
-        if not item_id.isdigit():
-            print("Item ID must be a number.")
+    if not export_whole and not single_set_id:
+        single_set_id = input("Enter the Omeka Item Set ID to export: ").strip()
+        if not single_set_id.isdigit():
+            print("Item Set ID must be a number.")
             sys.exit(1)
 
-        # Fetch the main Omeka item to discover related content.
-        item_url = f"{env['base']}/items/{item_id}"
-        item = get_json(item_url, params)
-        if not item or not isinstance(item, dict):
-            print("Could not fetch the main item. Exiting.")
-            sys.exit(1)
-
-        item_title = item.get("o:title") or f"omeka_item_{item_id}"
-        safe_title = sanitize_filename(item_title)
-
-        # Collect candidate related items from @reverse.dcterms:subject.
-        reverse = item.get("@reverse", {})
-        related = reverse.get("dcterms:subject") or []
-        candidate_urls: List[str] = []
-        for entry in related:
-            if isinstance(entry, dict) and "@id" in entry:
-                candidate_urls.append(entry["@id"])
-
-        if not candidate_urls:
-            print("No related items found under dcterms:subject.")
-            sys.exit(0)
-
-        print(f"Found {len(candidate_urls)} related items. Fetching articles...")
-        for idx, url in enumerate(candidate_urls, start=1):
-            data = get_json(url, params)
-            if not isinstance(data, dict):
+    if export_whole:
+        print("\n=== Whole IWAC Collection export ===")
+        grand_total = 0
+        all_written: List[str] = []
+        # Iterate in the order provided above
+        for country in ["Benin", "Burkina Faso", "Côte d'Ivoire", "Niger", "Togo"]:
+            set_ids = COUNTRY_ITEM_SETS.get(country, [])
+            if not set_ids:
+                print(f"[Skip] {country}: no Item Set IDs configured.")
                 continue
-            types = data.get("@type", [])
-            if isinstance(types, list) and "bibo:Article" in types:
-                articles.append(data)
-                title = data.get("o:title", "Untitled")
-                print(f"  [{idx}/{len(candidate_urls)}] Article: {title}")
+            print(f"\n-- {country} --")
+            for sid in set_ids:
+                if not isinstance(sid, str) or not sid.isdigit():
+                    print(f"- Skipping invalid Item Set ID '{sid}' for {country}.")
+                    continue
+                count, files = process_item_set(env, sid, out_dir, MAX_ITEMS_PER_FILE, country_label=country)
+                grand_total += count
+                all_written.extend(files)
 
-        header_title = f"Item: {item_title} (ID {item_id})"
-        header_prefix = "Item"
-        file_stub = safe_title
+        print("\n=== Summary ===")
+        print(f"Total articles exported: {grand_total}")
+        if all_written:
+            print("Files created:")
+            for p in all_written:
+                print(f"  {p}")
+        else:
+            print("No files were created. Ensure COUNTRY_ITEM_SETS is configured.")
+        return
 
-    else:  # mode == "set"
-        set_id = input("Enter the Omeka item set ID: ").strip()
-        if not set_id.isdigit():
-            print("Item set ID must be a number.")
-            sys.exit(1)
-
-        # Fetch item set (for title) and then all items in the set.
-        item_set = fetch_item_set(env, set_id)
-        if not item_set:
-            print("Could not fetch the item set. Exiting.")
-            sys.exit(1)
-
-        set_title = extract_first_value(item_set.get("dcterms:title")) or f"item_set_{set_id}"
-        safe_set_title = sanitize_filename(set_title)
-
-        print("Listing items in the set (may take a moment)...")
-        items = fetch_items_in_set(env, set_id, per_page=100)
-        print(f"Found {len(items)} items in the set. Filtering bibo:Article and bibo:Issue...")
-
-        for idx, it in enumerate(items, start=1):
-            types = it.get("@type", [])
-            if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
-                articles.append(it)
-                title = it.get("o:title", "Untitled")
-                label = "Article" if "bibo:Article" in types else ("Issue" if "bibo:Issue" in types else "Item")
-                print(f"  [{idx}/{len(items)}] {label}: {title}")
-
-        header_title = f"Item Set: {set_title} (ID {set_id})"
-        header_prefix = "Item Set"
-        file_stub = safe_set_title
-
-    if not articles:
-        print("No bibo:Article items found.")
-        sys.exit(0)
-
-    # Split articles into chunks of MAX_ITEMS_PER_FILE
-    total_articles = len(articles)
-    if total_articles <= MAX_ITEMS_PER_FILE:
-        # Single file output
-        txt_path = os.path.join(out_dir, f"{file_stub}_articles.txt")
-        write_articles_to_file(articles, txt_path, header_title)
-        print(f"\nDone. Wrote {total_articles} articles to:\n{txt_path}")
+    # Single Item Set export path
+    assert single_set_id is not None
+    count, files = process_item_set(env, single_set_id, out_dir, MAX_ITEMS_PER_FILE)
+    if files:
+        print(f"\nDone. Exported {count} articles to:")
+        for p in files:
+            print(f"  {p}")
     else:
-        # Multi-part output
-        num_parts = (total_articles + MAX_ITEMS_PER_FILE - 1) // MAX_ITEMS_PER_FILE  # Ceiling division
-        print(f"\nTotal articles ({total_articles}) exceeds limit of {MAX_ITEMS_PER_FILE} per file.")
-        print(f"Splitting into {num_parts} parts...")
-        
-        written_files = []
-        for part_num in range(1, num_parts + 1):
-            start_idx = (part_num - 1) * MAX_ITEMS_PER_FILE
-            end_idx = min(start_idx + MAX_ITEMS_PER_FILE, total_articles)
-            part_articles = articles[start_idx:end_idx]
-            
-            txt_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.txt")
-            write_articles_to_file(part_articles, txt_path, header_title, part_num)
-            written_files.append(txt_path)
-            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(txt_path)}")
-        
-        print(f"\nDone. Created {num_parts} files with {total_articles} total articles:")
-        for file_path in written_files:
-            print(f"  {file_path}")
+        print("No files were created for the specified Item Set.")
 
 
 if __name__ == "__main__":
