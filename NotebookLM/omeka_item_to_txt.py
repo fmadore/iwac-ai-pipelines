@@ -20,7 +20,7 @@ How it works
      - NEWSPAPER: dcterms:publisher (display_title)
      - DATE: dcterms:date (first @value)
      - CONTENT: bibo:content (first @value)
-6) Writes a structured, human-readable TXT with clear separators per article
+6) Writes a Markdown-friendly TXT with clear separators per article
 
 Alternative flow (legacy Item mode)
 - Previous versions supported exporting articles linked to a single Item via
@@ -38,15 +38,15 @@ Output
 - File path: NotebookLM/extracted_articles/<item-title>_articles.txt
     (or _part1.txt, _part2.txt, etc. for large collections)
 - Encoding: UTF-8
-- Layout per article:
+- Layout per article (Markdown):
 
-        TITLE: <title>
-        NEWSPAPER: <publisher(s)>
-        DATE: <date>
-        CONTENT:
+        # <title>
+        **Newspaper:** <publisher(s)>
+        **Date:** <date>
+
         <article body>
 
-        ==============================================================================
+        ---
 
 Notes
 - The format favors readability and simple chunking for tools like NotebookLM.
@@ -81,13 +81,13 @@ COUNTRY_ITEM_SETS: Dict[str, List[str]] = {
         "2199", "2200", "23448", "23273", "23449", "5503", "2215", "2214", "2207", "2209", "2210", "2213", "2201", "75969"
     ],
     "Côte d'Ivoire": [
-        "43051",
+        "43051", "76357", "62076", "31882", "57945", "63444", "76253", "61684", "76239", "48249", "57943", "57944", "61320", "15845", "76364", "73533", "61289", "45390", "39797"
     ],
     "Niger": [
         "62021",
     ],
     "Togo": [
-        # "56789",
+        "67437", "25304", "67399", "9458", "67407", "67460", "67480", "67430", "5498", "67436", "67456", "5499"
     ],
 }
 
@@ -200,7 +200,7 @@ def extract_publishers(article: JSONObj) -> List[str]:
 
 
 def format_article(article: JSONObj) -> str:
-    """Build a plain-text block for a single bibo:Article.
+    """Build a Markdown block for a single bibo:Article.
 
     The block is designed to be readable and chunk-friendly for NotebookLM.
 
@@ -208,8 +208,8 @@ def format_article(article: JSONObj) -> str:
         article: Omeka JSON object representing a bibo:Article.
 
     Returns:
-        Formatted string containing TITLE, NEWSPAPER, DATE, and CONTENT, followed
-        by a consistent visual separator line.
+        Markdown string with a level-1 heading for the title, bold metadata
+        lines (Newspaper, Date), the content body, and a horizontal rule.
     """
     title = article.get("o:title") or "No title"
     date = extract_first_value(article.get("dcterms:date")) or "Unknown"
@@ -217,16 +217,15 @@ def format_article(article: JSONObj) -> str:
     publishers = extract_publishers(article)
     publisher_str = "; ".join(publishers) if publishers else "Unknown"
 
-    lines = [
-        f"TITLE: {title}",
-        f"NEWSPAPER: {publisher_str}",
-        f"DATE: {date}",
-    ]
-    if content:
-        lines.append("CONTENT:")
-        lines.append(content)
+    lines = [f"# {title}"]
+    lines.append(f"**Newspaper:** {publisher_str}")
+    lines.append(f"**Date:** {date}")
     lines.append("")
-    lines.append("=" * 80)
+    if content:
+        lines.append(content)
+        lines.append("")
+    # Markdown horizontal rule between articles
+    lines.append("---")
     lines.append("")
     return "\n".join(lines)
 
@@ -362,22 +361,15 @@ def process_item_set(
 
 
 def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title: str, part_num: int = None) -> None:
-    """Write a batch of articles to a single TXT file.
+    """Write a batch of articles to a single TXT file (Markdown, no top header).
     
     Args:
         articles: List of article JSON objects to write.
         file_path: Full path to the output file.
-        header_title: Title for the file header.
-        part_num: Part number for multi-part exports (None for single file).
+        header_title: Unused (kept for backward compatibility).
+        part_num: Part number for multi-part exports (unused in content).
     """
     with open(file_path, "w", encoding="utf-8") as f:
-        part_suffix = f" (Part {part_num})" if part_num else ""
-        header = (
-            f"{header_title}{part_suffix}\n"
-            f"Exported: {datetime.now().isoformat(timespec='seconds')}\n"
-            f"Articles: {len(articles)}\n"
-        )
-        f.write(header + "\n" + ("-" * 80) + "\n\n")
         for art in articles:
             f.write(format_article(art))
 
