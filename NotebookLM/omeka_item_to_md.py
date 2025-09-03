@@ -1,8 +1,8 @@
 """
-Omeka item to NotebookLM-ready TXT exporter.
+Omeka item to NotebookLM-ready Markdown exporter.
 
 This script fetches all newspaper articles linked to a single Omeka item and
-exports them to one consolidated UTF-8 text file that’s easy to ingest into
+exports them to one consolidated UTF-8 Markdown file that’s easy to ingest into
 NotebookLM.
 
 Input
@@ -20,7 +20,7 @@ How it works
      - NEWSPAPER: dcterms:publisher (display_title)
      - DATE: dcterms:date (first @value)
      - CONTENT: bibo:content (first @value)
-6) Writes a Markdown-friendly TXT with clear separators per article
+6) Writes a Markdown-friendly .md file with clear separators per article
 
 Alternative flow (legacy Item mode)
 - Previous versions supported exporting articles linked to a single Item via
@@ -30,13 +30,13 @@ Alternative flow (legacy Item mode)
 Multi-part Output
 - If more than 250 articles are found (to respect NotebookLM's 500k word limit),
     the output is automatically split into multiple files:
-    - <item-title>_articles_part1.txt
-    - <item-title>_articles_part2.txt
+    - <item-title>_articles_part1.md
+    - <item-title>_articles_part2.md
     - etc.
 
 Output
-- File path: NotebookLM/extracted_articles/<item-title>_articles.txt
-    (or _part1.txt, _part2.txt, etc. for large collections)
+- File path: NotebookLM/extracted_articles/<item-title>_articles.md
+    (or _part1.md, _part2.md, etc. for large collections)
 - Encoding: UTF-8
 - Layout per article (Markdown):
 
@@ -109,6 +109,29 @@ def sanitize_filename(name: str) -> str:
     name = re.sub(r"\s+", " ", name)
     # Trim and limit length
     return name[:180] or "untitled"
+
+
+def normalize_md_whitespace(text: str) -> str:
+    """Normalize whitespace to keep Markdown tidy.
+
+    - Convert CRLF/CR to LF
+    - Replace non-breaking spaces with regular spaces
+    - Trim trailing spaces
+    - Collapse 2+ consecutive blank lines to a single blank line
+    - Strip leading/trailing blank lines
+    """
+    if not text:
+        return text
+    # Normalize newlines
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # NBSP to normal space
+    text = text.replace("\u00A0", " ")
+    # Trim trailing spaces at line ends
+    text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+    # Collapse 2+ blank lines to a single blank line
+    text = re.sub(r"(\n[\t ]*){3,}", "\n\n", text)
+    # Remove leading/trailing blank lines
+    return text.strip()
 
 
 def load_env() -> Dict[str, str]:
@@ -214,6 +237,7 @@ def format_article(article: JSONObj) -> str:
     title = article.get("o:title") or "No title"
     date = extract_first_value(article.get("dcterms:date")) or "Unknown"
     content = extract_first_value(article.get("bibo:content")) or ""
+    content = normalize_md_whitespace(content)
     publishers = extract_publishers(article)
     publisher_str = "; ".join(publishers) if publishers else "Unknown"
 
@@ -289,6 +313,7 @@ def process_item_set(
     out_dir: str,
     max_items_per_file: int,
     country_label: Optional[str] = None,
+    file_ext: str = "md",
 ) -> Tuple[int, List[str]]:
     """Process a single Item Set ID: fetch, filter, and export to TXT.
 
@@ -340,11 +365,14 @@ def process_item_set(
         country_dir = sanitize_filename(country_label)
         target_dir = os.path.join(out_dir, country_dir)
         os.makedirs(target_dir, exist_ok=True)
+    # Normalize file extension (no leading dot)
+    file_ext = (file_ext or "md").lower().lstrip(".")
+
     if total_articles <= max_items_per_file:
-        txt_path = os.path.join(target_dir, f"{file_stub}_articles.txt")
-        write_articles_to_file(articles, txt_path, header_title)
-        written_files.append(txt_path)
-        print(f"{prefix}Wrote {total_articles} articles -> {os.path.basename(txt_path)}")
+        out_path = os.path.join(target_dir, f"{file_stub}_articles.{file_ext}")
+        write_articles_to_file(articles, out_path, header_title)
+        written_files.append(out_path)
+        print(f"{prefix}Wrote {total_articles} articles -> {os.path.basename(out_path)}")
     else:
         num_parts = (total_articles + max_items_per_file - 1) // max_items_per_file
         print(f"{prefix}Total articles ({total_articles}) exceed {max_items_per_file}; splitting into {num_parts} parts…")
@@ -352,16 +380,16 @@ def process_item_set(
             start_idx = (part_num - 1) * max_items_per_file
             end_idx = min(start_idx + max_items_per_file, total_articles)
             part_articles = articles[start_idx:end_idx]
-            txt_path = os.path.join(target_dir, f"{file_stub}_articles_part{part_num}.txt")
-            write_articles_to_file(part_articles, txt_path, header_title, part_num)
-            written_files.append(txt_path)
-            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(txt_path)}")
+            out_path = os.path.join(target_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
+            write_articles_to_file(part_articles, out_path, header_title, part_num)
+            written_files.append(out_path)
+            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(out_path)}")
 
     return total_articles, written_files
 
 
 def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title: str, part_num: int = None) -> None:
-    """Write a batch of articles to a single TXT file (Markdown, no top header).
+    """Write a batch of articles to a single Markdown file (no top header).
     
     Args:
         articles: List of article JSON objects to write.
@@ -375,7 +403,7 @@ def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title
 
 
 def main():
-    print("\n=== Omeka -> TXT Export (NotebookLM-ready) ===")
+    print("\n=== Omeka -> Markdown Export (NotebookLM-ready) ===")
     env = load_env()
 
     # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
@@ -385,6 +413,12 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(script_dir, "extracted_articles")
     os.makedirs(out_dir, exist_ok=True)
+
+    # Output file extension (default to md). Override via env NOTEBOOKLM_EXPORT_EXT (md|txt).
+    file_ext = os.getenv("NOTEBOOKLM_EXPORT_EXT", "md").lower().lstrip(".")
+    if file_ext not in ("md", "txt"):
+        print(f"Unrecognized NOTEBOOKLM_EXPORT_EXT='{file_ext}', defaulting to 'md'.")
+        file_ext = "md"
 
     # Convenience CLI args (optional):
     # - "all" or "--all" => whole collection
@@ -425,7 +459,7 @@ def main():
                 if not isinstance(sid, str) or not sid.isdigit():
                     print(f"- Skipping invalid Item Set ID '{sid}' for {country}.")
                     continue
-                count, files = process_item_set(env, sid, out_dir, MAX_ITEMS_PER_FILE, country_label=country)
+                count, files = process_item_set(env, sid, out_dir, MAX_ITEMS_PER_FILE, country_label=country, file_ext=file_ext)
                 grand_total += count
                 all_written.extend(files)
 
@@ -441,7 +475,7 @@ def main():
 
     # Single Item Set export path
     assert single_set_id is not None
-    count, files = process_item_set(env, single_set_id, out_dir, MAX_ITEMS_PER_FILE)
+    count, files = process_item_set(env, single_set_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
     if files:
         print(f"\nDone. Exported {count} articles to:")
         for p in files:

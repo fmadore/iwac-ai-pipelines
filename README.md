@@ -20,6 +20,9 @@ Downloads PDFs from Omeka S, performs OCR using Gemini's vision capabilities, an
 ### 📋 Summary Generation (`AI_summary/`)
 Generates concise French summaries of documents for improved searchability and quick content understanding.
 
+### 🧩 NotebookLM Markdown Exporter (`NotebookLM/`)
+Exports Omeka Item Sets into clean, NotebookLM-ready Markdown files (.md). Handles large collections by automatically splitting output into multiple parts. Default output is `.md` with an option to switch to `.txt` via an env var.
+
 ## Quick Start
 
 ### Prerequisites
@@ -61,6 +64,10 @@ GEMINI_API_KEY=your_gemini_api_key
 
 # OpenAI API (for ChatGPT features)
 OPENAI_API_KEY=your_openai_api_key
+
+# NotebookLM exporter (optional)
+# Default is "md". Set to "txt" to export plain text instead.
+NOTEBOOKLM_EXPORT_EXT=md
 ```
 
 ## Basic Usage
@@ -83,6 +90,26 @@ python 02_NER_reconciliation_Omeka.py
 # Step 3: Update Omeka S with reconciled data
 python 03_Omeka_update.py
 ```
+
+### Example: NotebookLM Markdown Exporter
+
+PowerShell (Windows):
+
+```powershell
+# Export the whole IWAC collection (uses predefined Item Set IDs per country)
+python .\NotebookLM\omeka_item_to_md.py all
+
+# Export a single Item Set by ID
+python .\NotebookLM\omeka_item_to_md.py 62076
+
+# Optional: export as .txt instead of .md for this session
+$env:NOTEBOOKLM_EXPORT_EXT = "txt"
+python .\NotebookLM\omeka_item_to_md.py 62076
+```
+
+Output:
+- Files are written to `NotebookLM/extracted_articles/` (subfolders per country when exporting “all”).
+- Filenames: `<item-set-title>_<item-set-id>_articles.md` (or `_partN.md` when large).
 
 ## Pipeline Details
 
@@ -114,6 +141,7 @@ Detailed documentation for each pipeline is available in their respective direct
 - [OCR Correction](AI_ocr_correction/README.md)
 - [OCR Extraction](AI_ocr_extraction/README.md)
 - [Summary Generation](AI_summary/README.md)
+ - [NotebookLM Markdown Exporter](NotebookLM/)
 
 ## Contributing
 
