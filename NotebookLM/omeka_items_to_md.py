@@ -1,6 +1,21 @@
 """
 Omeka item to NotebookLM-ready Markdown exporter.
 
+This script fetches newspaper articles from an Omeka S digital archive and
+exports them to consolidated UTF-8 Markdown files optimized for ingestion into
+Google's NotebookLM AI research tool.
+
+=== Overview ===
+
+The IWAC (Institut des mondes africains) project digitizes West African newspapers
+from the colonial and post-independence periods. This script helps researchers
+export collections of articles in a format that NotebookLM can easily process
+for analysis, summarization, and question-answering.
+
+=== Export Modes ===
+
+Three main export modes are supported:em to NotebookLM-ready Markdown exporter.
+
 This script fetches all newspaper articles linked to a single Omeka item and
 exports them to one consolidated UTF-8 Markdown file that’s easy to ingest into
 NotebookLM.
@@ -71,8 +86,13 @@ JSONLike = Union[Dict[str, Any], List[Any]]
 
 # -----------------------------------------------------------------------------
 # Configuration: Country -> Item Set IDs mapping for "Whole IWAC" export
+# 
+# This dictionary maps West African countries to their corresponding Omeka Item Set IDs.
+# Each Item Set contains newspaper collections from that country.
 # Fill these lists with the Omeka Item Set IDs (as strings) that belong to each
 # country. Leave a list empty to skip that country.
+#
+# Example: Item Set "60638" might contain "L'Observateur" newspaper from Benin
 COUNTRY_ITEM_SETS: Dict[str, List[str]] = {
     "Benin": [
         "60638", "61062", "2185", "5502", "75959", "2186", "2188", "2187", "2191", "2190", "2189", "4922", "76053", "76081", "76059", "5501", "76070", "75960", "76071", "61063", "5500", "76072", "76073"
@@ -112,13 +132,20 @@ def sanitize_filename(name: str) -> str:
 
 
 def normalize_md_whitespace(text: str) -> str:
-    """Normalize whitespace to keep Markdown tidy.
+    """Normalize whitespace to keep Markdown tidy and consistent.
 
-    - Convert CRLF/CR to LF
-    - Replace non-breaking spaces with regular spaces
-    - Trim trailing spaces
-    - Collapse 2+ consecutive blank lines to a single blank line
-    - Strip leading/trailing blank lines
+    This function cleans up common formatting issues in text content:
+    - Standardizes different line ending types (Windows CRLF, Mac CR) to Unix LF
+    - Converts non-breaking spaces (often from OCR/HTML) to regular spaces
+    - Removes trailing whitespace at the end of lines
+    - Collapses multiple consecutive blank lines into single blank lines
+    - Removes leading and trailing blank lines from the entire text
+
+    Args:
+        text: Raw text content that may have inconsistent whitespace.
+
+    Returns:
+        Cleaned text with normalized whitespace, ready for Markdown output.
     """
     if not text:
         return text
@@ -165,14 +192,18 @@ def load_env() -> Dict[str, str]:
 
 
 def get_json(url: str, params: Dict[str, str]) -> Optional[JSONLike]:
-    """Perform a GET request and parse JSON.
+    """Perform a GET request to the Omeka API and parse the JSON response.
+
+    This is a wrapper around requests.get() that handles common errors and
+    provides consistent error reporting. Used for all Omeka API calls.
 
     Args:
-        url: Absolute Omeka API URL.
-        params: Query parameters (auth keys, etc.).
+        url: Complete Omeka API URL (e.g., "https://example.org/api/items/123").
+        params: Query parameters including authentication credentials.
 
     Returns:
-        Parsed JSON (dict or list) on success, or None if any error occurs.
+        Parsed JSON response (dict or list) on success, or None if any error occurs
+        (network issues, HTTP errors, invalid JSON, etc.).
     """
     try:
         r = requests.get(url, params=params, timeout=30)
@@ -184,16 +215,24 @@ def get_json(url: str, params: Dict[str, str]) -> Optional[JSONLike]:
 
 
 def extract_first_value(prop: Any) -> Optional[str]:
-    """Extract the first "@value" from a multi-valued property.
+    """Extract the first "@value" from an Omeka JSON-LD multi-valued property.
 
-    Many Omeka JSON-LD properties are arrays of objects like:
-        [{"@value": "1998-02-16"}, ...]
+    Omeka stores many properties as JSON-LD arrays of value objects, even for
+    single values. For example, a date might be stored as:
+        [{"@value": "1998-02-16", "@type": "literal"}]
+    
+    This function extracts just the first actual value, which is often sufficient
+    for our purposes and avoids duplication in the output.
 
     Args:
-        prop: A property value from the Omeka JSON (any type).
+        prop: A property value from Omeka JSON (could be list, dict, string, etc.).
 
     Returns:
-        The first @value as a string, or None if not found.
+        The first @value found as a string, or None if no @value is found.
+        
+    Example:
+        extract_first_value([{"@value": "1998-02-16"}, {"@value": "1998"}]) 
+        # Returns: "1998-02-16"
     """
     if isinstance(prop, list):
         for entry in prop:
@@ -203,13 +242,24 @@ def extract_first_value(prop: Any) -> Optional[str]:
 
 
 def extract_publishers(article: JSONObj) -> List[str]:
-    """Return publisher display titles from dcterms:publisher.
+    """Extract unique publisher names from an article's dcterms:publisher property.
+
+    Publishers in Omeka are stored as related items with display_title fields.
+    This function extracts the human-readable names of newspapers/publications
+    that published this article.
 
     Args:
-        article: Omeka JSON object for a bibo:Article.
+        article: Omeka JSON object representing a bibo:Article item.
 
     Returns:
-        Unique list of publisher display titles (may be empty).
+        List of unique publisher display names (e.g., ["L'Observateur", "Le Matin"]).
+        Returns empty list if no publishers are found.
+        
+    Example JSON structure:
+        "dcterms:publisher": [
+            {"display_title": "L'Observateur", "@id": "..."},
+            {"display_title": "Le Matin", "@id": "..."}
+        ]
     """
     publishers: List[str] = []
     pub_list = article.get("dcterms:publisher")
@@ -223,16 +273,32 @@ def extract_publishers(article: JSONObj) -> List[str]:
 
 
 def format_article(article: JSONObj) -> str:
-    """Build a Markdown block for a single bibo:Article.
+    """Convert a single newspaper article into NotebookLM-friendly Markdown format.
 
-    The block is designed to be readable and chunk-friendly for NotebookLM.
+    Creates a standardized Markdown block for each article with:
+    - Level 1 heading with the article title
+    - Bold metadata lines for Newspaper and Date
+    - The full article content (cleaned of extra whitespace)
+    - A horizontal rule separator for visual separation
+
+    This format is optimized for NotebookLM ingestion and human readability.
 
     Args:
-        article: Omeka JSON object representing a bibo:Article.
+        article: Omeka JSON object representing a bibo:Article with fields like
+                o:title, dcterms:date, dcterms:publisher, bibo:content.
 
     Returns:
-        Markdown string with a level-1 heading for the title, bold metadata
-        lines (Newspaper, Date), the content body, and a horizontal rule.
+        Formatted Markdown string ready to write to file, including trailing
+        horizontal rule and newlines for proper separation between articles.
+        
+    Example output:
+        # Article Title Here
+        **Newspaper:** L'Observateur
+        **Date:** 1998-02-16
+        
+        Article content goes here with proper formatting...
+        
+        ---
     """
     title = article.get("o:title") or "No title"
     date = extract_first_value(article.get("dcterms:date")) or "Unknown"
@@ -274,11 +340,21 @@ def fetch_item(env: Dict[str, str], item_id: str) -> Optional[JSONObj]:
 
 
 def parse_id_from_at_id(at_id: str) -> Optional[str]:
-    """Extract numeric ID from an Omeka '@id' URL.
+    """Extract numeric ID from an Omeka '@id' URL reference.
 
-    Supports both '/api/items/<id>' and '/api/resources/<id>' forms.
-    Example: https://example.org/api/items/23601 -> '23601'
-             https://example.org/api/resources/5717 -> '5717'
+    Omeka JSON-LD uses '@id' fields containing full URLs to reference related items.
+    This function extracts just the numeric ID portion for API calls.
+
+    Args:
+        at_id: Full Omeka URL like "https://example.org/api/items/23601" or
+               "https://example.org/api/resources/5717"
+
+    Returns:
+        Just the numeric ID as a string (e.g., "23601") or None if no valid ID found.
+        
+    Example:
+        parse_id_from_at_id("https://example.org/api/items/23601") → "23601"
+        parse_id_from_at_id("https://example.org/api/resources/5717") → "5717"
     """
     if not isinstance(at_id, str):
         return None
@@ -301,9 +377,18 @@ def fetch_resource(env: Dict[str, str], resource_id: str) -> Optional[JSONObj]:
 
 
 def fetch_item_or_resource(env: Dict[str, str], id_str: str) -> Optional[JSONObj]:
-    """Try fetching an Item by ID, falling back to the generic Resource endpoint.
+    """Try fetching an Item by ID, with fallback to the generic Resource endpoint.
 
-    Returns the JSON object or None if neither fetch succeeds.
+    Some Omeka installations use different endpoints for the same content.
+    This function tries the more specific /items endpoint first, then falls back
+    to the generic /resources endpoint if that fails.
+
+    Args:
+        env: Environment dict containing API credentials and base URL.
+        id_str: Numeric ID as a string.
+
+    Returns:
+        The JSON object for the item/resource, or None if both endpoints fail.
     """
     it = fetch_item(env, id_str)
     if isinstance(it, dict):
@@ -312,22 +397,36 @@ def fetch_item_or_resource(env: Dict[str, str], id_str: str) -> Optional[JSONObj
 
 
 def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tuple[Optional[JSONObj], List[JSONObj]]:
-    """Return the subject item and all bibo:Article items that reference it via dcterms:subject.
+    """Find all newspaper articles that reference a specific subject/topic item.
 
-    Strategy: read '@reverse.dcterms:subject' from the subject item, then fetch
-    each referenced item to confirm type and gather full content.
+    This function implements "reverse lookup" - given a subject authority record
+    (like a person, place, or topic), it finds all articles that cite it via
+    dcterms:subject relationships.
+
+    How it works:
+    1. Fetch the subject item to access its @reverse.dcterms:subject property
+    2. This property lists all items that reference this subject
+    3. For each reference, fetch the full item record
+    4. Filter to keep only bibo:Article and bibo:Issue items
+    5. Return both the original subject and the filtered articles
 
     Args:
-        env: Environment dict.
-        subject_item_id: The Item ID used as the subject authority.
+        env: Environment dict containing API credentials.
+        subject_item_id: Numeric ID of the subject authority item.
 
     Returns:
-        (subject_item_json_or_None, [article_items])
+        Tuple of (subject_item_json_or_None, [list_of_article_items]).
+        The subject will be None if not found; articles list may be empty.
+        
+    Example use case:
+        If item 12345 represents "Burkina Faso" as a place authority,
+        this will find all newspaper articles about Burkina Faso.
     """
     subject_item = fetch_item(env, subject_item_id)
     if not subject_item:
         return None, []
 
+    # Extract reverse subject references - this is where Omeka stores "what items point to this one"
     reverse = subject_item.get("@reverse") or {}
     refs = []
     if isinstance(reverse, dict):
@@ -337,21 +436,24 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
     total_refs = len(refs)
     print(f"Found {total_refs} reverse subject references.")
 
+    # Process each reference to collect actual article items
     article_items: List[JSONObj] = []
-    seen_ids: set[str] = set()
-    skipped_non_article = 0
-    fetch_fail = 0
-    dupes = 0
-    start_ts = time.perf_counter()
+    seen_ids: set[str] = set()  # Avoid duplicate processing
+    skipped_non_article = 0      # Track items that aren't articles
+    fetch_fail = 0               # Track API failures  
+    dupes = 0                    # Track duplicate IDs encountered
+    start_ts = time.perf_counter()  # For progress reporting
+    
     for idx, ref in enumerate(refs, start=1):
         if not isinstance(ref, dict):
             continue
-        # Prefer embedded types when available to avoid a fetch if clearly not an article.
+        
+        # Optimization: Skip obvious non-articles using embedded type information
+        # This avoids unnecessary API calls for items we know we don't want
         ref_types = ref.get("@type")
         if isinstance(ref_types, list) and "bibo:Article" not in ref_types and "bibo:Issue" not in ref_types:
-            # Skip clearly non-article/issue items
             skipped_non_article += 1
-            # live progress update
+            # Update progress display (overwrite same line for live updates)
             elapsed = max(time.perf_counter() - start_ts, 1e-6)
             rate = idx / elapsed
             remain = max(total_refs - idx, 0)
@@ -363,7 +465,8 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
                 flush=True,
             )
             continue
-        # Get numeric ID to fetch full record
+            
+        # Extract the numeric ID from various possible locations in the reference
         rid = None
         if isinstance(ref.get("o:id"), int):
             rid = str(ref["o:id"]) 
@@ -373,6 +476,8 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
             rid = parse_id_from_at_id(ref["@id"])
         if not rid:
             continue
+            
+        # Skip if we've already processed this ID
         if rid in seen_ids:
             dupes += 1
             # live progress update
@@ -388,11 +493,12 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
             )
             continue
         seen_ids.add(rid)
-        # Try as /items/<id>, then fallback to /resources/<id>
+        
+        # Fetch the full item record to get complete content and confirm type
         item = fetch_item_or_resource(env, rid)
         if not isinstance(item, dict):
             fetch_fail += 1
-            # live progress update
+            # Update progress display
             elapsed = max(time.perf_counter() - start_ts, 1e-6)
             rate = idx / elapsed
             remain = max(total_refs - idx, 0)
@@ -404,10 +510,13 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
                 flush=True,
             )
             continue
+            
+        # Final type check: only keep actual articles and issues
         types = item.get("@type", [])
         if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
             article_items.append(item)
-        # live progress update (single-line)
+            
+        # Live progress update (overwrites previous line)
         elapsed = max(time.perf_counter() - start_ts, 1e-6)
         rate = idx / elapsed
         remain = max(total_refs - idx, 0)
@@ -419,7 +528,8 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
             f"ETA={eta_m:02d}:{eta_s:02d}"
         )
         print(msg, end="\r", flush=True)
-        # Every 50, drop a newline snapshot to keep some history
+        
+        # Every 50 items, print a newline snapshot to keep some history visible
         if idx % 50 == 0 or idx == 1:
             print("\n" + msg)
 
@@ -454,19 +564,30 @@ def fetch_item_set(env: Dict[str, str], set_id: str) -> Optional[JSONObj]:
 
 
 def fetch_items_in_set(env: Dict[str, str], set_id: str, per_page: int = 100) -> List[JSONObj]:
-    """Fetch all items that belong to the given Item Set (paginated).
+    """Fetch all items that belong to a specific Omeka Item Set using pagination.
+
+    Item Sets in Omeka can contain hundreds or thousands of items, so we need
+    to paginate through the results. This function handles the pagination
+    automatically and returns all items in one list.
 
     Args:
-        env: Environment dict from load_env().
-        set_id: Numeric string ID for the item set.
-        per_page: Page size to request from Omeka API.
+        env: Environment dict containing API credentials from load_env().
+        set_id: Numeric string ID for the target item set.
+        per_page: Number of items to request per API call (default 100).
 
     Returns:
-        List of item JSON objects (may be empty).
+        Complete list of item JSON objects from the set. May be empty if
+        the set doesn't exist or contains no items.
+        
+    Note:
+        This can be memory-intensive for very large sets. Consider adding
+        a streaming/callback approach for sets with 10,000+ items.
     """
     base_items_url = f"{env['base']}/items"
     all_items: List[JSONObj] = []
     page = 1
+    
+    # Paginate through all items in the set
     while True:
         params = {
             "key_identity": env["kid"],
@@ -476,11 +597,16 @@ def fetch_items_in_set(env: Dict[str, str], set_id: str, per_page: int = 100) ->
             "page": str(page),
         }
         data = get_json(base_items_url, params)
+        
+        # Stop if we get no data or an error
         if not isinstance(data, list) or not data:
             break
-        # Ensure dict objects only
+            
+        # Filter to ensure we only get dict objects (valid items)
         page_items = [d for d in data if isinstance(d, dict)]
         all_items.extend(page_items)
+        
+        # If we got fewer items than requested, we've reached the end
         if len(page_items) < per_page:
             break
         page += 1
@@ -495,67 +621,92 @@ def process_item_set(
     country_label: Optional[str] = None,
     file_ext: str = "md",
 ) -> Tuple[int, List[str]]:
-    """Process a single Item Set ID: fetch, filter, and export to TXT.
+    """Process a single Item Set: fetch items, filter for articles, and export to file(s).
+
+    This is the main processing function for Item Set-based exports. It:
+    1. Fetches the Item Set metadata to get its title
+    2. Retrieves all items in the set (with pagination)
+    3. Filters for newspaper articles (bibo:Article and bibo:Issue types)
+    4. Exports articles to Markdown file(s), splitting if needed for size limits
+    5. Organizes output by country if specified
 
     Args:
-        env: Loaded environment dict with base URL and API keys.
-        set_id: The Omeka Item Set ID (string).
-        out_dir: Output directory for TXT files.
-        max_items_per_file: Max articles per file before splitting.
-        country_label: Optional country name for logging; not used in filenames.
+        env: Loaded environment dict with API credentials and base URL.
+        set_id: The Omeka Item Set ID to process (as string).
+        out_dir: Base output directory for generated files.
+        max_items_per_file: Maximum articles per file before auto-splitting.
+        country_label: Optional country name for subfolder organization and logging.
+        file_ext: Output file extension ("md" or "txt").
 
     Returns:
-        (article_count, [written_file_paths])
+        Tuple of (total_article_count, [list_of_written_file_paths]).
+        
+    Example:
+        If set_id "12345" contains 500 articles and max_items_per_file is 250,
+        this will create two files: "newspaper_name_part1.md" and "newspaper_name_part2.md"
     """
+    # Fetch the Item Set metadata to get its human-readable title
     item_set = fetch_item_set(env, set_id)
     if not item_set:
         print(f"- Skipping Item Set {set_id}: not found or inaccessible.")
         return 0, []
 
+    # Extract and sanitize the set title for use in filenames
     set_title = extract_first_value(item_set.get("dcterms:title")) or f"item_set_{set_id}"
     safe_set_title = sanitize_filename(set_title)
 
+    # Create progress messages with optional country prefix
     prefix = f"[{country_label}] " if country_label else ""
     print(f"{prefix}Listing items in Item Set {set_id} (\"{set_title}\")...")
+    
+    # Fetch all items in this set
     items = fetch_items_in_set(env, set_id, per_page=100)
     print(f"{prefix}Found {len(items)} items. Filtering bibo:Article and bibo:Issue…")
 
+    # Filter for newspaper articles only
     articles: List[JSONObj] = []
     for idx, it in enumerate(items, start=1):
         types = it.get("@type", [])
         if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
             articles.append(it)
+            # Show progress every 50 items to avoid flooding console
             if idx % 50 == 0:
-                # Periodic progress ping without flooding the console
                 print(f"  Processed {idx}/{len(items)}…")
 
     if not articles:
         print(f"{prefix}No bibo:Article items found in Item Set {set_id}.")
         return 0, []
 
+    # Prepare file naming and output organization
     header_title = f"Item Set: {set_title} (ID {set_id})"
-    # Include set ID in file name to avoid collisions across countries/sets with similar titles
+    # Include set ID in filename to avoid collisions across sets with similar titles
     file_stub = f"{safe_set_title}_{set_id}"
 
     written_files: List[str] = []
     total_articles = len(articles)
-    # If a country label is provided, write into a country subfolder
+    
+    # Determine output directory (with optional country subfolder)
     target_dir = out_dir
     if country_label:
         country_dir = sanitize_filename(country_label)
         target_dir = os.path.join(out_dir, country_dir)
         os.makedirs(target_dir, exist_ok=True)
-    # Normalize file extension (no leading dot)
+        
+    # Normalize file extension (remove any leading dot)
     file_ext = (file_ext or "md").lower().lstrip(".")
 
+    # Write articles to file(s), splitting if necessary
     if total_articles <= max_items_per_file:
+        # Small collection: write all articles to a single file
         out_path = os.path.join(target_dir, f"{file_stub}_articles.{file_ext}")
         write_articles_to_file(articles, out_path, header_title)
         written_files.append(out_path)
         print(f"{prefix}Wrote {total_articles} articles -> {os.path.basename(out_path)}")
     else:
+        # Large collection: split into multiple files to stay within NotebookLM limits
         num_parts = (total_articles + max_items_per_file - 1) // max_items_per_file
         print(f"{prefix}Total articles ({total_articles}) exceed {max_items_per_file}; splitting into {num_parts} parts…")
+        
         for part_num in range(1, num_parts + 1):
             start_idx = (part_num - 1) * max_items_per_file
             end_idx = min(start_idx + max_items_per_file, total_articles)
@@ -641,47 +792,80 @@ def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title
 
 
 def main():
+    """Main entry point for the Omeka to NotebookLM Markdown exporter.
+    
+    This function handles:
+    1. Loading environment variables and configuration
+    2. Parsing command-line arguments or prompting for user input
+    3. Dispatching to the appropriate export mode:
+       - Whole IWAC collection (all countries and their Item Sets)
+       - Single Item Set by ID  
+       - Articles referencing a specific subject Item ID
+    4. Providing summary output of what was exported
+    
+    The script supports three main export modes:
+    - Mode 1: Export entire IWAC collection (uses COUNTRY_ITEM_SETS mapping)
+    - Mode 2: Export single Item Set by providing its numeric ID
+    - Mode 3: Export articles that reference a subject authority by its ID
+    
+    CLI usage examples:
+        python script.py all                    # Export whole collection
+        python script.py 12345                  # Export Item Set 12345
+        python script.py subject:67890          # Export articles about subject 67890
+        python script.py --subject 67890        # Alternative subject syntax
+    """
     print("\n=== Omeka -> Markdown Export (NotebookLM-ready) ===")
     env = load_env()
 
     # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
+    # NotebookLM performs better with smaller, focused documents rather than huge files
     MAX_ITEMS_PER_FILE = 250
 
-    # Output directory relative to this script
+    # Set up output directory structure
+    # Creates "extracted_articles" folder next to this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(script_dir, "extracted_articles")
     os.makedirs(out_dir, exist_ok=True)
 
-    # Output file extension (default to md). Override via env NOTEBOOKLM_EXPORT_EXT (md|txt).
+    # Determine output file format (Markdown by default, can override with env var)
+    # Set NOTEBOOKLM_EXPORT_EXT=txt in .env to export as plain text instead
     file_ext = os.getenv("NOTEBOOKLM_EXPORT_EXT", "md").lower().lstrip(".")
     if file_ext not in ("md", "txt"):
         print(f"Unrecognized NOTEBOOKLM_EXPORT_EXT='{file_ext}', defaulting to 'md'.")
         file_ext = "md"
 
-    # Convenience CLI args (optional):
-    # - "all" or "--all"                     => whole collection
-    # - a number                               => single item set ID
-    # - "subject:<id>" | "s:<id>" | --subject <id> => export items referencing subject item
+    # Parse command-line arguments for batch processing
+    # Supports several convenient formats for different use cases:
+    # - "all" or "--all"                     => whole collection export
+    # - numeric ID (e.g. "12345")            => single item set export  
+    # - "subject:<id>" | "s:<id>"            => subject-based export
+    # - "--subject <id>"                     => alternative subject syntax
     cli_arg = sys.argv[1].strip() if len(sys.argv) > 1 else None
     export_whole = False
     single_set_id: Optional[str] = None
     subject_item_id: Optional[str] = None
     if cli_arg:
+        # Parse the command-line argument to determine export mode
         low = cli_arg.lower()
         if low in ("all", "--all"):
             export_whole = True
         elif low.startswith("subject:") or low.startswith("s:"):
+            # Extract ID from "subject:12345" or "s:12345" format
             maybe_id = cli_arg.split(":", 1)[1]
             if maybe_id.isdigit():
                 subject_item_id = maybe_id
         elif low == "--subject" and len(sys.argv) > 2 and sys.argv[2].strip().isdigit():
+            # Handle "--subject 12345" format (two separate arguments)
             subject_item_id = sys.argv[2].strip()
         elif cli_arg.isdigit():
+            # Simple numeric ID = item set export
             single_set_id = cli_arg
         else:
             print(f"Unrecognized CLI arg '{cli_arg}'. Ignoring and switching to interactive mode…")
 
+    # If no valid CLI args, prompt user for interactive mode selection
     if not cli_arg:
+        # Interactive mode: prompt user to choose export type
         mode = input("Choose export mode: [1] Whole IWAC, [2] Item Set by ID, [3] Items with dcterms:subject Item ID: ").strip().lower()
         if mode in ("1", "all", "a", "one"):
             export_whole = True
@@ -691,22 +875,28 @@ def main():
                 print("Subject Item ID must be a number.")
                 sys.exit(1)
         else:
+            # Default to item set mode
             single_set_id = input("Enter the Omeka Item Set ID to export: ").strip()
             if not single_set_id.isdigit():
                 print("Item Set ID must be a number.")
                 sys.exit(1)
 
+    # Execute the selected export mode
     if export_whole:
+        # Mode 1: Export entire IWAC collection organized by country
         print("\n=== Whole IWAC Collection export ===")
         grand_total = 0
         all_written: List[str] = []
-        # Iterate in the order provided above
+        
+        # Process each country's Item Sets in the predefined order
         for country in ["Benin", "Burkina Faso", "Côte d'Ivoire", "Niger", "Togo"]:
             set_ids = COUNTRY_ITEM_SETS.get(country, [])
             if not set_ids:
                 print(f"[Skip] {country}: no Item Set IDs configured.")
                 continue
             print(f"\n-- {country} --")
+            
+            # Process each Item Set for this country
             for sid in set_ids:
                 if not isinstance(sid, str) or not sid.isdigit():
                     print(f"- Skipping invalid Item Set ID '{sid}' for {country}.")
@@ -725,7 +915,7 @@ def main():
             print("No files were created. Ensure COUNTRY_ITEM_SETS is configured.")
         return
 
-    # Subject-based export path
+    # Mode 3: Export articles that reference a specific subject authority
     if subject_item_id:
         count, files = process_subject_items(env, subject_item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
         if files:
@@ -736,7 +926,7 @@ def main():
             print("No files were created for the specified subject.")
         return
 
-    # Single Item Set export path
+    # Mode 2: Export a single Item Set by its ID
     assert single_set_id is not None
     count, files = process_item_set(env, single_set_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
     if files:
