@@ -22,10 +22,9 @@ How it works
      - CONTENT: bibo:content (first @value)
 6) Writes a Markdown-friendly .md file with clear separators per article
 
-Alternative flow (legacy Item mode)
-- Previous versions supported exporting articles linked to a single Item via
-    "@reverse.dcterms:subject". That flow has been removed in favor of the
-    explicit Item Set export modes above.
+Option C: Items by subject Item ID (reverse links)
+- Provide an Omeka Item ID, the script looks up its "@reverse.dcterms:subject"
+    references, fetches those items, keeps only "bibo:Article", and exports them.
 
 Multi-part Output
 - If more than 250 articles are found (to respect NotebookLM's 500k word limit),
@@ -59,6 +58,7 @@ import os
 import re
 import sys
 import json
+import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Union, Tuple
 
@@ -254,6 +254,186 @@ def format_article(article: JSONObj) -> str:
     return "\n".join(lines)
 
 
+def fetch_item(env: Dict[str, str], item_id: str) -> Optional[JSONObj]:
+    """Fetch a single Item by ID.
+
+    Args:
+        env: Environment dict from load_env().
+        item_id: Numeric string Item ID.
+
+    Returns:
+        The item JSON or None.
+    """
+    url = f"{env['base']}/items/{item_id}"
+    params = {
+        "key_identity": env["kid"],
+        "key_credential": env["kcr"],
+    }
+    data = get_json(url, params)
+    return data if isinstance(data, dict) else None
+
+
+def parse_id_from_at_id(at_id: str) -> Optional[str]:
+    """Extract numeric ID from an Omeka '@id' URL.
+
+    Supports both '/api/items/<id>' and '/api/resources/<id>' forms.
+    Example: https://example.org/api/items/23601 -> '23601'
+             https://example.org/api/resources/5717 -> '5717'
+    """
+    if not isinstance(at_id, str):
+        return None
+    m = re.search(r"/(?:items|resources)/(\d+)$", at_id)
+    return m.group(1) if m else None
+
+
+def fetch_resource(env: Dict[str, str], resource_id: str) -> Optional[JSONObj]:
+    """Fetch a generic resource by ID via the '/resources' endpoint.
+
+    Useful when reverse links use '/api/resources/<id>' rather than '/items'.
+    """
+    url = f"{env['base']}/resources/{resource_id}"
+    params = {
+        "key_identity": env["kid"],
+        "key_credential": env["kcr"],
+    }
+    data = get_json(url, params)
+    return data if isinstance(data, dict) else None
+
+
+def fetch_item_or_resource(env: Dict[str, str], id_str: str) -> Optional[JSONObj]:
+    """Try fetching an Item by ID, falling back to the generic Resource endpoint.
+
+    Returns the JSON object or None if neither fetch succeeds.
+    """
+    it = fetch_item(env, id_str)
+    if isinstance(it, dict):
+        return it
+    return fetch_resource(env, id_str)
+
+
+def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tuple[Optional[JSONObj], List[JSONObj]]:
+    """Return the subject item and all bibo:Article items that reference it via dcterms:subject.
+
+    Strategy: read '@reverse.dcterms:subject' from the subject item, then fetch
+    each referenced item to confirm type and gather full content.
+
+    Args:
+        env: Environment dict.
+        subject_item_id: The Item ID used as the subject authority.
+
+    Returns:
+        (subject_item_json_or_None, [article_items])
+    """
+    subject_item = fetch_item(env, subject_item_id)
+    if not subject_item:
+        return None, []
+
+    reverse = subject_item.get("@reverse") or {}
+    refs = []
+    if isinstance(reverse, dict):
+        refs = reverse.get("dcterms:subject") or []
+    if not isinstance(refs, list):
+        refs = []
+    total_refs = len(refs)
+    print(f"Found {total_refs} reverse subject references.")
+
+    article_items: List[JSONObj] = []
+    seen_ids: set[str] = set()
+    skipped_non_article = 0
+    fetch_fail = 0
+    dupes = 0
+    start_ts = time.perf_counter()
+    for idx, ref in enumerate(refs, start=1):
+        if not isinstance(ref, dict):
+            continue
+        # Prefer embedded types when available to avoid a fetch if clearly not an article.
+        ref_types = ref.get("@type")
+        if isinstance(ref_types, list) and "bibo:Article" not in ref_types and "bibo:Issue" not in ref_types:
+            # Skip clearly non-article/issue items
+            skipped_non_article += 1
+            # live progress update
+            elapsed = max(time.perf_counter() - start_ts, 1e-6)
+            rate = idx / elapsed
+            remain = max(total_refs - idx, 0)
+            eta = remain / rate if rate > 0 else 0
+            eta_m, eta_s = divmod(int(eta), 60)
+            print(
+                f"  [{idx}/{total_refs}] added={len(article_items)} skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} ETA={eta_m:02d}:{eta_s:02d}",
+                end="\r",
+                flush=True,
+            )
+            continue
+        # Get numeric ID to fetch full record
+        rid = None
+        if isinstance(ref.get("o:id"), int):
+            rid = str(ref["o:id"]) 
+        elif isinstance(ref.get("o:id"), str) and ref["o:id"].isdigit():
+            rid = ref["o:id"]
+        elif isinstance(ref.get("@id"), str):
+            rid = parse_id_from_at_id(ref["@id"])
+        if not rid:
+            continue
+        if rid in seen_ids:
+            dupes += 1
+            # live progress update
+            elapsed = max(time.perf_counter() - start_ts, 1e-6)
+            rate = idx / elapsed
+            remain = max(total_refs - idx, 0)
+            eta = remain / rate if rate > 0 else 0
+            eta_m, eta_s = divmod(int(eta), 60)
+            print(
+                f"  [{idx}/{total_refs}] added={len(article_items)} skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} ETA={eta_m:02d}:{eta_s:02d}",
+                end="\r",
+                flush=True,
+            )
+            continue
+        seen_ids.add(rid)
+        # Try as /items/<id>, then fallback to /resources/<id>
+        item = fetch_item_or_resource(env, rid)
+        if not isinstance(item, dict):
+            fetch_fail += 1
+            # live progress update
+            elapsed = max(time.perf_counter() - start_ts, 1e-6)
+            rate = idx / elapsed
+            remain = max(total_refs - idx, 0)
+            eta = remain / rate if rate > 0 else 0
+            eta_m, eta_s = divmod(int(eta), 60)
+            print(
+                f"  [{idx}/{total_refs}] added={len(article_items)} skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} ETA={eta_m:02d}:{eta_s:02d}",
+                end="\r",
+                flush=True,
+            )
+            continue
+        types = item.get("@type", [])
+        if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
+            article_items.append(item)
+        # live progress update (single-line)
+        elapsed = max(time.perf_counter() - start_ts, 1e-6)
+        rate = idx / elapsed
+        remain = max(total_refs - idx, 0)
+        eta = remain / rate if rate > 0 else 0
+        eta_m, eta_s = divmod(int(eta), 60)
+        msg = (
+            f"  [{idx}/{total_refs}] added={len(article_items)} "
+            f"skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} "
+            f"ETA={eta_m:02d}:{eta_s:02d}"
+        )
+        print(msg, end="\r", flush=True)
+        # Every 50, drop a newline snapshot to keep some history
+        if idx % 50 == 0 or idx == 1:
+            print("\n" + msg)
+
+    # Finish line to move past carriage return
+    print()
+    elapsed_total = time.perf_counter() - start_ts
+    print(
+        f"Collected {len(article_items)} article/issue items from {total_refs} references in {elapsed_total:.1f}s. "
+        f"(skippedType={skipped_non_article}, dup={dupes}, fetchErr={fetch_fail})"
+    )
+
+    return subject_item, article_items
+
+
 def fetch_item_set(env: Dict[str, str], set_id: str) -> Optional[JSONObj]:
     """Fetch a single Item Set resource by ID.
 
@@ -388,6 +568,64 @@ def process_item_set(
     return total_articles, written_files
 
 
+def process_subject_items(
+    env: Dict[str, str],
+    subject_item_id: str,
+    out_dir: str,
+    max_items_per_file: int,
+    file_ext: str = "md",
+) -> Tuple[int, List[str]]:
+    """Process reverse-linked items for a given subject Item ID and export to file(s).
+
+    Args:
+        env: Loaded env dict.
+        subject_item_id: Item ID used as dcterms:subject by articles.
+        out_dir: Output directory.
+        max_items_per_file: Max articles per file before splitting.
+        file_ext: Output extension (md|txt).
+
+    Returns:
+        (article_count, [written_files])
+    """
+    print(f"Looking up subject Item {subject_item_id}…")
+    subject, articles = fetch_articles_with_subject(env, subject_item_id)
+    if not subject:
+        print(f"- Subject item {subject_item_id} not found or inaccessible.")
+        return 0, []
+
+    subj_title = subject.get("o:title") or extract_first_value(subject.get("dcterms:title")) or f"item_{subject_item_id}"
+    safe_title = sanitize_filename(str(subj_title))
+    header_title = f"Subject: {subj_title} (ID {subject_item_id})"
+    file_stub = f"{safe_title}_subject_{subject_item_id}"
+
+    if not articles:
+        print(f"No bibo:Article items reference subject {subject_item_id}.")
+        return 0, []
+
+    written: List[str] = []
+    total = len(articles)
+    file_ext = (file_ext or "md").lower().lstrip(".")
+
+    if total <= max_items_per_file:
+        out_path = os.path.join(out_dir, f"{file_stub}_articles.{file_ext}")
+        write_articles_to_file(articles, out_path, header_title)
+        written.append(out_path)
+        print(f"Wrote {total} articles -> {os.path.basename(out_path)}")
+    else:
+        num_parts = (total + max_items_per_file - 1) // max_items_per_file
+        print(f"Total articles ({total}) exceed {max_items_per_file}; splitting into {num_parts} parts…")
+        for part_num in range(1, num_parts + 1):
+            start_idx = (part_num - 1) * max_items_per_file
+            end_idx = min(start_idx + max_items_per_file, total)
+            part_articles = articles[start_idx:end_idx]
+            out_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
+            write_articles_to_file(part_articles, out_path, header_title, part_num)
+            written.append(out_path)
+            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(out_path)}")
+
+    return total, written
+
+
 def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title: str, part_num: int = None) -> None:
     """Write a batch of articles to a single Markdown file (no top header).
     
@@ -421,28 +659,42 @@ def main():
         file_ext = "md"
 
     # Convenience CLI args (optional):
-    # - "all" or "--all" => whole collection
-    # - a number           => single item set ID
+    # - "all" or "--all"                     => whole collection
+    # - a number                               => single item set ID
+    # - "subject:<id>" | "s:<id>" | --subject <id> => export items referencing subject item
     cli_arg = sys.argv[1].strip() if len(sys.argv) > 1 else None
     export_whole = False
     single_set_id: Optional[str] = None
+    subject_item_id: Optional[str] = None
     if cli_arg:
-        if cli_arg.lower() in ("all", "--all"):
+        low = cli_arg.lower()
+        if low in ("all", "--all"):
             export_whole = True
+        elif low.startswith("subject:") or low.startswith("s:"):
+            maybe_id = cli_arg.split(":", 1)[1]
+            if maybe_id.isdigit():
+                subject_item_id = maybe_id
+        elif low == "--subject" and len(sys.argv) > 2 and sys.argv[2].strip().isdigit():
+            subject_item_id = sys.argv[2].strip()
         elif cli_arg.isdigit():
             single_set_id = cli_arg
         else:
             print(f"Unrecognized CLI arg '{cli_arg}'. Ignoring and switching to interactive mode…")
 
     if not cli_arg:
-        ans = input("Export the whole IWAC Collection? (y/N): ").strip().lower()
-        export_whole = ans in ("y", "yes")
-
-    if not export_whole and not single_set_id:
-        single_set_id = input("Enter the Omeka Item Set ID to export: ").strip()
-        if not single_set_id.isdigit():
-            print("Item Set ID must be a number.")
-            sys.exit(1)
+        mode = input("Choose export mode: [1] Whole IWAC, [2] Item Set by ID, [3] Items with dcterms:subject Item ID: ").strip().lower()
+        if mode in ("1", "all", "a", "one"):
+            export_whole = True
+        elif mode in ("3", "subject", "s"):
+            subject_item_id = input("Enter the subject Item ID: ").strip()
+            if not subject_item_id.isdigit():
+                print("Subject Item ID must be a number.")
+                sys.exit(1)
+        else:
+            single_set_id = input("Enter the Omeka Item Set ID to export: ").strip()
+            if not single_set_id.isdigit():
+                print("Item Set ID must be a number.")
+                sys.exit(1)
 
     if export_whole:
         print("\n=== Whole IWAC Collection export ===")
@@ -471,6 +723,17 @@ def main():
                 print(f"  {p}")
         else:
             print("No files were created. Ensure COUNTRY_ITEM_SETS is configured.")
+        return
+
+    # Subject-based export path
+    if subject_item_id:
+        count, files = process_subject_items(env, subject_item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
+        if files:
+            print(f"\nDone. Exported {count} articles to:")
+            for p in files:
+                print(f"  {p}")
+        else:
+            print("No files were created for the specified subject.")
         return
 
     # Single Item Set export path
