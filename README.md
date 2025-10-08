@@ -8,6 +8,9 @@ This repository contains Python-based pipelines that leverage Large Language Mod
 
 ## Available Pipelines
 
+### ✍️ Handwritten Text Recognition (`AI_htr_extraction/`)
+High-precision transcription of handwritten manuscripts using Google Gemini vision model. Supports **French**, **Arabic**, and **multilingual auto-detect** modes with language-specific typography rules, reading order preservation, and archival-quality output. Perfect for historical manuscripts, annotations, and marginalia.
+
 ### 🔍 Named Entity Recognition (`AI_NER/`)
 Extracts and reconciles named entities (persons, organizations, locations, subjects) from Omeka S collections using a unified script supporting either Gemini AI or OpenAI ChatGPT. Specialized French prompt tuned for West African Islamic contexts.
 
@@ -91,6 +94,22 @@ python 02_NER_reconciliation_Omeka.py
 python 03_Omeka_update.py
 ```
 
+### Example: Handwritten Text Recognition
+
+```bash
+cd AI_htr_extraction/
+
+# Run the HTR script (interactive prompts for language and model selection)
+python 02_gemini_htr_processor.py
+
+# The script will ask you to choose:
+# 1. Language: French / Arabic / Multilingual (auto-detect)
+# 2. Model: Gemini 2.5 Flash (fast) / Gemini 2.5 Pro (accurate)
+
+# Place your PDFs in the PDF/ directory
+# Results will be saved to OCR_Results/
+```
+
 ### Example: NotebookLM Markdown Exporter
 
 PowerShell (Windows):
@@ -137,11 +156,12 @@ Each pipeline directory contains:
 ## Documentation
 
 Detailed documentation for each pipeline is available in their respective directories:
+- [Handwritten Text Recognition (HTR)](AI_htr_extraction/README.md)
 - [Named Entity Recognition](AI_NER/README.md)
 - [OCR Correction](AI_ocr_correction/README.md)
 - [OCR Extraction](AI_ocr_extraction/README.md)
 - [Summary Generation](AI_summary/README.md)
- - [NotebookLM Markdown Exporter](NotebookLM/)
+- [NotebookLM Markdown Exporter](NotebookLM/)
 
 ## Contributing
 
