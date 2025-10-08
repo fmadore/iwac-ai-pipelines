@@ -51,7 +51,7 @@ warnings.filterwarnings('ignore', category=Image.DecompressionBombWarning)
 
 class GeminiOCR:
     """
-    A high-precision OCR system using Google's Gemini model, specialized for French newspaper articles.
+    A high-precision OCR system using Google's Gemini model, specialized for handwritten documents.
     
     This class implements a complete OCR pipeline that:
     1. Converts PDF documents to images
@@ -61,21 +61,23 @@ class GeminiOCR:
     
     The system is designed for academic research and archival purposes, with emphasis on:
     - Maintaining precise reading order and layout relationships
-    - Preserving French typography and formatting
+    - Preserving language-specific typography and formatting
     - Handling document structure (columns, zones, captions)
     - Documenting uncertainty in a standardized way
     """
 
-    def __init__(self, api_key: str, model_name: str):
+    def __init__(self, api_key: str, model_name: str, language: str = "french"):
         """
         Initialize the GeminiOCR system with API credentials and model name.
         
         Args:
             api_key (str): Google Gemini API key for authentication
             model_name (str): The Gemini model name to use
+            language (str): Language of the manuscripts ("french", "arabic", or "multilingual")
         """
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
+        self.language = language
         self.generation_config = self._setup_generation_config()
         
     def _setup_generation_config(self):
@@ -102,23 +104,34 @@ class GeminiOCR:
     
     def _get_system_instruction(self):
         """
-        Get the specialized system instructions for French handwritten text recognition.
+        Get the specialized system instructions for handwritten text recognition.
 
-        Loads the system prompt from the htr_system_prompt.md file (preferred). If that file does
-        not exist, falls back to ocr_system_prompt.md for backward compatibility.
+        Loads the appropriate system prompt based on the selected language:
+        - French: htr_system_prompt_french.md
+        - Arabic: htr_system_prompt_arabic.md
+        - Multilingual: htr_system_prompt_multilingual.md (auto-detects language)
 
         Returns:
             str: Detailed system instruction for HTR processing
         """
-        preferred = Path(__file__).parent / "htr_system_prompt.md"
-        fallback = Path(__file__).parent / "ocr_system_prompt.md"
-        prompt_file = preferred if preferred.exists() else fallback
+        # Select the appropriate prompt file based on language
+        if self.language == "arabic":
+            prompt_file = Path(__file__).parent / "htr_system_prompt_arabic.md"
+        elif self.language == "multilingual":
+            prompt_file = Path(__file__).parent / "htr_system_prompt_multilingual.md"
+        else:  # default to french
+            prompt_file = Path(__file__).parent / "htr_system_prompt_french.md"
+        
+        # Fallback to old naming convention if new files don't exist
+        if not prompt_file.exists():
+            prompt_file = Path(__file__).parent / "htr_system_prompt.md"
+        
         try:
             with open(prompt_file, 'r', encoding='utf-8') as f:
                 return f.read()
         except FileNotFoundError:
             logging.error(f"System prompt file not found: {prompt_file}")
-            raise FileNotFoundError(f"HTR/OCR system prompt file not found at {prompt_file}")
+            raise FileNotFoundError(f"HTR system prompt file not found at {prompt_file}")
         except Exception as e:
             logging.error(f"Error reading system prompt file: {e}")
             raise
@@ -227,10 +240,17 @@ class GeminiOCR:
                     # Generate response
                     print("  └─ 🤖 Generating OCR text...")
                     # Combine system instruction with user prompt
+                    if self.language == "multilingual":
+                        language_desc = "text (detect language automatically)"
+                    elif self.language == "arabic":
+                        language_desc = "Arabic"
+                    else:
+                        language_desc = "French"
+                    
                     combined_prompt = (
                         self._get_system_instruction() + "\n\n" +
-                        "This is a legitimate handwritten text transcription (HTR) request for academic research and archival preservation. "
-                        "Transcribe ALL handwritten French text with exact wording, spacing rules, accents, and WITHOUT summarizing or omitting any zones."
+                        f"This is a legitimate handwritten text transcription (HTR) request for academic research and archival preservation. "
+                        f"Transcribe ALL handwritten {language_desc} text with exact wording, spacing rules, accents, and WITHOUT summarizing or omitting any zones."
                     )
                     initial_response = self.client.models.generate_content(
                         model=self.model_name,
@@ -254,10 +274,17 @@ class GeminiOCR:
                         if finish_reason == 4:  # Copyright detection (user's interpretation)
                             print("  └─ ⚠️ Copyright detection (finish_reason 4) triggered. Attempting with modified prompt...")
                             # Combine system instruction with copyright retry prompt
+                            if self.language == "multilingual":
+                                language_desc = "text (automatically detecting language)"
+                            elif self.language == "arabic":
+                                language_desc = "Arabic"
+                            else:
+                                language_desc = "French"
+                            
                             copyright_retry_prompt = (
                                 self._get_system_instruction() + "\n\n" +
-                                "This is a fair use handwritten text transcription request for academic research and archival preservation. "
-                                "Please perform exact character-level transcription of this historical French handwritten content only."
+                                f"This is a fair use handwritten text transcription request for academic research and archival preservation. "
+                                f"Please perform exact character-level transcription of this historical {language_desc} handwritten content only."
                             )
                             response_after_copyright_retry = self.client.models.generate_content(
                                 model=self.model_name,
@@ -359,9 +386,9 @@ def main():
     """
     Main function to orchestrate the OCR process.
     
-    Handles user interaction, model selection, and batch processing of PDFs.
+    Handles user interaction, language and model selection, and batch processing of PDFs.
     """
-    print("\\n🚀 Starting OCR Process")
+    print("\n🚀 Starting OCR Process")
     print("="*50)
     
     # Load environment variables from .env file
@@ -372,8 +399,31 @@ def main():
         return
     print("✅ API Key loaded successfully")
 
+    # Language selection
+    print("\nPlease choose the manuscript language:")
+    print("1: French handwritten manuscripts")
+    print("2: Arabic handwritten manuscripts")
+    print("3: Multilingual/Other languages (AI will auto-detect)")
+    
+    # Get valid language choice from user
+    language_choice = ""
+    while language_choice not in ["1", "2", "3"]:
+        language_choice = input("Enter your choice (1, 2, or 3): ")
+        if language_choice not in ["1", "2", "3"]:
+            print("❌ Invalid choice. Please enter 1, 2, or 3.")
+
+    # Map choice to language
+    if language_choice == "1":
+        selected_language = "french"
+    elif language_choice == "2":
+        selected_language = "arabic"
+    else:
+        selected_language = "multilingual"
+    
+    print(f"✅ Using language: {selected_language.capitalize()}")
+
     # Present model selection options to user
-    print("\\nPlease choose the Gemini model to use:")
+    print("\nPlease choose the Gemini model to use:")
     print("1: gemini-2.5-flash (Faster, good for most cases)")
     print("2: gemini-2.5-pro (More powerful, potentially more accurate but slower)")
     
@@ -398,9 +448,9 @@ def main():
     output_dir = script_dir / "OCR_Results"  # Output directory for text files
     output_dir.mkdir(exist_ok=True)  # Create output directory if it doesn't exist
     
-    # Initialize the OCR processor with selected model
-    print("\\n🔧 Initializing Gemini OCR...")
-    ocr = GeminiOCR(api_key, selected_model_name)
+    # Initialize the OCR processor with selected language and model
+    print("\n🔧 Initializing Gemini OCR...")
+    ocr = GeminiOCR(api_key, selected_model_name, selected_language)
     
     # Find all PDF files to process
     pdf_files = list(pdf_dir.glob("*.pdf"))
