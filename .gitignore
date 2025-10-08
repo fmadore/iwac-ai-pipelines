@@ -52,6 +52,7 @@ AI_ocr_correction/log
 
 # Output directories
 AI_htr_extraction/PDF/
+AI_htr_extraction/OCR_Results
 AI_NER/output/
 AI_ocr_correction/Corrected_TXT/
 AI_ocr_correction/TXT/
