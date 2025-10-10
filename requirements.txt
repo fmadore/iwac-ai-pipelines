@@ -5,6 +5,8 @@ requests
 urllib3
 pdf2image
 Pillow
+PyPDF2
 ratelimit
 tenacity
 openai
+pydub
