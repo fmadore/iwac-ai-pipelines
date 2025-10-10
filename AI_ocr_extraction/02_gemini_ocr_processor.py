@@ -1,74 +1,70 @@
 """
-AI-Powered OCR Script using Google Gemini
+AI-Powered Direct PDF Processing using Google Gemini (Page-by-Page)
 
-This script performs high-precision OCR on PDF documents using Google's Gemini AI model.
-It's specialized for French newspaper articles and produces research-grade text extraction
-with proper formatting, typography, and layout preservation.
+This script performs high-precision OCR on PDF documents by sending them directly to Gemini
+page-by-page, without converting to images first. This leverages Gemini's native PDF understanding
+while maintaining precise control over page-by-page extraction.
 
 Usage:
-    python 02_gemini_ocr_processor.py
+    python 02b_gemini_pdf_processor.py
 
 Requirements:
     - Environment variable: GEMINI_API_KEY
     - PDF files in the PDF/ directory
-    - Poppler PDF utilities installed
     - OCR system prompt in ocr_system_prompt.md
+    - PyPDF2 for page extraction
+
+Advantages over image-based approach:
+    - No Poppler dependency needed
+    - Better document structure understanding
+    - Processes images, diagrams, and tables natively
+    - Simpler pipeline with fewer conversions
+    - Page-by-page processing for better control
 """
 
 import os
 import time
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional, List
 from google import genai
 from google.genai import types
-from pdf2image import convert_from_path
-from PIL import Image
-import tempfile
-from tqdm import tqdm
 from dotenv import load_dotenv
-import warnings
-from PIL import Image, ImageFile
-
-# Configure PIL to handle large images safely for legitimate OCR use cases
-Image.MAX_IMAGE_PIXELS = None  # Disable decompression bomb check for our legitimate use case
-ImageFile.LOAD_TRUNCATED_IMAGES = True  # Handle potentially truncated image files
+from PyPDF2 import PdfReader, PdfWriter
+import io
 
 # Set up logging configuration for tracking OCR operations and errors
-# Save log file in a dedicated log directory
 script_dir = Path(__file__).parent
 log_dir = script_dir / 'log'
 log_dir.mkdir(exist_ok=True)
-log_file = log_dir / 'ocr_gemini.log'
+log_file = log_dir / 'ocr_gemini_pdf.log'
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     filename=log_file
 )
 
-# Suppress PIL DecompressionBombWarning for our legitimate high-DPI newspaper images
-warnings.filterwarnings('ignore', category=Image.DecompressionBombWarning)
-
-class GeminiOCR:
+class GeminiPDFProcessor:
     """
-    A high-precision OCR system using Google's Gemini model, specialized for French newspaper articles.
+    A high-precision OCR system using Google's Gemini model with native PDF processing.
     
-    This class implements a complete OCR pipeline that:
-    1. Converts PDF documents to images
-    2. Processes images through Gemini's vision model
-    3. Applies sophisticated text extraction and formatting rules
-    4. Handles uncertainty and quality control
+    This class implements a page-by-page OCR pipeline that:
+    1. Extracts individual pages from PDF documents
+    2. Sends each page directly to Gemini for processing
+    3. Leverages Gemini's native document understanding
+    4. Applies sophisticated text extraction and formatting rules
+    5. Handles uncertainty and quality control per page
     
     The system is designed for academic research and archival purposes, with emphasis on:
     - Maintaining precise reading order and layout relationships
     - Preserving French typography and formatting
     - Handling document structure (columns, zones, captions)
-    - Documenting uncertainty in a standardized way
+    - Processing pages individually for better control and error recovery
     """
 
     def __init__(self, api_key: str, model_name: str):
         """
-        Initialize the GeminiOCR system with API credentials and model name.
+        Initialize the GeminiPDFProcessor with API credentials and model name.
         
         Args:
             api_key (str): Google Gemini API key for authentication
@@ -147,431 +143,373 @@ class GeminiOCR:
         except Exception as e:
             logging.error(f"Error reading system prompt file: {e}")
             raise
-    
-    def pdf_to_images(self, pdf_path: Path) -> List[Image.Image]:
+
+    def extract_pdf_page(self, pdf_path: Path, page_number: int) -> bytes:
         """
-        Convert a PDF document to a list of high-quality images for OCR processing.
-        
-        This method handles:
-        - PDF existence and readability verification
-        - Poppler dependency checking
-        - Optimal image conversion settings
-        - Error handling and logging
+        Extract a single page from a PDF as bytes.
         
         Args:
-            pdf_path (Path): Path to the PDF file to be processed
+            pdf_path (Path): Path to the PDF file
+            page_number (int): Page number to extract (0-indexed)
             
         Returns:
-            List[Image.Image]: List of PIL Image objects, one per page
-                             Returns empty list if conversion fails
-        
-        Technical Details:
-        - Uses pdf2image with poppler backend
-        - 300 DPI for archival-quality scanning and optimal text recognition
-        - Grayscale conversion for better text recognition and noise reduction
-        - Multi-threaded processing for performance
-        - 180-second timeout for large documents
+            bytes: PDF bytes containing only the specified page
         """
         try:
-            # Verify PDF file existence and accessibility
-            if not pdf_path.exists():
-                logging.error(f"PDF file not found: {pdf_path}")
-                return []
-                
-            logging.info(f"PDF file exists and size is: {pdf_path.stat().st_size} bytes")
+            reader = PdfReader(str(pdf_path))
+            writer = PdfWriter()
             
-            # Verify Poppler installation (required for PDF conversion)
-            poppler_path = r"C:\Program Files\poppler\Library\bin"
-            if not os.path.exists(poppler_path):
-                logging.error(f"Poppler dependency not found at: {poppler_path}")
-                return []
-                
-            logging.info("Initiating PDF conversion...")
+            # Add the specific page
+            writer.add_page(reader.pages[page_number])
             
-            # Convert PDF to images with optimized parameters for OCR quality
-            images = convert_from_path(
-                pdf_path,
-                poppler_path=poppler_path,
-                dpi=300,              # High DPI for optimal text recognition, especially for poor scans
-                fmt='png',            # Lossless format for quality
-                thread_count=2,        # Parallel processing
-                use_pdftocairo=True,   # Preferred converter
-                timeout=180,           # Extended timeout for large files
-                first_page=1,
-                last_page=None,        # Process all pages
-                strict=False,          # More permissive processing
-                grayscale=True         # Better for text recognition, reduces noise from colored backgrounds
-            )
+            # Write to bytes
+            output_buffer = io.BytesIO()
+            writer.write(output_buffer)
+            output_buffer.seek(0)
             
-            logging.info(f"Successfully converted {len(images)} pages to images")
-            return images
+            return output_buffer.getvalue()
             
         except Exception as e:
-            # Handle specific error cases with appropriate logging
-            if "timeout" in str(e).lower():
-                logging.error(
-                    "PDF conversion timeout - possible PDF/A format or complexity issue",
-                    exc_info=True
-                )
-            else:
-                logging.error(f"PDF conversion error: {str(e)}", exc_info=True)
-            return []
+            logging.error(f"Error extracting page {page_number + 1} from {pdf_path}: {e}")
+            raise
 
-    def _get_image_size_mb(self, image: Image.Image) -> float:
-        """Calculate the approximate size of an image in MB when saved as PNG."""
-        import io
-        buffer = io.BytesIO()
-        image.save(buffer, format='PNG')
-        size_bytes = buffer.tell()
-        return size_bytes / (1024 * 1024)
-
-    def _optimize_image_for_ocr(self, image: Image.Image) -> Image.Image:
-        """Optimize image for OCR while maintaining quality for text recognition."""
-        width, height = image.size
-        max_dimension = 2048  # API recommended max
+    def get_pdf_page_count(self, pdf_path: Path) -> int:
+        """
+        Get the number of pages in a PDF.
         
-        # Check if image is too large for API
-        if width > max_dimension or height > max_dimension:
-            logging.info(f"Resizing large image from {width}x{height}")
-            # Use high-quality resampling to preserve text clarity
-            image.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
-            logging.info(f"Resized to {image.size}")
-        
-        # Check file size and reduce quality only if absolutely necessary
-        size_mb = self._get_image_size_mb(image)
-        if size_mb > 18:  # Close to 20MB API limit
-            logging.warning(f"Image size {size_mb:.1f}MB is very large, applying compression")
-            # Apply minimal compression while preserving text quality
-            import io
-            buffer = io.BytesIO()
-            # Use high quality JPEG compression as last resort
-            temp_image = image.convert('RGB') if image.mode != 'RGB' else image
-            temp_image.save(buffer, format='JPEG', quality=95, optimize=True)
-            image = Image.open(buffer)
-            new_size_mb = self._get_image_size_mb(image)
-            logging.info(f"Compressed image from {size_mb:.1f}MB to {new_size_mb:.1f}MB")
-        
-        return image
-
-    def process_image_inline(self, image: Image.Image) -> Optional[str]:
-        """Process smaller images using inline data instead of file upload."""
+        Args:
+            pdf_path (Path): Path to the PDF file
+            
+        Returns:
+            int: Number of pages in the PDF
+        """
         try:
-            print("  └─ 🔄 Processing image inline...")
+            reader = PdfReader(str(pdf_path))
+            return len(reader.pages)
+        except Exception as e:
+            logging.error(f"Error reading PDF page count from {pdf_path}: {e}")
+            raise
+
+    def process_pdf_page_inline(self, page_bytes: bytes, page_num: int) -> Optional[str]:
+        """
+        Process a single PDF page inline by sending bytes directly.
+        
+        Args:
+            page_bytes (bytes): PDF page as bytes
+            page_num (int): Page number (for logging, 1-indexed)
             
-            # Convert image to bytes
-            import io
-            from google.genai import types
+        Returns:
+            Optional[str]: Extracted text or None if failed
+        """
+        try:
+            print(f"  └─ � Processing page {page_num} inline...")
             
-            buffer = io.BytesIO()
-            image.save(buffer, format='PNG', optimize=True)
-            image_bytes = buffer.getvalue()
-            
-            # Create image part
-            image_part = types.Part.from_bytes(
-                data=image_bytes,
-                mime_type='image/png'
+            # Create PDF part from page bytes
+            pdf_part = types.Part.from_bytes(
+                data=page_bytes,
+                mime_type='application/pdf'
             )
             
-            # Generate response
-            print("  └─ 🤖 Generating OCR text (inline)...")
+            print(f"  └─ 🤖 Generating OCR text for page {page_num}...")
+            
+            # Following Google's best practice: put prompt AFTER the document
             combined_prompt = (
                 self._get_system_instruction() + "\n\n" +
-                "Please perform complete OCR transcription of this document image. "
+                "Please perform complete OCR transcription of this single page. "
                 "Extract all visible text maintaining original formatting and structure."
             )
             
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=[combined_prompt, image_part],
+                contents=[pdf_part, combined_prompt],  # Document first, then prompt
                 config=self.generation_config
             )
             
-            # Validate response and handle RECITATION errors
+            # Validate response
             if not response.candidates:
                 raise Exception("No candidates in Gemini response")
             
             candidate = response.candidates[0]
             
-            # Check for RECITATION errors in inline processing
             if not candidate.content or not candidate.content.parts:
                 finish_reason = candidate.finish_reason
                 if finish_reason == types.FinishReason.RECITATION:
-                    print("  └─ ⚠️ Inline processing hit copyright detection, trying alternative...")
-                    # Try a simpler prompt for inline processing
-                    simple_prompt = (
-                        "Please extract the text content from this document image for educational purposes. "
-                        "Focus on accurate transcription of all visible text."
-                    )
-                    
-                    retry_response = self.client.models.generate_content(
-                        model=self.model_name,
-                        contents=[simple_prompt, image_part],
-                        config=self.generation_config
-                    )
-                    
-                    if (retry_response.candidates and 
-                        retry_response.candidates[0].content and 
-                        retry_response.candidates[0].content.parts):
-                        text_content = retry_response.text.replace('\xa0', ' ').strip()
-                        if text_content:
-                            print("  └─ ✅ OCR complete (inline with alternative prompt)")
-                            return text_content
-                    
-                    # If still failing, let it fall back to file upload
-                    raise Exception("Inline copyright retry failed")
+                    print(f"  └─ ⚠️ Page {page_num}: Copyright detection triggered, trying alternative...")
+                    return self._try_alternative_prompts(pdf_part, page_num)
                 else:
-                    raise Exception(f"No valid response from Gemini. Finish reason: {finish_reason}")
+                    raise Exception(f"No valid response. Finish reason: {finish_reason}")
             
             text_content = response.text.replace('\xa0', ' ').strip()
             if not text_content:
                 raise Exception("Empty text response from Gemini")
             
-            print("  └─ ✅ OCR complete (inline)")
+            print(f"  └─ ✅ Page {page_num} OCR complete")
             return text_content
             
         except Exception as e:
-            print(f"  └─ ❌ Inline processing failed: {str(e)}")
-            logging.error(f"Inline image processing failed: {e}")
+            print(f"  └─ ❌ Page {page_num} inline processing failed: {str(e)}")
+            logging.error(f"Page {page_num} inline processing failed: {e}")
             return None
 
-    def process_image(self, image: Image.Image) -> Optional[str]:
-        """Process a single image with Gemini, choosing optimal method based on size."""
-        # Optimize image for OCR while preserving quality
-        image = self._optimize_image_for_ocr(image)
-
-        # Check image size to decide processing method
-        image_size_mb = self._get_image_size_mb(image)
+    def process_pdf_page_upload(self, page_bytes: bytes, page_num: int) -> Optional[str]:
+        """
+        Process a single PDF page using File API upload (as fallback).
         
-        # Use inline processing for smaller images (< 15MB) for better efficiency
-        if image_size_mb < 15:
-            print(f"  └─ 📏 Image size: {image_size_mb:.1f}MB - using inline processing")
-            result = self.process_image_inline(image)
-            if result:
-                return result
-            else:
-                print("  └─ ⚠️ Inline processing failed, falling back to file upload")
-        else:
-            print(f"  └─ 📏 Image size: {image_size_mb:.1f}MB - using file upload")
-        
-        # Use file upload method (original method with improvements)
-        return self.process_image_upload(image)
-
-    def process_image_upload(self, image: Image.Image) -> Optional[str]:
-        """Process a single image with Gemini using file upload with improved error handling."""
-        max_retries = 5  # Increased retries
-        base_delay = 2   # Base delay in seconds
+        Args:
+            page_bytes (bytes): PDF page as bytes
+            page_num (int): Page number (for logging, 1-indexed)
+            
+        Returns:
+            Optional[str]: Extracted text or None if failed
+        """
+        max_retries = 3
+        base_delay = 2
 
         for attempt in range(max_retries):
-            tmp_file_path = None
             try:
-                # Save image to temporary file with better error handling
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                    tmp_file_path = tmp.name
-                    print("  └─ 💾 Saving temporary image...")
-                    image.save(tmp_file_path, optimize=True, quality=95)
+                print(f"  └─ ⬆️  Uploading page {page_num} to Gemini...")
+                
+                # Upload page bytes using BytesIO
+                page_io = io.BytesIO(page_bytes)
+                pdf_file = self.client.files.upload(
+                    file=page_io,
+                    config=dict(mime_type='application/pdf')
+                )
+                
+                if not pdf_file or not pdf_file.name:
+                    raise Exception("Failed to upload page to Gemini")
+                
+                print(f"  └─ ⏳ Waiting for page {page_num} processing...")
+                processing_attempts = 0
+                max_processing_time = 60
+                
+                while processing_attempts < max_processing_time:
+                    file = self.client.files.get(name=pdf_file.name)
+                    if file.state.name == "ACTIVE":
+                        break
+                    elif file.state.name == "FAILED":
+                        raise Exception(f"File processing failed: {file.state.name}")
+                    elif file.state.name not in ["PROCESSING"]:
+                        raise Exception(f"Unexpected file state: {file.state.name}")
                     
-                    # Validate file was created and has content
-                    if not os.path.exists(tmp_file_path) or os.path.getsize(tmp_file_path) == 0:
-                        raise Exception("Failed to create temporary image file")
-                    
-                    # Upload to Gemini with validation
-                    print("  └─ ⬆️  Uploading to Gemini...")
-                    image_file = self.client.files.upload(file=tmp_file_path)
-                    
-                    if not image_file or not image_file.name:
-                        raise Exception("Failed to upload image to Gemini")
-                    
-                    # Wait for processing with better timeout handling
-                    print("  └─ ⏳ Processing file...")
-                    processing_attempts = 0
-                    max_processing_time = 60  # Maximum wait time
-                    
-                    while processing_attempts < max_processing_time:
-                        file = self.client.files.get(name=image_file.name)
-                        if file.state.name == "ACTIVE":
-                            break
-                        elif file.state.name == "FAILED":
-                            raise Exception(f"File processing failed: {file.state.name}")
-                        elif file.state.name not in ["PROCESSING"]:
-                            raise Exception(f"Unexpected file state: {file.state.name}")
-                        
-                        processing_attempts += 1
-                        time.sleep(1)
-                    
-                    if processing_attempts >= max_processing_time:
-                        raise TimeoutError(f"File processing timed out after {max_processing_time} seconds")
-                    
-                    # Generate response with improved prompt
-                    print("  └─ 🤖 Generating OCR text...")
-                    combined_prompt = (
-                        self._get_system_instruction() + "\n\n" +
-                        "Please perform complete OCR transcription of this document image. "
-                        "Extract all visible text maintaining original formatting and structure."
-                    )
-                    
-                    response = self.client.models.generate_content(
-                        model=self.model_name,
-                        contents=[combined_prompt, image_file],
-                        config=self.generation_config
-                    )
-                    
-                    # Improved response validation
-                    if not response.candidates:
-                        raise Exception("No candidates in Gemini response")
-                    
-                    candidate = response.candidates[0]
-                    
-                    if not candidate.content or not candidate.content.parts:
-                        finish_reason = candidate.finish_reason
-                        safety_info = ""
-                        if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
-                            safety_info = f" Safety ratings: {candidate.safety_ratings}"
-                        
-                        # Handle RECITATION errors (copyright detection) with multiple strategies
-                        if finish_reason == types.FinishReason.RECITATION:
-                            print("  └─ ⚠️ Copyright detection triggered, trying alternative approaches...")
-                            
-                            # Strategy 1: Academic fair use prompt
-                            alternative_prompts = [
-                                (
-                                    "Academic Fair Use Request",
-                                    "This is a legitimate academic research request for historical document preservation and scholarly analysis. "
-                                    "Under fair use principles, please perform OCR text extraction from this historical newspaper document. "
-                                    "The purpose is archival preservation and academic research, not commercial reproduction. "
-                                    "Please extract all visible text while maintaining original formatting and structure."
-                                ),
-                                (
-                                    "Educational OCR Request", 
-                                    "Please assist with educational OCR processing of this historical document image. "
-                                    "Extract the text content for research and educational purposes. "
-                                    "Focus on accuracy and completeness of the text transcription."
-                                ),
-                                (
-                                    "Technical OCR Analysis",
-                                    "Perform technical optical character recognition analysis on this document image. "
-                                    "Output the detected text content with preserved formatting. "
-                                    "This is for document digitization and preservation purposes."
-                                )
-                            ]
-                            
-                            for strategy_name, alternative_prompt in alternative_prompts:
-                                try:
-                                    print(f"  └─ 🔄 Trying {strategy_name}...")
-                                    retry_response = self.client.models.generate_content(
-                                        model=self.model_name,
-                                        contents=[alternative_prompt, image_file],
-                                        config=self.generation_config
-                                    )
-                                    
-                                    if (retry_response.candidates and 
-                                        retry_response.candidates[0].content and 
-                                        retry_response.candidates[0].content.parts):
-                                        text_content = retry_response.text.replace('\xa0', ' ').strip()
-                                        if text_content:
-                                            print(f"  └─ ✅ OCR complete (using {strategy_name})")
-                                            return text_content
-                                        else:
-                                            print(f"  └─ ⚠️ {strategy_name} returned empty response")
-                                    else:
-                                        retry_finish_reason = retry_response.candidates[0].finish_reason if retry_response.candidates else 'Unknown'
-                                        print(f"  └─ ⚠️ {strategy_name} failed. Finish reason: {retry_finish_reason}")
-                                        
-                                except Exception as e:
-                                    print(f"  └─ ⚠️ {strategy_name} error: {str(e)}")
-                                    continue
-                            
-                            # If all strategies failed, raise the original error
-                            raise Exception(f"All copyright retry strategies failed. Original finish reason: {finish_reason}")
-                            
-                        else:
-                            raise Exception(f"Response lacks content. Finish reason: {finish_reason}.{safety_info}")
-                    
-                    # Extract and validate text
-                    text_content = response.text.replace('\xa0', ' ').strip()
-                    if not text_content:
-                        raise Exception("Empty text response from Gemini")
-                    
-                    print("  └─ ✅ OCR complete")
-                    return text_content
+                    processing_attempts += 1
+                    time.sleep(1)
+                
+                if processing_attempts >= max_processing_time:
+                    raise TimeoutError(f"File processing timed out after {max_processing_time} seconds")
+                
+                print(f"  └─ 🤖 Generating OCR text for page {page_num}...")
+                
+                # Following Google's best practice: put prompt AFTER the document
+                combined_prompt = (
+                    self._get_system_instruction() + "\n\n" +
+                    "Please perform complete OCR transcription of this single page. "
+                    "Extract all visible text maintaining original formatting and structure."
+                )
+                
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[pdf_file, combined_prompt],  # Document first, then prompt
+                    config=self.generation_config
+                )
+                
+                # Validate response
+                if not response.candidates:
+                    raise Exception("No candidates in Gemini response")
+                
+                candidate = response.candidates[0]
+                
+                if not candidate.content or not candidate.content.parts:
+                    finish_reason = candidate.finish_reason
+                    if finish_reason == types.FinishReason.RECITATION:
+                        print(f"  └─ ⚠️ Page {page_num}: Copyright detection, trying alternatives...")
+                        result = self._try_alternative_prompts(pdf_file, page_num)
+                        if result:
+                            return result
+                        raise Exception("All copyright retry strategies failed")
+                    else:
+                        raise Exception(f"No valid response. Finish reason: {finish_reason}")
+                
+                text_content = response.text.replace('\xa0', ' ').strip()
+                if not text_content:
+                    raise Exception("Empty text response from Gemini")
+                
+                print(f"  └─ ✅ Page {page_num} OCR complete")
+                return text_content
                 
             except Exception as e:
-                print(f"  └─ ❌ Error (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                logging.error(f"Error processing image (attempt {attempt + 1}): {e}", exc_info=True)
+                print(f"  └─ ❌ Page {page_num} error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                logging.error(f"Page {page_num} processing error (attempt {attempt + 1}): {e}", exc_info=True)
                 
-                # Exponential backoff for retries
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    delay = base_delay * (2 ** attempt)
                     print(f"  └─ 🔄 Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    print("  └─ ❌ Max retries reached. Skipping this image.")
+                    print(f"  └─ ❌ Page {page_num} max retries reached.")
+        
+        return None
+
+    def _try_alternative_prompts(self, pdf_content, page_num: int) -> Optional[str]:
+        """
+        Try alternative prompts when copyright detection is triggered.
+        
+        Args:
+            pdf_content: PDF Part or File object
+            page_num (int): Page number (for logging, 1-indexed)
+            
+        Returns:
+            Optional[str]: Extracted text or None if all strategies failed
+        """
+        alternative_prompts = [
+            (
+                "Academic Fair Use Request",
+                "This is a legitimate academic research request for historical document preservation and scholarly analysis. "
+                "Under fair use principles, please perform OCR text extraction from this historical page. "
+                "The purpose is archival preservation and academic research, not commercial reproduction. "
+                "Please extract all visible text while maintaining original formatting and structure."
+            ),
+            (
+                "Educational OCR Request",
+                "Please assist with educational OCR processing of this historical document page. "
+                "Extract the text content for research and educational purposes. "
+                "Focus on accuracy and completeness of the text transcription."
+            ),
+            (
+                "Technical OCR Analysis",
+                "Perform technical optical character recognition analysis on this document page. "
+                "Output the detected text content with preserved formatting. "
+                "This is for document digitization and preservation purposes."
+            )
+        ]
+        
+        for strategy_name, alternative_prompt in alternative_prompts:
+            try:
+                print(f"  └─ 🔄 Page {page_num}: Trying {strategy_name}...")
+                retry_response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[pdf_content, alternative_prompt],  # Document first, then prompt
+                    config=self.generation_config
+                )
+                
+                if (retry_response.candidates and 
+                    retry_response.candidates[0].content and 
+                    retry_response.candidates[0].content.parts):
+                    text_content = retry_response.text.replace('\xa0', ' ').strip()
+                    if text_content:
+                        print(f"  └─ ✅ Page {page_num} complete (using {strategy_name})")
+                        return text_content
+                    else:
+                        print(f"  └─ ⚠️ Page {page_num}: {strategy_name} returned empty response")
+                else:
+                    retry_finish_reason = retry_response.candidates[0].finish_reason if retry_response.candidates else 'Unknown'
+                    print(f"  └─ ⚠️ Page {page_num}: {strategy_name} failed. Finish reason: {retry_finish_reason}")
                     
-            finally:
-                # Ensure temporary file cleanup
-                if tmp_file_path and os.path.exists(tmp_file_path):
-                    try:
-                        os.unlink(tmp_file_path)
-                    except Exception as cleanup_error:
-                        logging.warning(f"Failed to cleanup temporary file {tmp_file_path}: {cleanup_error}")
+            except Exception as e:
+                print(f"  └─ ⚠️ Page {page_num}: {strategy_name} error: {str(e)}")
+                continue
         
         return None
 
     def process_pdf(self, pdf_path: Path, output_dir: Path) -> None:
-        """Process a PDF file and save results to a text file with improved validation and reporting."""
+        """
+        Process a PDF file page-by-page and save results to a text file.
+        
+        This method:
+        1. Gets the page count from the PDF
+        2. Extracts and processes each page individually
+        3. Combines results with page markers
+        4. Saves to output file
+        
+        Args:
+            pdf_path (Path): Path to the PDF file to process
+            output_dir (Path): Directory to save the output text file
+        """
         try:
             print("\n" + "="*50)
             print(f"📄 Processing PDF: {pdf_path.name}")
             print("="*50)
             
-            # Add poppler to PATH temporarily
-            poppler_path = r"C:\Program Files\poppler\Library\bin"
-            os.environ["PATH"] = poppler_path + os.pathsep + os.environ["PATH"]
-            
-            # Convert PDF to images
-            print("\n🔄 Converting PDF to images...")
-            images = self.pdf_to_images(pdf_path)
-            if not images:
-                print("❌ No images were extracted from the PDF!")
-                logging.error(f"No images extracted from {pdf_path}")
+            # Verify PDF exists
+            if not pdf_path.exists():
+                print(f"❌ PDF file not found: {pdf_path}")
+                logging.error(f"PDF file not found: {pdf_path}")
                 return
-            print(f"✅ Successfully extracted {len(images)} pages from PDF")
-
-            # Create output text file
+            
+            file_size_mb = pdf_path.stat().st_size / (1024 * 1024)
+            print(f"📊 PDF size: {file_size_mb:.2f} MB")
+            
+            # Get page count
+            print("\n🔄 Reading PDF structure...")
+            total_pages = self.get_pdf_page_count(pdf_path)
+            print(f"✅ PDF has {total_pages} pages")
+            
+            # Create output file
             output_file = output_dir / f"{pdf_path.stem}.txt"
             print(f"\n📝 Output will be saved to: {output_file}")
             
             # Track processing statistics
-            total_pages = len(images)
             successful_pages = 0
             failed_pages = []
             
-            # Process each page with better error tracking
+            # Process each page
             with open(output_file, 'w', encoding='utf-8') as f:
-                for i, image in enumerate(images, 1):
+                for page_idx in range(total_pages):
+                    page_num = page_idx + 1  # 1-indexed for display
+                    
                     print("\n" + "-"*40)
-                    print(f"📃 Processing page {i}/{total_pages}")
+                    print(f"📃 Processing page {page_num}/{total_pages}")
                     print("-"*40)
                     
-                    text = self.process_image(image)
-                    if text and text.strip():  # Validate we got actual content
-                        # Special handling for first page - no header, no extra newlines
-                        if i == 1:
-                            f.write(text)
-                        else:
-                            # For subsequent pages, add page marker and newlines
-                            f.write(f"\n\n--- Page {i} ---\n\n")
-                            f.write(text)
+                    try:
+                        # Extract single page as PDF bytes
+                        print(f"  └─ 📄 Extracting page {page_num}...")
+                        page_bytes = self.extract_pdf_page(pdf_path, page_idx)
+                        page_size_mb = len(page_bytes) / (1024 * 1024)
                         
-                        successful_pages += 1
-                        print(f"✅ Successfully processed page {i}")
-                    else:
-                        failed_pages.append(i)
-                        print(f"❌ Failed to process page {i}")
-                        # Add a placeholder for failed pages to maintain structure
-                        if i == 1:
-                            f.write(f"[ERROR: Failed to process page {i}]")
+                        # Process page (try inline first, then upload if needed)
+                        text = None
+                        if page_size_mb < 20:
+                            print(f"  └─ � Page size: {page_size_mb:.2f} MB - trying inline...")
+                            text = self.process_pdf_page_inline(page_bytes, page_num)
+                        
+                        # Fallback to upload if inline failed or page too large
+                        if not text:
+                            if page_size_mb < 20:
+                                print(f"  └─ ⚠️ Inline failed, falling back to upload...")
+                            else:
+                                print(f"  └─ � Page size: {page_size_mb:.2f} MB - using upload...")
+                            text = self.process_pdf_page_upload(page_bytes, page_num)
+                        
+                        if text and text.strip():
+                            # Special handling for first page - no header, no extra newlines
+                            if page_num == 1:
+                                f.write(text)
+                            else:
+                                # For subsequent pages, add page marker and newlines
+                                f.write(f"\n\n--- Page {page_num} ---\n\n")
+                                f.write(text)
+                            
+                            successful_pages += 1
+                            print(f"✅ Successfully processed page {page_num}")
                         else:
-                            f.write(f"\n\n--- Page {i} ---\n\n[ERROR: Failed to process page {i}]")
+                            failed_pages.append(page_num)
+                            print(f"❌ Failed to process page {page_num}")
+                            # Add a placeholder for failed pages
+                            if page_num == 1:
+                                f.write(f"[ERROR: Failed to process page {page_num}]")
+                            else:
+                                f.write(f"\n\n--- Page {page_num} ---\n\n[ERROR: Failed to process page {page_num}]")
+                    
+                    except Exception as e:
+                        failed_pages.append(page_num)
+                        print(f"❌ Error processing page {page_num}: {e}")
+                        logging.error(f"Error processing page {page_num} of {pdf_path}: {e}")
+                        # Add error placeholder
+                        if page_num == 1:
+                            f.write(f"[ERROR: Failed to process page {page_num}: {str(e)}]")
+                        else:
+                            f.write(f"\n\n--- Page {page_num} ---\n\n[ERROR: Failed to process page {page_num}: {str(e)}]")
             
             # Report processing statistics
             print("\n" + "="*50)
@@ -583,22 +521,18 @@ class GeminiOCR:
             if failed_pages:
                 print(f"Failed page numbers: {failed_pages}")
             
-            success_rate = (successful_pages / total_pages) * 100
+            success_rate = (successful_pages / total_pages) * 100 if total_pages > 0 else 0
             print(f"Success rate: {success_rate:.1f}%")
+            
+            # Validate output file
+            output_size = output_file.stat().st_size
+            print(f"Output file size: {output_size:,} bytes")
+            print("="*50 + "\n")
             
             # Log the results
             logging.info(f"PDF {pdf_path.name}: {successful_pages}/{total_pages} pages successful ({success_rate:.1f}%)")
             if failed_pages:
                 logging.warning(f"PDF {pdf_path.name}: Failed pages: {failed_pages}")
-            
-            # Validate output file has content
-            if output_file.exists() and output_file.stat().st_size > 0:
-                print(f"✅ Output file created successfully: {output_file.stat().st_size} bytes")
-            else:
-                print("⚠️ Warning: Output file is empty or missing!")
-                logging.warning(f"Empty or missing output file for {pdf_path.name}")
-            
-            print("="*50 + "\n")
             
         except Exception as e:
             print(f"\n❌ Error processing PDF {pdf_path}: {e}")
@@ -606,11 +540,14 @@ class GeminiOCR:
 
 def main():
     """
-    Main function to orchestrate the OCR process.
+    Main function to orchestrate the page-by-page PDF OCR process.
     
     Handles user interaction, model selection, and batch processing of PDFs.
+    Each PDF is processed page-by-page for better control and error recovery.
     """
-    print("\\n🚀 Starting OCR Process")
+    print("\n🚀 Starting Page-by-Page PDF OCR Process")
+    print("="*50)
+    print("📖 This script processes PDFs page-by-page without image conversion")
     print("="*50)
     
     # Load environment variables from .env file
@@ -622,7 +559,7 @@ def main():
     print("✅ API Key loaded successfully")
 
     # Present model selection options to user
-    print("\\nPlease choose the Gemini model to use:")
+    print("\nPlease choose the Gemini model to use:")
     print("1: gemini-2.5-flash (Faster, good for most cases)")
     print("2: gemini-2.5-pro (More powerful, more accurate but slower)")
     
@@ -643,13 +580,13 @@ def main():
     
     # Set up directory paths
     script_dir = Path(__file__).parent
-    pdf_dir = script_dir / "PDF"  # Input directory for PDFs
-    output_dir = script_dir / "OCR_Results"  # Output directory for text files
-    output_dir.mkdir(exist_ok=True)  # Create output directory if it doesn't exist
+    pdf_dir = script_dir / "PDF"
+    output_dir = script_dir / "OCR_Results"
+    output_dir.mkdir(exist_ok=True)
     
-    # Initialize the OCR processor with selected model
-    print("\\n🔧 Initializing Gemini OCR...")
-    ocr = GeminiOCR(api_key, selected_model_name)
+    # Initialize the PDF processor
+    print("\n🔧 Initializing Gemini PDF Processor...")
+    processor = GeminiPDFProcessor(api_key, selected_model_name)
     
     # Find all PDF files to process
     pdf_files = list(pdf_dir.glob("*.pdf"))
@@ -665,7 +602,8 @@ def main():
         'total_pdfs': total_pdfs,
         'processed_pdfs': 0,
         'failed_pdfs': 0,
-        'empty_outputs': 0
+        'total_size_mb': 0,
+        'processing_start': time.time()
     }
     
     # Process each PDF file sequentially
@@ -673,23 +611,26 @@ def main():
         print(f"\n📊 Progress: PDF {idx}/{total_pdfs} ({(idx/total_pdfs*100):.1f}%)")
         
         try:
-            ocr.process_pdf(pdf_path, output_dir)
+            processor.process_pdf(pdf_path, output_dir)
             
-            # Check if output file has content before marking as successful
+            # Check if output file has content
             output_file = output_dir / f"{pdf_path.stem}.txt"
-            if output_file.exists() and output_file.stat().st_size > 100:  # At least 100 bytes
+            if output_file.exists() and output_file.stat().st_size > 100:
                 overall_stats['processed_pdfs'] += 1
+                overall_stats['total_size_mb'] += pdf_path.stat().st_size / (1024 * 1024)
                 logging.info(f"Successfully processed {pdf_path.name}")
             else:
-                overall_stats['empty_outputs'] += 1
-                overall_stats['failed_pdfs'] += 1  # Empty output counts as failure
-                logging.warning(f"Output file for {pdf_path.name} is empty or very small - counting as failed")
+                overall_stats['failed_pdfs'] += 1
+                logging.warning(f"Output file for {pdf_path.name} is empty or very small")
                 
         except Exception as e:
             overall_stats['failed_pdfs'] += 1
             print(f"❌ Failed to process {pdf_path.name}: {e}")
             logging.error(f"Failed to process {pdf_path.name}: {e}")
 
+    # Calculate processing time
+    processing_time = time.time() - overall_stats['processing_start']
+    
     # Print final summary
     print("\n" + "="*60)
     print("📈 FINAL PROCESSING SUMMARY")
@@ -697,7 +638,8 @@ def main():
     print(f"Total PDFs found: {overall_stats['total_pdfs']}")
     print(f"Successfully processed: {overall_stats['processed_pdfs']}")
     print(f"Failed to process: {overall_stats['failed_pdfs']}")
-    print(f"  └─ Empty/small outputs: {overall_stats['empty_outputs']}")
+    print(f"Total size processed: {overall_stats['total_size_mb']:.2f} MB")
+    print(f"Processing time: {processing_time/60:.1f} minutes")
     
     if overall_stats['total_pdfs'] > 0:
         success_rate = (overall_stats['processed_pdfs'] / overall_stats['total_pdfs']) * 100
@@ -706,13 +648,16 @@ def main():
     print("="*60)
     
     # Log final summary
-    logging.info(f"Processing complete. {overall_stats['processed_pdfs']}/{overall_stats['total_pdfs']} PDFs processed successfully")
+    logging.info(f"Processing complete. {overall_stats['processed_pdfs']}/{overall_stats['total_pdfs']} PDFs processed successfully in {processing_time/60:.1f} minutes")
 
-    print("\n✨ OCR Process Complete! ✨\n")
+    print("\n✨ Direct PDF OCR Process Complete! ✨\n")
 
 if __name__ == "__main__":
     try:
         main()
+    except KeyboardInterrupt:
+        print("\n\n⚠️ Process interrupted by user")
+        logging.info("Process interrupted by user")
     except Exception as e:
-        print(f"An error occurred: {e}")
-        logging.error(f"An error occurred: {e}")
+        print(f"\n❌ An error occurred: {e}")
+        logging.error(f"An error occurred: {e}", exc_info=True)
