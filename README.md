@@ -23,6 +23,9 @@ Downloads PDFs from Omeka S, performs OCR using Gemini's vision capabilities, an
 ### 📋 Summary Generation (`AI_summary/`)
 Generates concise French summaries of documents for improved searchability and quick content understanding.
 
+### 📰 Magazine Article Extraction (`AI_summary_issue/`)
+Two-step AI pipeline for extracting and consolidating articles from digitized Islamic magazines. Uses **Gemini 2.5 Pro** for page-by-page extraction and **Gemini 2.5 Flash** for intelligent consolidation. Handles fragmented articles across multiple pages with automatic retry, progressive caching, and smart page numbering.
+
 ### 🧩 NotebookLM Markdown Exporter (`NotebookLM/`)
 Exports Omeka Item Sets into clean, NotebookLM-ready Markdown files (.md). Handles large collections by automatically splitting output into multiple parts. Default output is `.md` with an option to switch to `.txt` via an env var.
 
@@ -127,8 +130,30 @@ python .\NotebookLM\omeka_item_to_md.py 62076
 ```
 
 Output:
-- Files are written to `NotebookLM/extracted_articles/` (subfolders per country when exporting “all”).
+- Files are written to `NotebookLM/extracted_articles/` (subfolders per country when exporting "all").
 - Filenames: `<item-set-title>_<item-set-id>_articles.md` (or `_partN.md` when large).
+
+### Example: Magazine Article Extraction
+
+```bash
+cd AI_summary_issue/
+
+# Step 1: Download PDF from Omeka S (optional)
+python 01_omeka_pdf_downloader.py
+# Enter Omeka item set ID when prompted
+
+# Step 2: Extract and consolidate articles
+python 02_AI_generate_summaries_issue.py
+# Automatically processes PDFs in PDF/ folder
+# Uses Omeka ID from filename
+
+# Output structure:
+# Magazine_Extractions/
+# └── {omeka_id}/
+#     ├── step1_page_extractions/     # Individual page extractions
+#     ├── {omeka_id}_step1_consolidated.md  # All pages combined
+#     └── {omeka_id}_final_index.md   # Final article index
+```
 
 ## Pipeline Details
 
@@ -161,6 +186,7 @@ Detailed documentation for each pipeline is available in their respective direct
 - [OCR Correction](AI_ocr_correction/README.md)
 - [OCR Extraction](AI_ocr_extraction/README.md)
 - [Summary Generation](AI_summary/README.md)
+- [Magazine Article Extraction](AI_summary_issue/README.md)
 - [NotebookLM Markdown Exporter](NotebookLM/)
 
 ## Contributing
