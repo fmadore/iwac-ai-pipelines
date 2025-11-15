@@ -36,7 +36,12 @@ Répondez UNIQUEMENT au format suivant (Markdown strict), sans texte additionnel
 
 ## Règles importantes
 
-- **Si aucun article n'est présent** sur la page (couverture, page de publicité, etc.), indiquez simplement :
+- **Page de couverture** : Si la page est une couverture (première page du magazine), indiquez simplement :
+  ```
+  Page de couverture du magazine.
+  ```
+
+- **Si aucun article n'est présent** sur une page intérieure (page de publicité, page blanche, etc.), indiquez simplement :
   ```
   Aucun article identifié sur cette page.
   ```

@@ -9,13 +9,18 @@ cette liste en éliminant les doublons et en regroupant les articles fragmentés
 
 Analysez le document consolidé fourni et :
 
-1. **Identifiez les articles répétés ou fragmentés** sur plusieurs pages en vous basant sur :
+1. **Ignorez les pages non-article** :
+   - Pages de couverture
+   - Pages sans articles
+   - Publicités et annonces
+
+2. **Identifiez les articles répétés ou fragmentés** sur plusieurs pages en vous basant sur :
    - Le titre exact (identique ou très proche)
    - La continuité thématique et lexicale
    - Les mentions de continuation ("suite page X", "à suivre", etc.)
    - Les numéros de pages consécutifs ou mentionnés
 
-2. **Fusionnez les occurrences** en un seul enregistrement par article :
+3. **Fusionnez les occurrences** en un seul enregistrement par article :
    - Conservez le titre exact complet de l'article
    - Agrégez toutes les pages (ex: 1–3 ou 1, 3, 5)
    - Produisez un résumé global (4-6 phrases) en fusionnant les résumés partiels
