@@ -25,7 +25,7 @@ Analysez le document consolidé fourni et :
    - Agrégez toutes les pages (ex: 1–3 ou 1, 3, 5)
    - Produisez un résumé global (4-6 phrases) en fusionnant les résumés partiels
 
-3. **Produisez la liste finale** sans doublons
+4. **Produisez la liste finale** sans doublons et sans pages non-article
 
 ## Format de sortie requis
 

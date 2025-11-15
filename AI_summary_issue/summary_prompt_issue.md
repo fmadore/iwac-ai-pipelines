@@ -10,6 +10,9 @@ Analysez le texte OCR de la page fournie et identifiez tous les articles présen
 Pour chaque article trouvé, vous devez :
 
 1. **Identifier le titre exact** tel qu'il apparaît sur la page (respectez la typographie, les majuscules, l'accentuation)
+   - Ignorez les textes arabes mal reconnus par l'OCR (caractères illisibles comme "fllaoyjjÿ")
+   - Cherchez le titre principal en gros caractères ou en début d'article
+   - Si un titre est clairement visible mais mal retranscrit, corrigez-le en vous basant sur le contexte
 2. **Produire un résumé très bref** (2-3 phrases maximum) basé uniquement sur le contenu visible sur cette page
 3. **Détecter les indices de continuation** : recherchez des mentions comme "suite page X", "à suivre", "(voir p. X)", "fin en page X", etc.
 
@@ -49,6 +52,8 @@ Répondez UNIQUEMENT au format suivant (Markdown strict), sans texte additionnel
 - **Distinguez les articles des autres contenus** : éditorial, tribune, interview, reportage, fatwa sont des articles ; les annonces, publicités, brèves courtes (< 100 mots) ne le sont généralement pas.
 
 - **Titre exact** : Ne modifiez pas le titre, même s'il contient des fautes. Conservez la ponctuation et la casse originales.
+  - **Exception** : Si l'OCR a mal reconnu du texte arabe ou produit des caractères illisibles (ex: "fllaoyjjÿ"), cherchez le vrai titre en français dans le texte
+  - Basez-vous sur le contexte de l'article pour identifier le titre principal
 
 - **Résumé** : Basez-vous uniquement sur ce qui est visible sur cette page. Si l'article continue ailleurs, mentionnez-le dans "Continuation" mais ne résumez que la partie présente.
 
