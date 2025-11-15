@@ -290,20 +290,21 @@ def step1_extract_pages(client, pages_text: Dict[int, str],
         
         page_text = pages_text[page_num]
         
-        # Préparer le prompt avec le numéro de page et le texte
-        prompt = extraction_prompt.replace('{page_number}', str(page_num))
-        prompt = prompt.replace('{text}', page_text)
+        # Préparer le prompt avec le texte (pas de numéro de page)
+        prompt = extraction_prompt.replace('{text}', page_text)
         
         # Générer l'extraction avec retry automatique
         try:
             extraction = generate_with_gemini(client, prompt, model=GEMINI_MODEL_STEP1)
             
             if extraction:
-                all_extractions.append(f"\n{extraction}\n")
+                # Ajouter le numéro de page au début de la réponse de l'IA
+                extraction_with_page = f"## Page : {page_num}\n\n{extraction}"
+                all_extractions.append(f"\n{extraction_with_page}\n")
                 
                 # Sauvegarder immédiatement l'extraction individuelle
                 with open(page_file, 'w', encoding='utf-8') as f:
-                    f.write(extraction)
+                    f.write(extraction_with_page)
                 logging.info(f"✓ Page {page_num} processed and saved")
             else:
                 logging.error(f"✗ No extraction generated for page {page_num}")

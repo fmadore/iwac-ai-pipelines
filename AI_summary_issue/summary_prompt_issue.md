@@ -11,26 +11,21 @@ Pour chaque article trouvé, vous devez :
 
 1. **Identifier le titre exact** tel qu'il apparaît sur la page (respectez la typographie, les majuscules, l'accentuation)
 2. **Produire un résumé très bref** (2-3 phrases maximum) basé uniquement sur le contenu visible sur cette page
-3. **Noter le numéro de la page** actuellement analysée
-4. **Détecter les indices de continuation** : recherchez des mentions comme "suite page X", "à suivre", "(voir p. X)", "fin en page X", etc.
+3. **Détecter les indices de continuation** : recherchez des mentions comme "suite page X", "à suivre", "(voir p. X)", "fin en page X", etc.
 
 ## Format de sortie requis
 
 Répondez UNIQUEMENT au format suivant (Markdown strict), sans texte additionnel avant ou après :
 
 ```
-## Page : {page_number}
-
 ### Article 1
 - Titre exact : "<titre tel qu'imprimé>"
-- Pages à ce stade : {page_number}
 - Continuation : <si mention de suite/fin sur autre page, indiquez "suite page X" ou "aucune">
 - Résumé :
   <2-3 phrases décrivant le contenu visible sur cette page>
 
 ### Article 2
 - Titre exact : "<deuxième titre s'il y a lieu>"
-- Pages à ce stade : {page_number}
 - Continuation : <aucune ou "suite page X">
 - Résumé :
   <2-3 phrases>
@@ -41,9 +36,8 @@ Répondez UNIQUEMENT au format suivant (Markdown strict), sans texte additionnel
 
 ## Règles importantes
 
-- **Si aucun article n'est présent** sur la page (couverture, page de publicité, etc.), indiquez :
+- **Si aucun article n'est présent** sur la page (couverture, page de publicité, etc.), indiquez simplement :
   ```
-  ## Page : {page_number}
   Aucun article identifié sur cette page.
   ```
 
