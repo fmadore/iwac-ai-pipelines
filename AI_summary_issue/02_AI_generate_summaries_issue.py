@@ -327,6 +327,21 @@ def step1_extract_pages(client, pages_text: Dict[int, str],
         f.write('\n---\n'.join(all_extractions))
     
     logging.info(f"Step 1 complete. Consolidated file: {consolidated_file}")
+    
+    # Supprimer les fichiers individuels pour économiser l'espace
+    logging.info("Cleaning up individual page files...")
+    for page_file in step1_dir.glob('page_*.md'):
+        page_file.unlink()
+    logging.info(f"Deleted {len(list(step1_dir.glob('page_*.md')))} individual page files")
+    
+    # Optionnel : supprimer le dossier s'il est vide
+    try:
+        step1_dir.rmdir()
+        logging.info(f"Removed empty directory: {step1_dir}")
+    except OSError:
+        # Le dossier n'est pas vide, on le garde
+        pass
+    
     return consolidated_file
 
 def step2_consolidate(client, step1_file: Path, 
