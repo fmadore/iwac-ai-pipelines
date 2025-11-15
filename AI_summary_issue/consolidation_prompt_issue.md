@@ -5,6 +5,8 @@ Vous avez reçu une liste d'articles extraits page par page d'un magazine islami
 Certains articles peuvent être fragmentés sur plusieurs pages. Votre tâche est de consolider
 cette liste en éliminant les doublons et en regroupant les articles fragmentés.
 
+**Important** : Les magazines islamiques contiennent fréquemment des termes en arabe dans les titres et contenus. Préservez ces termes arabes correctement retranscrits dans les titres exacts et résumés consolidés.
+
 ## Instructions
 
 Analysez le document consolidé fourni et :
@@ -21,9 +23,10 @@ Analysez le document consolidé fourni et :
    - Les numéros de pages consécutifs ou mentionnés
 
 3. **Fusionnez les occurrences** en un seul enregistrement par article :
-   - Conservez le titre exact complet de l'article
+   - Conservez le titre exact complet de l'article (incluant les termes arabes s'ils sont présents)
    - Agrégez toutes les pages (ex: 1–3 ou 1, 3, 5)
    - Produisez un résumé global (4-6 phrases) en fusionnant les résumés partiels
+   - Incluez les termes arabes pertinents dans le résumé consolidé pour enrichir le contexte
 
 4. **Produisez la liste finale** sans doublons et sans pages non-article
 
