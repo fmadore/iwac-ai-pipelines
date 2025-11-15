@@ -446,52 +446,22 @@ def process_magazine(client, input_path: Path, output_dir: Path, magazine_id: st
 # ------------------------------------------------------------------
 # User Interaction
 # ------------------------------------------------------------------
-def get_input_path(script_dir: Path) -> Path:
-    """Obtient le chemin d'entrée (PDF ou répertoire TXT)."""
+def get_input_pdfs(script_dir: Path) -> list[Path]:
+    """Obtient la liste de tous les PDFs à traiter."""
     # Utiliser le dossier PDF par défaut
     default_pdf_dir = script_dir / "PDF"
     
-    if default_pdf_dir.exists() and default_pdf_dir.is_dir():
-        # Vérifier s'il y a des PDFs dans le dossier
-        pdf_files = list(default_pdf_dir.glob('*.pdf'))
-        if pdf_files:
-            logging.info(f"Dossier PDF trouvé avec {len(pdf_files)} fichier(s)")
-            # Si un seul PDF, retourner directement le fichier
-            if len(pdf_files) == 1:
-                return pdf_files[0]
-            # Sinon retourner le dossier
-            return default_pdf_dir
+    if not default_pdf_dir.exists():
+        raise FileNotFoundError(f"Le dossier PDF n'existe pas: {default_pdf_dir}")
     
-    # Sinon demander le chemin
-    while True:
-        path_str = input("Entrez le chemin vers le PDF ou le répertoire TXT (ou Entrée pour ./PDF): ").strip()
-        
-        # Si vide, utiliser le dossier PDF par défaut
-        if not path_str:
-            if default_pdf_dir.exists():
-                return default_pdf_dir
-            else:
-                print(f"Le dossier PDF par défaut n'existe pas: {default_pdf_dir}")
-                continue
-        
-        # Enlever les guillemets si présents
-        path_str = path_str.strip('"').strip("'")
-        path = Path(path_str)
-        
-        if path.exists():
-            if path.is_file() and path.suffix.lower() == '.pdf':
-                return path
-            elif path.is_dir():
-                return path
-            else:
-                print("Entrée invalide. Doit être un fichier PDF ou un répertoire contenant des fichiers TXT.")
-        else:
-            print(f"Le chemin n'existe pas: {path}")
-
-def get_magazine_id() -> str:
-    """Demande l'identifiant du magazine."""
-    magazine_id = input("Entrez l'identifiant du magazine (ou Entrée pour utiliser le nom du fichier): ").strip()
-    return magazine_id if magazine_id else None
+    # Récupérer tous les PDFs
+    pdf_files = sorted(list(default_pdf_dir.glob('*.pdf')))
+    
+    if not pdf_files:
+        raise FileNotFoundError(f"Aucun fichier PDF trouvé dans {default_pdf_dir}")
+    
+    logging.info(f"{len(pdf_files)} fichier(s) PDF trouvé(s) dans {default_pdf_dir}")
+    return pdf_files
 
 # ------------------------------------------------------------------
 # Main Entry Point
@@ -509,20 +479,30 @@ def main():
         # Initialisation du client Gemini
         client = initialize_gemini_client()
         
-        # Obtenir le chemin d'entrée
-        input_path = get_input_path(script_dir)
+        # Obtenir la liste des PDFs à traiter
+        pdf_files = get_input_pdfs(script_dir)
         
-        # Utiliser le nom du fichier/dossier comme Omeka ID
-        omeka_id = input_path.stem
-        logging.info(f"Omeka ID: {omeka_id}")
+        # Traiter chaque PDF
+        for i, pdf_path in enumerate(pdf_files, 1):
+            logging.info(f"\n{'='*60}")
+            logging.info(f"Traitement du PDF {i}/{len(pdf_files)}: {pdf_path.name}")
+            logging.info(f"{'='*60}")
+            
+            # Utiliser le nom du fichier comme Omeka ID
+            omeka_id = pdf_path.stem
+            logging.info(f"Omeka ID: {omeka_id}")
+            
+            # Définir le répertoire de sortie
+            output_dir = script_dir / "Magazine_Extractions" / omeka_id
+            
+            # Exécuter le pipeline pour ce PDF
+            process_magazine(client, pdf_path, output_dir, omeka_id)
+            
+            logging.info(f"PDF {i}/{len(pdf_files)} terminé: {pdf_path.name}")
         
-        # Définir le répertoire de sortie
-        output_dir = script_dir / "Magazine_Extractions" / omeka_id
-        
-        # Exécuter le pipeline
-        process_magazine(client, input_path, output_dir, omeka_id)
-        
-        logging.info("=== Pipeline terminé avec succès ===")
+        logging.info(f"\n{'='*60}")
+        logging.info(f"=== Pipeline terminé avec succès - {len(pdf_files)} magazine(s) traité(s) ===")
+        logging.info(f"{'='*60}")
         
     except KeyboardInterrupt:
         logging.info("Processus interrompu par l'utilisateur")
