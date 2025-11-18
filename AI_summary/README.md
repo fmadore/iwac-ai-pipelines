@@ -3,7 +3,7 @@
 This pipeline automatically generates French summaries of text content from an Omeka S database using either:
 
 1. Google Gemini (gemini-2.5-flash by default), or
-2. OpenAI Responses API (gpt-5-mini)
+2. OpenAI Responses API (gpt-5.1-mini by default with optional gpt-5.1)
 
 The user selects the provider interactively at runtime. The workflow extracts full text, generates concise French summaries (RAG-friendly), then updates Omeka S with the results.
 
@@ -86,13 +86,7 @@ python 01_extract_omeka_content.py
 python 02_AI_generate_summaries.py
 ```
 
-You will be prompted:
-
-```
-Select AI model: 1) ChatGPT (OpenAI)  2) Google Gemini  >
-```
-
-Enter `1` for OpenAI (gpt-5-mini) or `2` for Gemini (gemini-2.5-flash). The script then:
+You will be prompted with the available models (OpenAI gpt-5.1-mini default, OpenAI gpt-5.1, Gemini 2.5 Flash/Pro). Select the desired option and the script will:
 
 * Reads all `.txt` files from `TXT/`
 * Loads the shared prompt template `summary_prompt.md`
@@ -191,11 +185,11 @@ Edit `summary_prompt.md` to change:
 
 ### Changing the AI Model
 
-Edit `02_AI_generate_summaries.py` to change:
+Edit `02_AI_generate_summaries.py` to change any hardcoded defaults if needed:
 
 ```python
 GEMINI_MODEL = "gemini-2.5-flash"   # Change to another available Gemini model
-OPENAI_MODEL = "gpt-5-mini"         # Change if you have access to another OpenAI Responses model
+OPENAI_MODEL = "gpt-5.1-mini"       # Switch to "gpt-5.1" if you prefer the flagship model
 ```
 
 ### Adjusting Omeka S Properties

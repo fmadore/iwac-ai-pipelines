@@ -89,6 +89,7 @@ cd AI_NER/
 python 01_NER_AI.py --item-set-id 123            # interactive model choice
 python 01_NER_AI.py --item-set-id 123 --model gemini --async --batch-size 20
 python 01_NER_AI.py --item-set-id 123 --model openai --async --batch-size 20
+python 01_NER_AI.py --item-set-id 123 --model openai-5.1 --async --batch-size 20
 
 # Step 2: Reconcile entities with authority records
 python 02_NER_reconciliation_Omeka.py

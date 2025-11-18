@@ -1,32 +1,15 @@
 """
-Unified Named Entity Recognition (NER) script for Omeka S Collections using either:
-  (1) OpenAI Responses API (ChatGPT)  OR
-  (2) Google Gemini (google-genai client)
+Named Entity Recognition (NER) script for Omeka S metadata extraction.
 
-User can choose provider interactively (prompted list) or via --model openai|openai-5.1|gemini.
+Supported models:
+  - openai (gpt-5.1-mini): Fast, cost-effective OpenAI model
+  - gemini-flash: Fast, cost-effective Gemini model
 
-OpenAI call preserves EXACT required settings block (only dynamic part is the input list):
+Configuration:
+  Uses high reasoning effort and medium verbosity for accurate metadata extraction.
+  Both models are optimized for named entity recognition tasks.
 
-	from openai import OpenAI
-	client = OpenAI()
-
-    response = client.responses.create(
-      model="gpt-5.1-mini",
-	  input=[],
-	  text={
-		"format": {
-		  "type": "text"
-		},
-		"verbosity": "low"
-	  },
-	  reasoning={
-		"effort": "low"
-	  },
-	  tools=[],
-	  store=True
-	)
-
-Environment variables (set depending on model used):
+Environment variables:
   Common (Omeka):
     OMEKA_BASE_URL
     OMEKA_KEY_IDENTITY
@@ -39,14 +22,10 @@ Environment variables (set depending on model used):
 Output CSV columns: o:id, Title, bibo:content, Subject AI, Spatial AI
 
 Usage examples:
-    python 01_NER_AI.py --item-set-id 123         (interactive model select)
-    python 01_NER_AI.py --item-set-id 123 --model openai --async
-    python 01_NER_AI.py --item-set-id 123 --model openai-5.1 --batch-size 8
-    python 01_NER_AI.py --item-set-id 123 --model gemini --batch-size 8
-
-Notes:
-  * Gemini implementation mirrors OpenAI logic (JSON instruction + extraction) for parity.
-  * If provider-specific errors occur, they are logged and item marked failed.
+    python 01_NER_AI.py --item-set-id 123
+    python 01_NER_AI.py --item-set-id 123 --model openai
+    python 01_NER_AI.py --item-set-id 123 --model gemini-flash --async
+    python 01_NER_AI.py --item-set-id 123,456,789 --batch-size 8
 
 """
 from __future__ import annotations
@@ -77,6 +56,7 @@ if REPO_ROOT not in sys.path:
 from common.llm_provider import (  # noqa: E402
     BaseLLMClient,
     ModelOption,
+    LLMConfig,
     build_llm_client,
     get_model_option,
     summary_from_option,
@@ -116,8 +96,8 @@ class Config(TypedDict):
     batch_size: int
     max_retries: int
     timeout: int
-    temperature: float
     model_option: ModelOption
+    llm_config: LLMConfig
 
 LOWER_PREFIXES = {"el", "van", "de", "von", "der", "den", "hadj", "ben", "ibn", "et", "du", "des", "le", "la", "les", "l", "d"}
 
@@ -126,7 +106,7 @@ LOWER_PREFIXES = {"el", "van", "de", "von", "der", "den", "hadj", "ben", "ibn", 
 # ---------------------------------------------------------------------------
 
 def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE, max_retries: int = 3,
-                timeout: int = DEFAULT_TIMEOUT, temperature: float = 0.2) -> Config:
+                timeout: int = DEFAULT_TIMEOUT) -> Config:
     required = {
         'OMEKA_BASE_URL': 'omeka_base_url',
         'OMEKA_KEY_IDENTITY': 'omeka_key_identity',
@@ -148,12 +128,21 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE, max_ret
             missing.append('GEMINI_API_KEY or GOOGLE_APPLICATION_CREDENTIALS')
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+    
+    # NER-specific LLM configuration for accurate metadata extraction
+    llm_config = LLMConfig(
+        reasoning_effort="medium",      # OpenAI: balanced reasoning (cost-effective)
+        text_verbosity="medium",        # OpenAI: detailed entity context
+        thinking_budget=500,            # Gemini: moderate thinking (cost-effective)
+        temperature=0.2                 # Gemini: consistent, low-variance results
+    )
+    
     cfg.update({
         'batch_size': batch_size,
         'max_retries': max_retries,
         'timeout': timeout,
-        'temperature': temperature,
         'model_option': model_option,
+        'llm_config': llm_config,
     })
     return Config(**cfg)  # type: ignore
 
@@ -486,18 +475,18 @@ def summarize(stats: ProcessingStats, output_csv: str) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Unified NER extraction for Omeka S (OpenAI or Gemini)")
+    parser = argparse.ArgumentParser(description="NER extraction for Omeka S metadata (OpenAI GPT-5.1 mini or Gemini Flash)")
     parser.add_argument("--item-set-id", type=str, help="Item set ID(s) to process (comma-separated)")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Batch size (default {BATCH_SIZE})")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"Timeout seconds (default {DEFAULT_TIMEOUT})")
     parser.add_argument("--max-retries", type=int, default=3, help="Max retries for Omeka requests")
-    parser.add_argument("--temperature", type=float, default=0.2, help="Temperature (Gemini only; OpenAI fixed settings)")
     parser.add_argument("--async", action="store_true", help="Use async processing")
     parser.add_argument("--output-dir", type=str, help="Directory for output CSV")
     parser.add_argument(
         "--model",
         type=str,
-        help="Model key (e.g. openai, openai-5.1, gemini-flash, gemini-pro). Defaults to interactive prompt if omitted."
+        choices=["openai", "gemini-flash"],
+        help="Model: 'openai' (GPT-5.1 mini) or 'gemini-flash'. Defaults to interactive prompt."
     )
     return parser.parse_args()
 
@@ -516,11 +505,14 @@ def _build_output_path(item_set_ids: List[str], output_dir: str, model_key: str)
     return os.path.join(output_dir, f"item_sets_{sets_str}_processed_{slug}.csv")
 
 async def async_main(args) -> None:
-    model_option = get_model_option(args.model)
+    model_option = get_model_option(args.model, allowed_keys=["openai", "gemini-flash"])
     config = load_config(model_option=model_option, batch_size=args.batch_size, max_retries=args.max_retries,
-                         timeout=args.timeout, temperature=args.temperature)
+                         timeout=args.timeout)
     logger.info(f"Using AI model: {summary_from_option(model_option)}")
-    llm_client = build_llm_client(model_option, temperature=config['temperature'])
+    logger.info(f"NER Config: reasoning_effort={config['llm_config'].reasoning_effort}, "
+                f"text_verbosity={config['llm_config'].text_verbosity}, "
+                f"thinking_budget={config['llm_config'].thinking_budget}")
+    llm_client = build_llm_client(model_option, config=config['llm_config'])
     item_set_ids = _collect_item_sets(args)
     logger.info(f"Processing item sets: {', '.join(item_set_ids)}")
     spatial_filter = get_combined_spatial_coverage(item_set_ids, timeout=config['timeout'])
@@ -548,11 +540,14 @@ def main() -> None:
     if getattr(args, 'async', False):
         asyncio.run(async_main(args))
         return
-    model_option = get_model_option(args.model)
+    model_option = get_model_option(args.model, allowed_keys=["openai", "gemini-flash"])
     config = load_config(model_option=model_option, batch_size=args.batch_size, max_retries=args.max_retries,
-                         timeout=args.timeout, temperature=args.temperature)
+                         timeout=args.timeout)
     logger.info(f"Using AI model: {summary_from_option(model_option)}")
-    llm_client = build_llm_client(model_option, temperature=config['temperature'])
+    logger.info(f"NER Config: reasoning_effort={config['llm_config'].reasoning_effort}, "
+                f"text_verbosity={config['llm_config'].text_verbosity}, "
+                f"thinking_budget={config['llm_config'].thinking_budget}")
+    llm_client = build_llm_client(model_option, config=config['llm_config'])
     item_set_ids = _collect_item_sets(args)
     logger.info(f"Processing item sets: {', '.join(item_set_ids)}")
     spatial_filter = get_combined_spatial_coverage(item_set_ids, timeout=config['timeout'])

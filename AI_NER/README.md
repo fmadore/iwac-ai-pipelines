@@ -1,6 +1,6 @@
 # AI Named Entity Recognition (NER) Module
 
-This module provides a complete Named Entity Recognition pipeline for Omeka S Collections. A **single unified script** (`01_NER_AI.py`) now supports both **Google Gemini** and **OpenAI ChatGPT (gpt-5-mini)**. You can select the provider interactively (prompt 1 or 2) or via the `--model` flag. The remainder of the pipeline (reconciliation + update) is model-agnostic and consumes the CSV produced by the unified extraction script. The pipeline consists of three sequential stages that extract, reconcile, and update named entities in the IWAC (Islam West Africa Collection) database.
+This module provides a complete Named Entity Recognition pipeline for Omeka S Collections. A **single unified script** (`01_NER_AI.py`) now supports **Google Gemini (2.5 Flash/Pro)** and **OpenAI ChatGPT (gpt-5.1-mini default or gpt-5.1 full)**. You can select the provider interactively (prompted list) or via the `--model` flag. The remainder of the pipeline (reconciliation + update) is model-agnostic and consumes the CSV produced by the unified extraction script. The pipeline consists of three sequential stages that extract, reconcile, and update named entities in the IWAC (Islam West Africa Collection) database.
 
 ## Pipeline Overview
 
@@ -13,7 +13,7 @@ The NER module operates as a three-stage pipeline:
 ## Files
 
 ### Core Scripts
-- `01_NER_AI.py` - **Entity Extraction (Gemini or OpenAI)**: Unified script that extracts named entities (persons, organizations, locations, subjects) from Omeka S collection items. Choose provider interactively or via `--model gemini|openai`.
+- `01_NER_AI.py` - **Entity Extraction (Gemini or OpenAI)**: Unified script that extracts named entities (persons, organizations, locations, subjects) from Omeka S collection items. Choose provider interactively or via `--model gemini|openai|openai-5.1`.
 - `02_NER_reconciliation_Omeka.py` - **Authority Reconciliation**: Matches AI-extracted entities against existing Omeka S authority records (spatial coverage, subjects)
 - `03_Omeka_update.py` - **Database Update**: Updates Omeka S items with reconciled entity links, preserving existing data and avoiding duplicates
 
@@ -103,13 +103,14 @@ Explicit provider flag:
 ```bash
 python 01_NER_AI.py --item-set-id 123 --model gemini --async --batch-size 20
 python 01_NER_AI.py --item-set-id 123 --model openai --async --batch-size 20
+python 01_NER_AI.py --item-set-id 123 --model openai-5.1 --async --batch-size 20
 ```
 
 Comparison:
 
 | Aspect | Gemini (via unified) | OpenAI (via unified) |
 |--------|----------------------|----------------------|
-| Model name | `gemini-2.5-flash-preview-05-20` | `gpt-5-mini` |
+| Model name | `gemini-2.5-flash-preview-05-20` (Flash) or `gemini-2.5-pro` | `gpt-5.1-mini` (default) or `gpt-5.1` |
 | Env var | `GEMINI_API_KEY` | `OPENAI_API_KEY` |
 | Dependency | `google-genai` | `openai` |
 | Output filename suffix | `_processed_gemini.csv` | `_processed_openai.csv` |
