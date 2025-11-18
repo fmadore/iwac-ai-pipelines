@@ -6,9 +6,9 @@ title: "IWAC AI Workflows"
 version: 1.0.0
 date-released: 2025-11-18
 abstract: >
-  Jupyter notebooks that demonstrate large-language-model–assisted data
+  Python pipelines that demonstrate large-language-model-assisted data
   curation, transcription, and analysis for the Islam in West Africa Collection
-  (IWAC). Suitable for digital-humanities and social-science research.
+  (IWAC). Suitable for digital humanities and social science research.
 type: code
 keywords:
   - digital humanities
