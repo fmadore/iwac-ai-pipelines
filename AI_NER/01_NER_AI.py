@@ -3,15 +3,15 @@ Unified Named Entity Recognition (NER) script for Omeka S Collections using eith
   (1) OpenAI Responses API (ChatGPT)  OR
   (2) Google Gemini (google-genai client)
 
-User can choose provider interactively (prompt 1 or 2) or via --model openai|gemini.
+User can choose provider interactively (prompted list) or via --model openai|openai-5.1|gemini.
 
 OpenAI call preserves EXACT required settings block (only dynamic part is the input list):
 
 	from openai import OpenAI
 	client = OpenAI()
 
-	response = client.responses.create(
-	  model="gpt-5-mini",
+    response = client.responses.create(
+      model="gpt-5.1-mini",
 	  input=[],
 	  text={
 		"format": {
@@ -41,6 +41,7 @@ Output CSV columns: o:id, Title, bibo:content, Subject AI, Spatial AI
 Usage examples:
     python 01_NER_AI.py --item-set-id 123         (interactive model select)
     python 01_NER_AI.py --item-set-id 123 --model openai --async
+    python 01_NER_AI.py --item-set-id 123 --model openai-5.1 --batch-size 8
     python 01_NER_AI.py --item-set-id 123 --model gemini --batch-size 8
 
 Notes:
@@ -496,7 +497,7 @@ def parse_arguments():
     parser.add_argument(
         "--model",
         type=str,
-        help="Model key (e.g. openai, gemini-flash, gemini-pro). Defaults to interactive prompt if omitted."
+        help="Model key (e.g. openai, openai-5.1, gemini-flash, gemini-pro). Defaults to interactive prompt if omitted."
     )
     return parser.parse_args()
 
