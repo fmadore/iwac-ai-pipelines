@@ -33,7 +33,7 @@ LOGGER = logging.getLogger(__name__)
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 
-DEFAULT_OPENAI_MODEL = "gpt-5.1-mini"
+DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 OPENAI_FULL_MODEL = "gpt-5.1"
 DEFAULT_GEMINI_FLASH = "gemini-2.5-flash"
 DEFAULT_GEMINI_PRO = "gemini-2.5-pro"
@@ -87,15 +87,15 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         key="openai",
         provider=PROVIDER_OPENAI,
         model=DEFAULT_OPENAI_MODEL,
-        label="ChatGPT (GPT-5.1 mini)",
-        description="OpenAI Responses API — default gpt-5.1-mini"
+        label="ChatGPT (GPT-5 mini)",
+        description="OpenAI Responses API — cost-optimized gpt-5-mini"
     ),
-    "openai-5.1": ModelOption(
-        key="openai-5.1",
+    "openai-5": ModelOption(
+        key="openai-5",
         provider=PROVIDER_OPENAI,
         model=OPENAI_FULL_MODEL,
-        label="ChatGPT (GPT-5.1 full)",
-        description="OpenAI Responses API — flagship gpt-5.1"
+        label="ChatGPT (GPT-5 full)",
+        description="OpenAI Responses API — flagship gpt-5"
     ),
     "gemini-flash": ModelOption(
         key="gemini-flash",
@@ -116,14 +116,17 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
 
 MODEL_ALIASES = {
     "gemini": "gemini-flash",
-    "gpt-5.1-mini": "openai",
-    "openai:gpt-5.1-mini": "openai",
+    "gpt-5-mini": "openai",
+    "openai:gpt-5-mini": "openai",
     "gpt-5.1": "openai-5.1",
     "openai:gpt-5.1": "openai-5.1",
     # Legacy aliases for decommissioned models/flags
     "openai-mini": "openai",
-    "gpt-5-mini": "openai",
-    "openai:gpt-5-mini": "openai",
+    "gpt-5.1-mini": "openai",  # Legacy incorrect naming
+    "openai:gpt-5.1-mini": "openai",
+    "gpt-5": "openai-5.1",  # gpt-5 is previous flagship, maps to 5.1
+    "openai:gpt-5": "openai-5.1",
+    "openai-5": "openai-5.1",
     "gemini-2.5-flash": "gemini-flash",
     "gemini-2.5-pro": "gemini-pro",
 }
