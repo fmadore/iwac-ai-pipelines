@@ -3,13 +3,17 @@
 Ce script implémente un pipeline en deux étapes pour extraire et consolider les articles
 d'un magazine islamique à partir de fichiers PDF ou texte OCR page par page.
 
-Étape 1 : Extraction page par page (Gemini 2.5 Pro)
+Modèles supportés:
+- Gemini: Pro (étape 1) + Flash (étape 2)
+- OpenAI: GPT-5.1 full (étape 1) + GPT-5.1 mini (étape 2)
+
+Étape 1 : Extraction page par page (modèle performant)
 - Analyse chaque page individuellement avec le modèle le plus performant
 - Identifie les articles présents sur la page
 - Extrait le titre exact et génère un résumé bref
 - Détecte les indices de continuation
 
-Étape 2 : Consolidation au niveau du magazine (Gemini 2.5 Flash)
+Étape 2 : Consolidation au niveau du magazine (modèle rapide)
 - Fusionne les articles fragmentés sur plusieurs pages
 - Élimine les doublons avec le modèle rapide
 - Produit un résumé global par article
@@ -25,6 +29,7 @@ Usage:
 """
 
 import os
+import sys
 import re
 import json
 import logging
@@ -35,18 +40,33 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 import PyPDF2
 
-from google import genai
-from google.genai import types, errors
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+if REPO_ROOT not in sys.path:
+    sys.path.append(REPO_ROOT)
+
+from common.llm_provider import (  # noqa: E402
+    BaseLLMClient,
+    LLMConfig,
+    ModelOption,
+    build_llm_client,
+    get_model_option,
+    summary_from_option,
+)
+
+try:
+    from google import genai
+    from google.genai import types, errors
+except ImportError:
+    genai = None
+    types = None
+    errors = None
 
 # ------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 load_dotenv()
-
-# Modèles Gemini pour chaque étape
-GEMINI_MODEL_STEP1 = "gemini-2.5-pro"  # Extraction page par page - modèle performant
-GEMINI_MODEL_STEP2 = "gemini-2.5-flash"  # Consolidation - modèle rapide
 
 # Configuration retry
 MAX_RETRIES = 3
@@ -87,65 +107,57 @@ def load_consolidation_prompt() -> str:
         raise RuntimeError(f"Failed to read consolidation prompt template {prompt_file}: {e}")
 
 # ------------------------------------------------------------------
-# Client Initialization with Retry
+# Client Initialization
 # ------------------------------------------------------------------
-def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
+def get_model_pair() -> Tuple[ModelOption, ModelOption]:
+    """Permet à l'utilisateur de sélectionner la paire de modèles pour le pipeline.
+    
+    Returns:
+        Tuple de (model_step1, model_step2) où step1 est le modèle performant
+        et step2 est le modèle rapide.
     """
-    Décorateur pour retry automatique en cas d'erreur.
+    print("\n=== Sélection des modèles pour le pipeline ===")
+    print("Étape 1 (extraction page par page): Modèle performant")
+    print("Étape 2 (consolidation): Modèle rapide\n")
     
-    Args:
-        max_retries: Nombre maximum de tentatives
-        delay: Délai initial entre les tentatives (avec backoff exponentiel)
-    """
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            current_delay = delay
-            
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except (errors.APIError, errors.ClientError, ConnectionError) as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        logging.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {current_delay}s...")
-                        time.sleep(current_delay)
-                        current_delay *= RETRY_BACKOFF
-                    else:
-                        logging.error(f"All {max_retries} attempts failed.")
-                except Exception as e:
-                    # Pour les autres erreurs, ne pas retry
-                    logging.error(f"Non-retryable error: {e}")
-                    raise
-            
-            raise last_exception
-        return wrapper
-    return decorator
-
-def initialize_gemini_client():
-    """Initialise le client Gemini avec ADC ou API key."""
-    credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-    client = None
-    auth_method = "API Key"
+    # Définir les paires disponibles
+    model_pairs = {
+        "gemini": {
+            "step1": "gemini-pro",
+            "step2": "gemini-flash",
+            "name": "Gemini (Pro + Flash)"
+        },
+        "openai": {
+            "step1": "openai-5.1",
+            "step2": "openai",
+            "name": "OpenAI (GPT-5.1 full + mini)"
+        }
+    }
     
-    if credentials_path and os.path.exists(credentials_path):
-        try:
-            client = genai.Client()
-            auth_method = "ADC"
-            logging.info("Gemini client initialized via ADC.")
-        except Exception as e:
-            logging.warning(f"ADC init failed: {e}; falling back to API key.")
-            client = None
+    print("Paires de modèles disponibles:")
+    print("  1) Gemini (Pro + Flash) - Pro pour extraction, Flash pour consolidation")
+    print("  2) OpenAI (GPT-5.1 full + mini) - Full pour extraction, mini pour consolidation")
     
-    if client is None:
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not set and ADC not available.")
-        client = genai.Client(api_key=api_key)
-        logging.info("Gemini client initialized via API key.")
+    while True:
+        choice = input("\nChoisissez la paire de modèles (1 ou 2): ").strip()
+        if choice == "1":
+            pair_key = "gemini"
+            break
+        elif choice == "2":
+            pair_key = "openai"
+            break
+        else:
+            print("Choix invalide. Veuillez entrer 1 ou 2.")
     
-    logging.info(f"Using Gemini models: Step1={GEMINI_MODEL_STEP1}, Step2={GEMINI_MODEL_STEP2} ({auth_method})")
-    return client
+    pair = model_pairs[pair_key]
+    step1_option = get_model_option(pair["step1"])
+    step2_option = get_model_option(pair["step2"])
+    
+    logging.info(f"\nModèles sélectionnés: {pair['name']}")
+    logging.info(f"  Étape 1: {summary_from_option(step1_option)}")
+    logging.info(f"  Étape 2: {summary_from_option(step2_option)}")
+    
+    return step1_option, step2_option
 
 # ------------------------------------------------------------------
 # PDF Processing
@@ -218,15 +230,43 @@ def load_txt_files_as_pages(txt_dir: Path) -> Dict[int, str]:
 # ------------------------------------------------------------------
 # AI Generation Functions with Retry
 # ------------------------------------------------------------------
-@retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
-def generate_with_gemini(client, prompt: str, model: str = GEMINI_MODEL_STEP1) -> Optional[str]:
+def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
     """
-    Génère une réponse avec Gemini avec retry automatique.
+    Décorateur pour retry automatique en cas d'erreur.
     
     Args:
-        client: Client Gemini
+        max_retries: Nombre maximum de tentatives
+        delay: Délai initial entre les tentatives (avec backoff exponentiel)
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            current_delay = delay
+            
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        logging.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {current_delay}s...")
+                        time.sleep(current_delay)
+                        current_delay *= RETRY_BACKOFF
+                    else:
+                        logging.error(f"All {max_retries} attempts failed.")
+            
+            raise last_exception
+        return wrapper
+    return decorator
+
+@retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
+def generate_with_llm(llm_client: BaseLLMClient, prompt: str) -> Optional[str]:
+    """
+    Génère une réponse avec le client LLM avec retry automatique.
+    
+    Args:
+        llm_client: Client LLM (OpenAI ou Gemini)
         prompt: Prompt à envoyer
-        model: Modèle à utiliser (par défaut STEP1)
         
     Returns:
         Réponse générée ou None
@@ -235,37 +275,37 @@ def generate_with_gemini(client, prompt: str, model: str = GEMINI_MODEL_STEP1) -
         return None
     
     try:
-        gen_config = types.GenerateContentConfig(temperature=0.2)
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=gen_config
+        response = llm_client.generate(
+            system_prompt="",  # Le prompt est complet dans user_prompt
+            user_prompt=prompt
         )
         
-        if response and hasattr(response, 'text'):
-            return response.text.strip().replace('*', '')
+        if response:
+            return response.strip().replace('*', '')
         
-        logging.error("Unexpected Gemini response format.")
+        logging.error("Model returned empty response.")
         return None
     except Exception as e:
-        logging.error(f"Gemini generation error: {e}")
+        logging.error(f"Generation error: {e}")
         raise  # Laisser le décorateur retry gérer
 
 # ------------------------------------------------------------------
 # Pipeline Functions
 # ------------------------------------------------------------------
-def step1_extract_pages(client, pages_text: Dict[int, str], 
-                        extraction_prompt: str, output_dir: Path, magazine_id: str) -> Path:
+def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str], 
+                        extraction_prompt: str, output_dir: Path, magazine_id: str,
+                        model_name: str) -> Path:
     """
-    Étape 1 : Extraction page par page avec Gemini 2.0 Flash Exp.
+    Étape 1 : Extraction page par page avec le modèle performant.
     Sauvegarde progressive pour permettre la reprise en cas d'interruption.
     
     Args:
-        client: Client Gemini
+        llm_client: Client LLM configuré
         pages_text: Dictionnaire {page_num: text}
         extraction_prompt: Template de prompt pour l'extraction
         output_dir: Répertoire de sortie
         magazine_id: Identifiant du magazine
+        model_name: Nom du modèle pour logging
         
     Returns:
         Chemin du fichier consolidé de l'étape 1
@@ -275,7 +315,7 @@ def step1_extract_pages(client, pages_text: Dict[int, str],
     
     all_extractions = []
     
-    logging.info(f"Step 1: Processing {len(pages_text)} pages with {GEMINI_MODEL_STEP1}...")
+    logging.info(f"Step 1: Processing {len(pages_text)} pages with {model_name}...")
     
     for page_num in tqdm(sorted(pages_text.keys()), desc="Extracting articles per page"):
         page_file = step1_dir / f"page_{page_num:03d}.md"
@@ -295,7 +335,7 @@ def step1_extract_pages(client, pages_text: Dict[int, str],
         
         # Générer l'extraction avec retry automatique
         try:
-            extraction = generate_with_gemini(client, prompt, model=GEMINI_MODEL_STEP1)
+            extraction = generate_with_llm(llm_client, prompt)
             
             if extraction:
                 # Ajouter le numéro de page au début de la réponse de l'IA
@@ -344,21 +384,22 @@ def step1_extract_pages(client, pages_text: Dict[int, str],
     
     return consolidated_file
 
-def step2_consolidate(client, step1_file: Path, 
-                     output_dir: Path, magazine_id: str) -> Path:
+def step2_consolidate(llm_client: BaseLLMClient, step1_file: Path, 
+                     output_dir: Path, magazine_id: str, model_name: str) -> Path:
     """
-    Étape 2 : Consolidation au niveau du magazine avec Gemini 2.0 Flash Exp.
+    Étape 2 : Consolidation au niveau du magazine avec le modèle rapide.
     
     Args:
-        client: Client Gemini
+        llm_client: Client LLM configuré
         step1_file: Fichier consolidé de l'étape 1
         output_dir: Répertoire de sortie
         magazine_id: Identifiant du magazine
+        model_name: Nom du modèle pour logging
         
     Returns:
         Chemin du fichier final consolidé
     """
-    logging.info(f"Step 2: Consolidating articles at magazine level with {GEMINI_MODEL_STEP2}...")
+    logging.info(f"Step 2: Consolidating articles at magazine level with {model_name}...")
     
     # Lire le fichier consolidé de l'étape 1
     with open(step1_file, 'r', encoding='utf-8') as f:
@@ -370,7 +411,7 @@ def step2_consolidate(client, step1_file: Path,
     
     # Générer la consolidation avec retry automatique
     try:
-        consolidated = generate_with_gemini(client, full_prompt, model=GEMINI_MODEL_STEP2)
+        consolidated = generate_with_llm(llm_client, full_prompt)
         
         if not consolidated:
             logging.error("Failed to generate consolidated output")
@@ -391,12 +432,14 @@ def step2_consolidate(client, step1_file: Path,
 # ------------------------------------------------------------------
 # Main Pipeline
 # ------------------------------------------------------------------
-def process_magazine(client, input_path: Path, output_dir: Path, magazine_id: str = None):
+def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
+                    input_path: Path, output_dir: Path, magazine_id: str = None):
     """
-    Pipeline complet pour traiter un magazine avec Gemini.
+    Pipeline complet pour traiter un magazine.
     
     Args:
-        client: Client Gemini
+        model_step1: Option de modèle pour l'étape 1 (performant)
+        model_step2: Option de modèle pour l'étape 2 (rapide)
         input_path: Chemin vers le PDF ou répertoire TXT
         output_dir: Répertoire de sortie
         magazine_id: Identifiant du magazine (optionnel)
@@ -408,6 +451,25 @@ def process_magazine(client, input_path: Path, output_dir: Path, magazine_id: st
     logging.info(f"Processing magazine: {magazine_id}")
     logging.info(f"Input: {input_path}")
     logging.info(f"Output: {output_dir}")
+    
+    # Configurer les clients LLM pour chaque étape
+    # Étape 1: Modèle performant avec medium reasoning pour extraction détaillée
+    config_step1 = LLMConfig(
+        reasoning_effort="medium",
+        text_verbosity="medium",
+        thinking_budget=500,
+        temperature=0.2
+    )
+    llm_client_step1 = build_llm_client(model_step1, config=config_step1)
+    
+    # Étape 2: Modèle rapide avec low reasoning pour consolidation simple
+    config_step2 = LLMConfig(
+        reasoning_effort="low",
+        text_verbosity="low",
+        thinking_budget=0,
+        temperature=0.3
+    )
+    llm_client_step2 = build_llm_client(model_step2, config=config_step2)
     
     # Charger le prompt d'extraction
     extraction_prompt = load_extraction_prompt()
@@ -428,14 +490,16 @@ def process_magazine(client, input_path: Path, output_dir: Path, magazine_id: st
     # Créer le répertoire de sortie
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Étape 1 : Extraction page par page (Gemini 2.0 Flash Exp)
+    # Étape 1 : Extraction page par page (modèle performant)
     step1_file = step1_extract_pages(
-        client, pages_text, extraction_prompt, output_dir, magazine_id
+        llm_client_step1, pages_text, extraction_prompt, output_dir, magazine_id,
+        summary_from_option(model_step1)
     )
     
-    # Étape 2 : Consolidation (Gemini 2.0 Flash Exp)
+    # Étape 2 : Consolidation (modèle rapide)
     final_file = step2_consolidate(
-        client, step1_file, output_dir, magazine_id
+        llm_client_step2, step1_file, output_dir, magazine_id,
+        summary_from_option(model_step2)
     )
     
     logging.info(f"✓ Pipeline complete for magazine {magazine_id}")
@@ -472,12 +536,12 @@ def main():
         script_dir = Path(__file__).parent
         
         logging.info("=== Pipeline d'Extraction d'Articles de Magazines ===")
-        logging.info(f"Étape 1: Extraction page par page ({GEMINI_MODEL_STEP1})")
-        logging.info(f"Étape 2: Consolidation au niveau du magazine ({GEMINI_MODEL_STEP2})")
+        logging.info("Étape 1: Extraction page par page (modèle performant)")
+        logging.info("Étape 2: Consolidation au niveau du magazine (modèle rapide)")
         logging.info("")
         
-        # Initialisation du client Gemini
-        client = initialize_gemini_client()
+        # Sélection des modèles
+        model_step1, model_step2 = get_model_pair()
         
         # Obtenir la liste des PDFs à traiter
         pdf_files = get_input_pdfs(script_dir)
@@ -496,7 +560,7 @@ def main():
             output_dir = script_dir / "Magazine_Extractions" / omeka_id
             
             # Exécuter le pipeline pour ce PDF
-            process_magazine(client, pdf_path, output_dir, omeka_id)
+            process_magazine(model_step1, model_step2, pdf_path, output_dir, omeka_id)
             
             logging.info(f"PDF {i}/{len(pdf_files)} terminé: {pdf_path.name}")
         
