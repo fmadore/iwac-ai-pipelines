@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: >
+  If you use these AI workflows in your research or projects,
+  please cite the repository as below.
+title: "IWAC AI Workflows"
+version: 1.0.0
+date-released: 2025-11-18
+abstract: >
+  Jupyter notebooks that demonstrate large-language-model–assisted data
+  curation, transcription, and analysis for the Islam in West Africa Collection
+  (IWAC). Suitable for digital-humanities and social-science research.
+type: code
+keywords:
+  - digital humanities
+  - Islam West Africa
+  - large language models
+  - AI workflows
+  - social sciences
+license: MIT
+repository-code: https://github.com/fmadore/iwac-ai-pipelines
+url: https://github.com/fmadore/iwac-ai-pipelines
+authors:
+  - family-names: Madore
+    given-names: Frédérick
+    orcid: https://orcid.org/0000-0003-0959-2092
+    affiliation: Leibniz-Zentrum Moderner Orient (ZMO)
+identifiers:
+  - type: doi          # will appear once Zenodo publishes a release
+    value: 
