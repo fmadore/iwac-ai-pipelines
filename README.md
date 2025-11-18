@@ -24,7 +24,7 @@ Downloads PDFs from Omeka S, performs OCR using Gemini's vision capabilities, an
 Generates concise French summaries of documents for improved searchability and quick content understanding.
 
 ### 📰 Magazine Article Extraction (`AI_summary_issue/`)
-Two-step AI pipeline for extracting and consolidating articles from digitized Islamic magazines. Uses **Gemini 2.5 Pro** for page-by-page extraction and **Gemini 2.5 Flash** for intelligent consolidation. Handles fragmented articles across multiple pages with automatic retry, progressive caching, and smart page numbering.
+Two-step AI pipeline for extracting and consolidating articles from digitized Islamic magazines using **Gemini's native PDF understanding**. Extracts individual pages with PyPDF2 and sends them one-by-one to **Gemini 2.5 Pro** for precise article identification, then consolidates with **Gemini 2.5 Flash**. Features automatic retry, progressive caching, and smart page numbering. No image conversion needed.
 
 ### 🧩 NotebookLM Markdown Exporter (`NotebookLM/`)
 Exports Omeka Item Sets into clean, NotebookLM-ready Markdown files (.md). Handles large collections by automatically splitting output into multiple parts. Default output is `.md` with an option to switch to `.txt` via an env var.

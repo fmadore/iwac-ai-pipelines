@@ -1,14 +1,14 @@
 """Islamic Magazine Article Extraction Pipeline (2-Step Process)
 
 This script implements a two-step pipeline to extract and consolidate articles
-from an Islamic magazine using page-by-page PDF or OCR text files.
+from an Islamic magazine using Gemini's native PDF understanding.
 
 Supported models:
 - Gemini: Pro (step 1) + Flash (step 2)
-- OpenAI: GPT-5.1 full (step 1) + GPT-5.1 mini (step 2)
 
 Step 1: Page-by-page extraction (high-performance model)
-- Analyzes each page individually with the most capable model
+- Uploads PDF once to Gemini's File API
+- Analyzes each page individually with native PDF understanding
 - Identifies articles present on the page
 - Extracts exact titles and generates brief summaries
 - Detects continuation indicators
@@ -24,21 +24,26 @@ Robustness mechanisms:
 - Progressive result saving
 - Resumption possible from already processed files
 
+Advantages of native PDF processing:
+- No PyPDF2 dependency needed
+- Better document structure understanding
+- Processes images, diagrams, and tables natively
+- Simpler pipeline with fewer conversions
+
 Usage:
     python 02_AI_generate_summaries_issue.py
 """
 
 import os
 import sys
-import re
-import json
+import io
 import logging
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from dotenv import load_dotenv
 from tqdm import tqdm
-import PyPDF2
+from PyPDF2 import PdfReader, PdfWriter
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -46,21 +51,18 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 from common.llm_provider import (  # noqa: E402
-    BaseLLMClient,
     LLMConfig,
     ModelOption,
-    build_llm_client,
     get_model_option,
     summary_from_option,
 )
 
+# Import Gemini types for PDF processing
 try:
     from google import genai
-    from google.genai import types, errors
+    from google.genai import types
 except ImportError:
-    genai = None
-    types = None
-    errors = None
+    raise RuntimeError("google-genai package is required for PDF processing")
 
 # ------------------------------------------------------------------
 # Configuration
@@ -110,122 +112,72 @@ def load_consolidation_prompt() -> str:
 # Client Initialization
 # ------------------------------------------------------------------
 def get_model_pair() -> Tuple[ModelOption, ModelOption]:
-    """Allow the user to select the model pair for the pipeline.
+    """Get the Gemini model pair for the pipeline.
     
     Returns:
-        Tuple of (model_step1, model_step2) where step1 is the high-performance model
-        and step2 is the fast model.
+        Tuple of (model_step1, model_step2) where step1 is Pro and step2 is Flash.
     """
     print("\n=== Model Selection for Pipeline ===")
-    print("Step 1 (page-by-page extraction): High-performance model")
-    print("Step 2 (consolidation): Fast model\n")
+    print("Step 1 (page-by-page extraction): Gemini Pro")
+    print("Step 2 (consolidation): Gemini Flash\n")
     
-    # Define available pairs
-    model_pairs = {
-        "gemini": {
-            "step1": "gemini-pro",
-            "step2": "gemini-flash",
-            "name": "Gemini (Pro + Flash)"
-        },
-        "openai": {
-            "step1": "gpt-5.1",
-            "step2": "gpt-5-mini",
-            "name": "OpenAI (GPT-5.1 full + mini)"
-        }
-    }
+    step1_option = get_model_option("gemini-pro")
+    step2_option = get_model_option("gemini-flash")
     
-    print("Available model pairs:")
-    print("  1) Gemini (Pro + Flash) - Pro for extraction, Flash for consolidation")
-    print("  2) OpenAI (GPT-5.1 full + mini) - Full for extraction, mini for consolidation")
-    
-    while True:
-        choice = input("\nChoose model pair (1 or 2): ").strip()
-        if choice == "1":
-            pair_key = "gemini"
-            break
-        elif choice == "2":
-            pair_key = "openai"
-            break
-        else:
-            print("Invalid choice. Please enter 1 or 2.")
-    
-    pair = model_pairs[pair_key]
-    step1_option = get_model_option(pair["step1"])
-    step2_option = get_model_option(pair["step2"])
-    
-    logging.info(f"\nSelected models: {pair['name']}")
+    logging.info(f"\nSelected models: Gemini (Pro + Flash)")
     logging.info(f"  Step 1: {summary_from_option(step1_option)}")
     logging.info(f"  Step 2: {summary_from_option(step2_option)}")
     
     return step1_option, step2_option
 
 # ------------------------------------------------------------------
-# PDF Processing
+# PDF Page Extraction (PyPDF2)
 # ------------------------------------------------------------------
-def extract_text_from_pdf(pdf_path: Path) -> Dict[int, str]:
+def extract_pdf_page(pdf_path: Path, page_number: int) -> bytes:
     """
-    Extract text from each page of a PDF.
+    Extract a single page from a PDF as bytes.
+    
+    Args:
+        pdf_path: Path to the PDF file
+        page_number: Page number to extract (0-indexed)
+        
+    Returns:
+        PDF bytes containing only the specified page
+    """
+    try:
+        reader = PdfReader(str(pdf_path))
+        writer = PdfWriter()
+        
+        # Add the specific page
+        writer.add_page(reader.pages[page_number])
+        
+        # Write to bytes
+        output_buffer = io.BytesIO()
+        writer.write(output_buffer)
+        output_buffer.seek(0)
+        
+        return output_buffer.getvalue()
+        
+    except Exception as e:
+        logging.error(f"Error extracting page {page_number + 1} from {pdf_path}: {e}")
+        raise
+
+def get_pdf_page_count(pdf_path: Path) -> int:
+    """
+    Get the number of pages in a PDF.
     
     Args:
         pdf_path: Path to the PDF file
         
     Returns:
-        Dictionary {page_number: text}
+        Number of pages in the PDF
     """
-    pages_text = {}
     try:
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            total_pages = len(pdf_reader.pages)
-            
-            for page_num in range(total_pages):
-                page = pdf_reader.pages[page_num]
-                text = page.extract_text()
-                pages_text[page_num + 1] = text  # Numbering starts from 1
-                
-        logging.info(f"Extracted text from {total_pages} pages in {pdf_path.name}")
-        return pages_text
+        reader = PdfReader(str(pdf_path))
+        return len(reader.pages)
     except Exception as e:
-        logging.error(f"Error extracting text from PDF {pdf_path}: {e}")
-        return {}
-
-def load_txt_files_as_pages(txt_dir: Path) -> Dict[int, str]:
-    """
-    Load numbered TXT files as pages.
-    Expects files named like: page_1.txt, page_2.txt, etc.
-    Or simply all .txt files in alphabetical order.
-    
-    Args:
-        txt_dir: Directory containing TXT files
-        
-    Returns:
-        Dictionary {page_number: text}
-    """
-    pages_text = {}
-    try:
-        txt_files = sorted([f for f in txt_dir.glob('*.txt')])
-        if not txt_files:
-            logging.warning(f"No TXT files found in {txt_dir}")
-            return {}
-        
-        for idx, txt_file in enumerate(txt_files, start=1):
-            with open(txt_file, 'r', encoding='utf-8') as f:
-                text = f.read()
-            
-            # Try to extract page number from filename
-            match = re.search(r'page[_\s]?(\d+)', txt_file.stem, re.IGNORECASE)
-            if match:
-                page_num = int(match.group(1))
-            else:
-                page_num = idx  # Use alphabetical order
-            
-            pages_text[page_num] = text
-        
-        logging.info(f"Loaded {len(pages_text)} pages from TXT files in {txt_dir}")
-        return pages_text
-    except Exception as e:
-        logging.error(f"Error loading TXT files from {txt_dir}: {e}")
-        return {}
+        logging.error(f"Error reading PDF page count from {pdf_path}: {e}")
+        raise
 
 # ------------------------------------------------------------------
 # AI Generation Functions with Retry
@@ -260,52 +212,118 @@ def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
     return decorator
 
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
-def generate_with_llm(llm_client: BaseLLMClient, prompt: str) -> Optional[str]:
+def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: bytes, 
+                        page_num: int, prompt: str, config) -> Optional[str]:
     """
-    Generate a response with the LLM client with automatic retry.
+    Generate a response with Gemini for a single PDF page with automatic retry.
     
     Args:
-        llm_client: LLM client (OpenAI or Gemini)
-        prompt: Prompt to send
+        client: Gemini client
+        model_name: Model name to use
+        page_bytes: Single PDF page as bytes
+        page_num: Page number (for logging)
+        prompt: Prompt template to use
+        config: Generation config
         
     Returns:
         Generated response or None
     """
-    if not prompt.strip():
-        return None
-    
     try:
-        response = llm_client.generate(
-            system_prompt="",  # The prompt is complete in user_prompt
-            user_prompt=prompt
+        # Create PDF part from page bytes
+        pdf_part = types.Part.from_bytes(
+            data=page_bytes,
+            mime_type='application/pdf'
         )
         
-        if response:
-            return response.strip().replace('*', '')
+        # Generate content with single page PDF and prompt
+        # Following Google's best practice: put document first, then prompt
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[pdf_part, prompt],
+            config=config
+        )
         
-        logging.error("Model returned empty response.")
-        return None
+        # Validate response
+        if not response.candidates:
+            raise Exception("No candidates in Gemini response")
+        
+        candidate = response.candidates[0]
+        
+        if not candidate.content or not candidate.content.parts:
+            finish_reason = candidate.finish_reason
+            raise Exception(f"No valid response. Finish reason: {finish_reason}")
+        
+        text_content = response.text.replace('\xa0', ' ').strip().replace('*', '')
+        if not text_content:
+            raise Exception("Empty text response from Gemini")
+        
+        return text_content
+        
     except Exception as e:
-        logging.error(f"Generation error: {e}")
+        logging.error(f"Generation error for page {page_num}: {e}")
+        raise  # Let the retry decorator handle it
+
+@retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
+def generate_consolidation_with_gemini(client: genai.Client, model_name: str,
+                                      prompt: str, config) -> Optional[str]:
+    """
+    Generate consolidation response with Gemini with automatic retry.
+    
+    Args:
+        client: Gemini client
+        model_name: Model name to use
+        prompt: Full prompt with extracted content
+        config: Generation config
+        
+    Returns:
+        Generated response or None
+    """
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[prompt],
+            config=config
+        )
+        
+        # Validate response
+        if not response.candidates:
+            raise Exception("No candidates in Gemini response")
+        
+        candidate = response.candidates[0]
+        
+        if not candidate.content or not candidate.content.parts:
+            finish_reason = candidate.finish_reason
+            raise Exception(f"No valid response. Finish reason: {finish_reason}")
+        
+        text_content = response.text.replace('\xa0', ' ').strip().replace('*', '')
+        if not text_content:
+            raise Exception("Empty text response from Gemini")
+        
+        return text_content
+        
+    except Exception as e:
+        logging.error(f"Consolidation generation error: {e}")
         raise  # Let the retry decorator handle it
 
 # ------------------------------------------------------------------
 # Pipeline Functions
 # ------------------------------------------------------------------
-def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str], 
-                        extraction_prompt: str, output_dir: Path, magazine_id: str,
-                        model_name: str) -> Path:
+def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_config: LLMConfig,
+                        pdf_path: Path, total_pages: int, extraction_prompt: str, 
+                        output_dir: Path, magazine_id: str) -> Path:
     """
-    Step 1: Page-by-page extraction with high-performance model.
+    Step 1: Page-by-page extraction with high-performance Gemini model.
     Progressive saving to allow resumption in case of interruption.
     
     Args:
-        llm_client: Configured LLM client
-        pages_text: Dictionary {page_num: text}
+        client: Gemini client
+        model_option: Model option for step 1
+        llm_config: LLM configuration
+        pdf_path: Path to the PDF file
+        total_pages: Total number of pages in the PDF
         extraction_prompt: Prompt template for extraction
         output_dir: Output directory
         magazine_id: Magazine identifier
-        model_name: Model name for logging
         
     Returns:
         Path to the step 1 consolidated file
@@ -314,10 +332,29 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
     step1_dir.mkdir(parents=True, exist_ok=True)
     
     all_extractions = []
+    model_name = summary_from_option(model_option)
     
-    logging.info(f"Step 1: Processing {len(pages_text)} pages with {model_name}...")
+    # Setup generation config
+    thinking_budget = llm_config.thinking_budget
+    if thinking_budget is None:
+        thinking_budget = model_option.default_thinking_budget
     
-    for page_num in tqdm(sorted(pages_text.keys()), desc="Extracting articles per page"):
+    config_kwargs = {
+        "temperature": llm_config.temperature or 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "max_output_tokens": 8192,
+        "response_mime_type": "text/plain",
+    }
+    
+    if thinking_budget is not None:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+    
+    gen_config = types.GenerateContentConfig(**config_kwargs)
+    
+    logging.info(f"Step 1: Processing {total_pages} pages with {model_name}...")
+    
+    for page_num in tqdm(range(1, total_pages + 1), desc="Extracting articles per page"):
         page_file = step1_dir / f"page_{page_num:03d}.md"
         
         # Check if page has already been processed
@@ -328,14 +365,16 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
             all_extractions.append(f"\n{extraction}\n")
             continue
         
-        page_text = pages_text[page_num]
-        
-        # Prepare the prompt with text (no page number)
-        prompt = extraction_prompt.replace('{text}', page_text)
-        
-        # Generate extraction with automatic retry
+        # Extract single page from PDF
         try:
-            extraction = generate_with_llm(llm_client, prompt)
+            page_idx = page_num - 1  # 0-indexed for PyPDF2
+            page_bytes = extract_pdf_page(pdf_path, page_idx)
+            
+            # Generate extraction with automatic retry using Gemini
+            extraction = generate_with_gemini(
+                client, model_option.model, page_bytes, page_num,
+                extraction_prompt, gen_config
+            )
             
             if extraction:
                 # Add page number at the beginning of the AI response
@@ -354,7 +393,7 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
                 with open(page_file, 'w', encoding='utf-8') as f:
                     f.write(placeholder)
         except Exception as e:
-            logging.error(f"✗ Failed to process page {page_num} after retries: {e}")
+            logging.error(f"✗ Failed to extract or process page {page_num} after retries: {e}")
             placeholder = f"## Page : {page_num}\n\nError: {str(e)}\n"
             all_extractions.append(f"\n{placeholder}\n")
             with open(page_file, 'w', encoding='utf-8') as f:
@@ -384,21 +423,23 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
     
     return consolidated_file
 
-def step2_consolidate(llm_client: BaseLLMClient, step1_file: Path, 
-                     output_dir: Path, magazine_id: str, model_name: str) -> Path:
+def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_config: LLMConfig,
+                     step1_file: Path, output_dir: Path, magazine_id: str) -> Path:
     """
-    Step 2: Magazine-level consolidation with fast model.
+    Step 2: Magazine-level consolidation with fast Gemini model.
     
     Args:
-        llm_client: Configured LLM client
+        client: Gemini client
+        model_option: Model option for step 2
+        llm_config: LLM configuration
         step1_file: Step 1 consolidated file
         output_dir: Output directory
         magazine_id: Magazine identifier
-        model_name: Model name for logging
         
     Returns:
         Path to the final consolidated file
     """
+    model_name = summary_from_option(model_option)
     logging.info(f"Step 2: Consolidating articles at magazine level with {model_name}...")
     
     # Read the step 1 consolidated file
@@ -409,9 +450,29 @@ def step2_consolidate(llm_client: BaseLLMClient, step1_file: Path,
     consolidation_prompt = load_consolidation_prompt()
     full_prompt = consolidation_prompt.replace('{extracted_content}', extracted_content)
     
+    # Setup generation config
+    thinking_budget = llm_config.thinking_budget
+    if thinking_budget is None:
+        thinking_budget = model_option.default_thinking_budget
+    
+    config_kwargs = {
+        "temperature": llm_config.temperature or 0.3,
+        "top_p": 0.95,
+        "top_k": 40,
+        "max_output_tokens": 8192,
+        "response_mime_type": "text/plain",
+    }
+    
+    if thinking_budget is not None:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+    
+    gen_config = types.GenerateContentConfig(**config_kwargs)
+    
     # Generate consolidation with automatic retry
     try:
-        consolidated = generate_with_llm(llm_client, full_prompt)
+        consolidated = generate_consolidation_with_gemini(
+            client, model_option.model, full_prompt, gen_config
+        )
         
         if not consolidated:
             logging.error("Failed to generate consolidated output")
@@ -433,79 +494,94 @@ def step2_consolidate(llm_client: BaseLLMClient, step1_file: Path,
 # Main Pipeline
 # ------------------------------------------------------------------
 def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
-                    input_path: Path, output_dir: Path, magazine_id: str = None):
+                    pdf_path: Path, output_dir: Path, magazine_id: str = None):
     """
-    Complete pipeline to process a magazine.
+    Complete pipeline to process a magazine PDF using Gemini's native PDF understanding.
     
     Args:
-        model_step1: Model option for step 1 (high-performance)
-        model_step2: Model option for step 2 (fast)
-        input_path: Path to PDF or TXT directory
+        model_step1: Model option for step 1 (Gemini Pro)
+        model_step2: Model option for step 2 (Gemini Flash)
+        pdf_path: Path to PDF file
         output_dir: Output directory
         magazine_id: Magazine identifier (optional)
     """
     # Determine magazine identifier
     if magazine_id is None:
-        magazine_id = input_path.stem
+        magazine_id = pdf_path.stem
     
     logging.info(f"Processing magazine: {magazine_id}")
-    logging.info(f"Input: {input_path}")
+    logging.info(f"Input: {pdf_path}")
     logging.info(f"Output: {output_dir}")
     
-    # Configure LLM clients for each step
-    # Step 1: High-performance model with medium reasoning for detailed extraction
+    # Verify PDF exists
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise ValueError(f"PDF file not found: {pdf_path}")
+    
+    if pdf_path.suffix.lower() != '.pdf':
+        raise ValueError(f"Input must be a PDF file, got: {pdf_path}")
+    
+    # Get API key
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not found in environment variables")
+    
+    # Initialize Gemini client
+    client = genai.Client(api_key=api_key)
+    
+    # Configure for each step
+    # Step 1: High-performance model with thinking enabled for detailed extraction
     config_step1 = LLMConfig(
-        reasoning_effort="medium",
-        text_verbosity="medium",
         thinking_budget=500,
         temperature=0.2
     )
-    llm_client_step1 = build_llm_client(model_step1, config=config_step1)
     
-    # Step 2: Fast model with low reasoning for simple consolidation
+    # Step 2: Fast model with thinking disabled for simple consolidation
     config_step2 = LLMConfig(
-        reasoning_effort="low",
-        text_verbosity="low",
         thinking_budget=0,
         temperature=0.3
     )
-    llm_client_step2 = build_llm_client(model_step2, config=config_step2)
     
     # Load the extraction prompt
     extraction_prompt = load_extraction_prompt()
     
-    # Extract text page by page
-    if input_path.is_file() and input_path.suffix.lower() == '.pdf':
-        logging.info("Input is PDF file - extracting text...")
-        pages_text = extract_text_from_pdf(input_path)
-    elif input_path.is_dir():
-        logging.info("Input is directory - loading TXT files...")
-        pages_text = load_txt_files_as_pages(input_path)
-    else:
-        raise ValueError(f"Invalid input path: {input_path}. Must be PDF file or directory with TXT files.")
+    # Get PDF info
+    print("\n" + "="*50)
+    print(f"📄 Processing PDF: {pdf_path.name}")
+    print("="*50)
     
-    if not pages_text:
-        raise RuntimeError("No pages extracted from input")
+    file_size_mb = pdf_path.stat().st_size / (1024 * 1024)
+    print(f"📊 PDF size: {file_size_mb:.2f} MB")
     
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Step 1: Page-by-page extraction (high-performance model)
-    step1_file = step1_extract_pages(
-        llm_client_step1, pages_text, extraction_prompt, output_dir, magazine_id,
-        summary_from_option(model_step1)
-    )
-    
-    # Step 2: Consolidation (fast model)
-    final_file = step2_consolidate(
-        llm_client_step2, step1_file, output_dir, magazine_id,
-        summary_from_option(model_step2)
-    )
-    
-    logging.info(f"✓ Pipeline complete for magazine {magazine_id}")
-    logging.info(f"✓ Final index: {final_file}")
-    
-    return final_file
+    try:
+        # Get page count
+        print("🔄 Reading PDF structure...")
+        total_pages = get_pdf_page_count(pdf_path)
+        print(f"✅ PDF has {total_pages} pages")
+        print("📄 Will extract and process each page individually")
+        
+        # Create output directory
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Step 1: Page-by-page extraction (Gemini Pro)
+        # Each page will be extracted and sent individually to Gemini
+        step1_file = step1_extract_pages(
+            client, model_step1, config_step1, pdf_path, total_pages,
+            extraction_prompt, output_dir, magazine_id
+        )
+        
+        # Step 2: Consolidation (Gemini Flash)
+        final_file = step2_consolidate(
+            client, model_step2, config_step2, step1_file, output_dir, magazine_id
+        )
+        
+        logging.info(f"✓ Pipeline complete for magazine {magazine_id}")
+        logging.info(f"✓ Final index: {final_file}")
+        
+        return final_file
+        
+    except Exception as e:
+        logging.error(f"Error processing PDF {pdf_path}: {e}")
+        raise
 
 # ------------------------------------------------------------------
 # User Interaction
@@ -533,44 +609,72 @@ def get_input_pdfs(script_dir: Path) -> list[Path]:
 def main():
     """Main entry point of the script."""
     try:
+        # Load environment variables
+        load_dotenv()
+        
+        # Verify Gemini API key
+        if not os.getenv("GEMINI_API_KEY"):
+            print("❌ GEMINI_API_KEY not found in environment variables!")
+            return
+        
         script_dir = Path(__file__).parent
         
+        print("\n🚀 Starting Magazine Article Extraction Pipeline")
+        print("="*60)
+        print("📖 Using Gemini's native PDF understanding")
+        print("Step 1: Page-by-page extraction (Gemini Pro)")
+        print("Step 2: Magazine-level consolidation (Gemini Flash)")
+        print("="*60)
+        
         logging.info("=== Magazine Article Extraction Pipeline ===")
-        logging.info("Step 1: Page-by-page extraction (high-performance model)")
-        logging.info("Step 2: Magazine-level consolidation (fast model)")
+        logging.info("Step 1: Page-by-page extraction (Gemini Pro)")
+        logging.info("Step 2: Magazine-level consolidation (Gemini Flash)")
         logging.info("")
         
-        # Model selection
+        # Model selection (Gemini only)
         model_step1, model_step2 = get_model_pair()
         
         # Get the list of PDFs to process
         pdf_files = get_input_pdfs(script_dir)
         
+        print(f"\n📚 Found {len(pdf_files)} PDF file(s) to process\n")
+        
         # Process each PDF
         for i, pdf_path in enumerate(pdf_files, 1):
+            print(f"\n{'='*60}")
+            print(f"📊 Processing PDF {i}/{len(pdf_files)}: {pdf_path.name}")
+            print(f"{'='*60}")
+            
             logging.info(f"\n{'='*60}")
             logging.info(f"Processing PDF {i}/{len(pdf_files)}: {pdf_path.name}")
             logging.info(f"{'='*60}")
             
-            # Use the filename as Omeka ID
-            omeka_id = pdf_path.stem
-            logging.info(f"Omeka ID: {omeka_id}")
+            # Use the filename as magazine ID
+            magazine_id = pdf_path.stem
+            logging.info(f"Magazine ID: {magazine_id}")
             
             # Define the output directory
-            output_dir = script_dir / "Magazine_Extractions" / omeka_id
+            output_dir = script_dir / "Magazine_Extractions" / magazine_id
             
             # Execute the pipeline for this PDF
-            process_magazine(model_step1, model_step2, pdf_path, output_dir, omeka_id)
+            process_magazine(model_step1, model_step2, pdf_path, output_dir, magazine_id)
             
+            print(f"\n✅ PDF {i}/{len(pdf_files)} completed: {pdf_path.name}")
             logging.info(f"PDF {i}/{len(pdf_files)} completed: {pdf_path.name}")
+        
+        print(f"\n{'='*60}")
+        print(f"✨ Pipeline completed successfully - {len(pdf_files)} magazine(s) processed")
+        print(f"{'='*60}\n")
         
         logging.info(f"\n{'='*60}")
         logging.info(f"=== Pipeline completed successfully - {len(pdf_files)} magazine(s) processed ===")
         logging.info(f"{'='*60}")
         
     except KeyboardInterrupt:
+        print("\n⚠️ Process interrupted by user")
         logging.info("Process interrupted by user")
     except Exception as e:
+        print(f"\n❌ Pipeline failed: {e}")
         logging.error(f"Pipeline failed: {e}", exc_info=True)
         raise
 

@@ -5,18 +5,20 @@ A two-step AI-powered pipeline for extracting and consolidating articles from di
 ## Overview
 
 This pipeline processes PDF magazines to:
-1. **Extract articles page-by-page** using Gemini 2.5 Pro
+1. **Extract articles page-by-page** using Gemini 2.5 Pro with native PDF understanding
 2. **Consolidate fragmented articles** across multiple pages using Gemini 2.5 Flash
 3. Generate a comprehensive article index with titles, page ranges, and summaries
 
 ## Features
 
-- ✅ **Automatic PDF text extraction** using PyPDF2
+- ✅ **Native PDF processing** - Each page extracted and sent individually to Gemini
+- ✅ **No image conversion needed** - Leverages Gemini's native PDF understanding
 - ✅ **Robust error handling** with automatic retry (max 3 attempts)
 - ✅ **Progressive saving** - resume from cached results if interrupted
 - ✅ **Smart page numbering** - controlled by script, not AI (more reliable)
 - ✅ **Dual-prompt system** - separate prompts for extraction and consolidation
 - ✅ **Omeka S integration** - download PDFs directly from Omeka collections
+- ✅ **Gemini-only** - Optimized for Google's Gemini models (Pro + Flash)
 
 ## Workflow
 
@@ -28,8 +30,9 @@ This pipeline processes PDF magazines to:
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Step 1: Page-by-Page Extraction (Gemini 2.5 Pro)           │
-│ → Extract articles from each page                          │
-│ → Identify exact titles                                    │
+│ → Extract individual pages from PDF using PyPDF2           │
+│ → Send each page separately to Gemini as PDF bytes         │
+│ → Identify exact titles on each page                       │
 │ → Detect continuation markers ("suite page X")             │
 │ → Generate brief summaries (2-3 sentences)                 │
 │ Output: step1_page_extractions/*.md                        │
@@ -54,7 +57,7 @@ pip install -r requirements.txt
 
 Required packages:
 - `google-genai` - Google Gemini API client
-- `PyPDF2` - PDF text extraction
+- `PyPDF2` - PDF page extraction (not text extraction)
 - `python-dotenv` - Environment variable management
 - `tqdm` - Progress bars
 - `requests` - HTTP requests (for Omeka downloader)
@@ -63,11 +66,8 @@ Required packages:
 
 Create a `.env` file in the project root:
 ```bash
-# Gemini API Key
+# Gemini API Key (required)
 GEMINI_API_KEY=your_gemini_api_key_here
-
-# Optional: Google Application Credentials for ADC
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 
 # For Omeka downloader (optional)
 OMEKA_BASE_URL=https://your-omeka-instance.org
@@ -92,8 +92,10 @@ python 01_omeka_pdf_downloader.py
 python 02_AI_generate_summaries_issue.py
 ```
 - Automatically detects PDFs in `PDF/` folder
-- Uses PDF filename as Omeka ID
-- No manual input required (fully automated)
+- Extracts each page individually using PyPDF2
+- Sends individual page PDFs to Gemini for analysis
+- Uses PDF filename as magazine ID
+- Fully automated (Gemini Pro → Flash pipeline)
 
 ### Option B: Use Existing PDFs
 
@@ -103,14 +105,14 @@ python 02_AI_generate_summaries_issue.py
 python 02_AI_generate_summaries_issue.py
 ```
 
-### Manual Path Selection
+### Automatic Processing
 
-If you prefer to specify a custom path:
-```bash
-python 02_AI_generate_summaries_issue.py
-# Press Enter when prompted to use default PDF/ folder
-# Or enter custom path to PDF file or directory
-```
+The pipeline automatically:
+1. Detects all PDFs in the `PDF/` folder
+2. Extracts individual pages from each PDF
+3. Processes each page with Gemini Pro
+4. Consolidates results with Gemini Flash
+5. Saves outputs to `Magazine_Extractions/{pdf_id}/`
 
 ## Output Structure
 
@@ -223,6 +225,13 @@ RETRY_BACKOFF = 2        # Delay multiplier for exponential backoff
 
 ## Architecture Decisions
 
+### Why Extract Individual Pages?
+Each page is extracted separately and sent to Gemini as a standalone PDF:
+- ✅ **Better accuracy** - Gemini focuses on one page at a time
+- ✅ **More efficient** - Smaller payloads per API request
+- ✅ **Better error handling** - Failed pages don't block the entire document
+- ✅ **Native PDF understanding** - Gemini processes PDFs directly, no image conversion
+
 ### Why Script-Controlled Page Numbers?
 Page numbers are injected by the script (not AI) for reliability:
 - ✅ **Guaranteed accuracy** - no AI hallucination risk
@@ -230,8 +239,14 @@ Page numbers are injected by the script (not AI) for reliability:
 - ✅ **Easier consolidation** - page numbers are trustworthy
 
 ### Why Two Different Models?
-- **Gemini 2.5 Pro (Step 1)**: Higher accuracy for initial extraction
-- **Gemini 2.5 Flash (Step 2)**: Faster consolidation of pre-extracted data
+- **Gemini 2.5 Pro (Step 1)**: Higher accuracy for initial extraction with thinking enabled
+- **Gemini 2.5 Flash (Step 2)**: Faster consolidation with thinking disabled
+
+### Why Gemini Only?
+- **Native PDF processing** - Gemini can read PDFs directly without OCR
+- **Vision capabilities** - Handles images, diagrams, and complex layouts
+- **Better document understanding** - Maintains context of visual structure
+- **No OpenAI support** - ChatGPT lacks native PDF understanding
 
 ### Why Separate Prompt Files?
 - **Modularity** - Easy to modify extraction vs consolidation logic
@@ -242,15 +257,24 @@ Page numbers are injected by the script (not AI) for reliability:
 
 ### No PDFs detected
 ```bash
-# Error: "No pages extracted from input"
+# Error: "No PDF files found in the PDF directory!"
 ```
 **Solution**: Ensure PDF files are in `PDF/` folder and have `.pdf` extension
 
 ### API Key errors
 ```bash
-# Error: "GEMINI_API_KEY not set and ADC not available"
+# Error: "GEMINI_API_KEY not found in environment variables"
 ```
 **Solution**: Add `GEMINI_API_KEY` to `.env` file
+
+### Page extraction errors
+```bash
+# Error: "Error extracting page X from PDF"
+```
+**Solution**: 
+- Ensure PDF is not corrupted or password-protected
+- Check PDF is readable by PyPDF2
+- Try re-downloading the PDF if from Omeka
 
 ### Rate limit errors
 The retry mechanism handles most rate limits automatically. If persistent:
@@ -259,9 +283,11 @@ The retry mechanism handles most rate limits automatically. If persistent:
 
 ### Empty extractions
 If AI returns no content:
-- Check PDF text extraction quality (some PDFs may be scanned images)
+- Gemini should handle scanned images (has vision capabilities)
 - Review `summary_prompt_issue.md` for clarity
-- Ensure PDF language matches prompt expectations
+- Ensure PDF language matches prompt expectations (French/Arabic)
+- Check if PDF pages are actually extractable by PyPDF2
+- Verify individual page PDFs are being created correctly
 
 ## License
 
