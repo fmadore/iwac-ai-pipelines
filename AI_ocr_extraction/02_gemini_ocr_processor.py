@@ -6,13 +6,19 @@ page-by-page, without converting to images first. This leverages Gemini's native
 while maintaining precise control over page-by-page extraction.
 
 Usage:
-    python 02b_gemini_pdf_processor.py
+    python 02_gemini_ocr_processor.py
 
 Requirements:
     - Environment variable: GEMINI_API_KEY
     - PDF files in the PDF/ directory
     - OCR system prompt in ocr_system_prompt.md
     - PyPDF2 for page extraction
+    - Shared llm_provider module for model selection
+
+Model Selection:
+    - Uses shared LLM provider with Gemini Flash and Gemini Pro options
+    - Flash: Faster, cost-effective, thinking disabled for speed
+    - Pro: Higher quality, extended thinking enabled
 
 Advantages over image-based approach:
     - No Poppler dependency needed
@@ -27,11 +33,21 @@ import time
 import logging
 from pathlib import Path
 from typing import Optional, List
-from google import genai
-from google.genai import types
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader, PdfWriter
 import io
+
+# Import shared LLM provider
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common.llm_provider import get_model_option, build_llm_client, summary_from_option, LLMConfig
+
+# Import Gemini types for PDF processing
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    raise RuntimeError("google-genai package is required for PDF processing")
 
 # Set up logging configuration for tracking OCR operations and errors
 script_dir = Path(__file__).parent
@@ -62,16 +78,19 @@ class GeminiPDFProcessor:
     - Processing pages individually for better control and error recovery
     """
 
-    def __init__(self, api_key: str, model_name: str):
+    def __init__(self, api_key: str, model_option, llm_config: LLMConfig):
         """
-        Initialize the GeminiPDFProcessor with API credentials and model name.
+        Initialize the GeminiPDFProcessor with API credentials and model configuration.
         
         Args:
             api_key (str): Google Gemini API key for authentication
-            model_name (str): The Gemini model name to use
+            model_option: ModelOption from llm_provider
+            llm_config (LLMConfig): LLM configuration for generation parameters
         """
         self.client = genai.Client(api_key=api_key)
-        self.model_name = model_name
+        self.model_option = model_option
+        self.model_name = model_option.model
+        self.llm_config = llm_config
         self.generation_config = self._setup_generation_config()
         
     def _setup_generation_config(self):
@@ -82,29 +101,36 @@ class GeminiPDFProcessor:
         - Lower temperature for more consistent output
         - High top_p and top_k for reliable text recognition
         - Sufficient output tokens for long documents
-        - Model-appropriate thinking budget
+        - Model-appropriate thinking budget from LLMConfig
         
         Returns:
             types.GenerateContentConfig: Configured generation config
         """
-        # Set thinking budget based on model capabilities
-        if "2.5-pro" in self.model_name.lower():
-            # Gemini 2.5 Pro requires thinking mode (minimum budget 128)
-            thinking_budget = 128  # Minimum for Pro model
-            print(f"🧠 Using thinking budget {thinking_budget} for {self.model_name}")
-        else:
-            # Gemini 2.5 Flash can disable thinking for simple tasks
-            thinking_budget = 0  # Disable thinking for faster OCR
-            print(f"🧠 Disabling thinking mode for {self.model_name}")
+        # Use configured thinking budget or model default
+        thinking_budget = self.llm_config.thinking_budget
+        if thinking_budget is None:
+            thinking_budget = self.model_option.default_thinking_budget
         
-        return types.GenerateContentConfig(
-            temperature=0.1,      # Lower temperature for more consistent output
-            top_p=0.95,          # High top_p for reliable text recognition
-            top_k=40,            # Balanced top_k for good candidate selection
-            max_output_tokens=65535,  # Support for long documents
-            response_mime_type="text/plain",  # Ensure text output
-            thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
-            safety_settings=[
+        # Handle Pro model requirements
+        is_pro_model = "pro" in self.model_name.lower()
+        if is_pro_model and thinking_budget == 0:
+            print(f"⚠️  Pro model cannot disable thinking - using model default")
+            thinking_budget = None  # Let model use its default
+        
+        # Log thinking configuration
+        if thinking_budget is not None:
+            if thinking_budget == 0:
+                print(f"🧠 Disabling thinking mode for {self.model_name}")
+            else:
+                print(f"🧠 Using thinking budget {thinking_budget} for {self.model_name}")
+        
+        config_kwargs = {
+            "temperature": self.llm_config.temperature or 0.1,
+            "top_p": 0.95,
+            "top_k": 40,
+            "max_output_tokens": 65535,
+            "response_mime_type": "text/plain",
+            "safety_settings": [
                 types.SafetySetting(
                     category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
                     threshold=types.HarmBlockThreshold.BLOCK_NONE
@@ -122,7 +148,13 @@ class GeminiPDFProcessor:
                     threshold=types.HarmBlockThreshold.BLOCK_NONE
                 )
             ]
-        )
+        }
+        
+        # Add thinking config if budget specified
+        if thinking_budget is not None:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+        
+        return types.GenerateContentConfig(**config_kwargs)
     
     def _get_system_instruction(self):
         """
@@ -558,25 +590,19 @@ def main():
         return
     print("✅ API Key loaded successfully")
 
-    # Present model selection options to user
-    print("\nPlease choose the Gemini model to use:")
-    print("1: gemini-2.5-flash (Faster, good for most cases)")
-    print("2: gemini-2.5-pro (More powerful, more accurate but slower)")
+    # Use shared LLM provider for model selection (Gemini models only)
+    print("\n🤖 Model Selection")
+    print("="*50)
+    model_option = get_model_option(None, allowed_keys=["gemini-flash", "gemini-pro"])
+    print(f"✅ Using model: {summary_from_option(model_option)}")
     
-    # Get valid model choice from user
-    model_choice = ""
-    while model_choice not in ["1", "2"]:
-        model_choice = input("Enter your choice (1 or 2): ")
-        if model_choice not in ["1", "2"]:
-            print("❌ Invalid choice. Please enter 1 or 2.")
-
-    # Map choice to model name
-    if model_choice == "1":
-        selected_model_name = "gemini-2.5-flash"
-    else:
-        selected_model_name = "gemini-2.5-pro"
-    
-    print(f"✅ Using model: {selected_model_name}")
+    # Configure LLM for OCR task
+    # OCR benefits from low temperature and minimal thinking for speed
+    llm_config = LLMConfig(
+        temperature=0.1,  # Low temperature for consistent OCR
+        thinking_budget=0 if "flash" in model_option.key else None  # Disable for Flash, default for Pro
+    )
+    print(f"📋 Config: temperature={llm_config.temperature}, thinking_budget={llm_config.thinking_budget}")
     
     # Set up directory paths
     script_dir = Path(__file__).parent
@@ -586,7 +612,7 @@ def main():
     
     # Initialize the PDF processor
     print("\n🔧 Initializing Gemini PDF Processor...")
-    processor = GeminiPDFProcessor(api_key, selected_model_name)
+    processor = GeminiPDFProcessor(api_key, model_option, llm_config)
     
     # Find all PDF files to process
     pdf_files = list(pdf_dir.glob("*.pdf"))
