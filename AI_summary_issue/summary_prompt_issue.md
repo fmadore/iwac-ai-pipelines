@@ -16,6 +16,8 @@ Pour chaque article trouvé, vous devez :
    - Ignorez uniquement les textes arabes **mal reconnus** par l'OCR (caractères illisibles comme "fllaoyjjÿ", "ÿjjÿoyjj")
    - Cherchez le titre principal en gros caractères ou en début d'article
    - Si un titre est clairement visible mais mal retranscrit, corrigez-le en vous basant sur le contexte
+   - **Corrigez les espaces OCR** : Supprimez les espaces multiples inutiles entre les lettres d'un même mot (ex: "nouvell e" → "nouvelle", "Mamou ne" → "Mamoune")
+   - **Corrigez les erreurs OCR évidentes** : Remplacez les caractères mal reconnus par les bonnes lettres (ex: "arm0es" → "armées", "est-t -H" → "est-il", "PRE SSE" → "PRESSE")
 2. **Produire un résumé très bref** (2-3 phrases maximum) basé uniquement sur le contenu visible sur cette page
    - **Incluez les termes arabes** pertinents s'ils sont correctement retranscrits dans l'OCR
    - Utilisez ces termes pour enrichir le contexte (ex: "L'article traite du Hajj (الحج) et de ses rites...")
@@ -58,6 +60,8 @@ Répondez UNIQUEMENT au format suivant (Markdown strict), sans texte additionnel
 
 - **Titre exact** : Ne modifiez pas le titre, même s'il contient des fautes. Conservez la ponctuation et la casse originales.
   - **Exception** : Si l'OCR a mal reconnu du texte arabe ou produit des caractères illisibles (ex: "fllaoyjjÿ"), cherchez le vrai titre en français dans le texte
+  - **Exception** : Corrigez les espaces OCR multiples entre les lettres (ex: "nouvell e" → "nouvelle", "Mamou ne" → "Mamoune", "politiciens ?" → "politiciens?")
+  - **Exception** : Corrigez les erreurs OCR évidentes dans les titres (ex: "arm0es" → "armées", "0" → "o", "l" → "I" quand c'est évident, "est-t -H" → "est-il")
   - Basez-vous sur le contexte de l'article pour identifier le titre principal
 
 - **Résumé** : Basez-vous uniquement sur ce qui est visible sur cette page. Si l'article continue ailleurs, mentionnez-le dans "Continuation" mais ne résumez que la partie présente.

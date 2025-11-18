@@ -24,6 +24,7 @@ Analysez le document consolidé fourni et :
 
 3. **Fusionnez les occurrences** en un seul enregistrement par article :
    - Conservez le titre exact complet de l'article (incluant les termes arabes s'ils sont présents)
+   - **Corrigez les erreurs OCR** dans les titres : supprimez les espaces multiples inutiles (ex: "nouvell e" → "nouvelle"), corrigez les caractères mal reconnus (ex: "arm0es" → "armées", "est-t -H" → "est-il", "PRE SSE" → "PRESSE")
    - Agrégez toutes les pages (ex: 1–3 ou 1, 3, 5)
    - Produisez un résumé global (4-6 phrases) en fusionnant les résumés partiels
    - Incluez les termes arabes pertinents dans le résumé consolidé pour enrichir le contexte
