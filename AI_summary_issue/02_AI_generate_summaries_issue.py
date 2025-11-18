@@ -1,28 +1,28 @@
-"""Pipeline d'Extraction d'Articles de Magazines Islamiques (en 2 Étapes)
+"""Islamic Magazine Article Extraction Pipeline (2-Step Process)
 
-Ce script implémente un pipeline en deux étapes pour extraire et consolider les articles
-d'un magazine islamique à partir de fichiers PDF ou texte OCR page par page.
+This script implements a two-step pipeline to extract and consolidate articles
+from an Islamic magazine using page-by-page PDF or OCR text files.
 
-Modèles supportés:
-- Gemini: Pro (étape 1) + Flash (étape 2)
-- OpenAI: GPT-5.1 full (étape 1) + GPT-5.1 mini (étape 2)
+Supported models:
+- Gemini: Pro (step 1) + Flash (step 2)
+- OpenAI: GPT-5.1 full (step 1) + GPT-5.1 mini (step 2)
 
-Étape 1 : Extraction page par page (modèle performant)
-- Analyse chaque page individuellement avec le modèle le plus performant
-- Identifie les articles présents sur la page
-- Extrait le titre exact et génère un résumé bref
-- Détecte les indices de continuation
+Step 1: Page-by-page extraction (high-performance model)
+- Analyzes each page individually with the most capable model
+- Identifies articles present on the page
+- Extracts exact titles and generates brief summaries
+- Detects continuation indicators
 
-Étape 2 : Consolidation au niveau du magazine (modèle rapide)
-- Fusionne les articles fragmentés sur plusieurs pages
-- Élimine les doublons avec le modèle rapide
-- Produit un résumé global par article
-- Liste toutes les pages associées
+Step 2: Magazine-level consolidation (fast model)
+- Merges articles fragmented across multiple pages
+- Eliminates duplicates with the fast model
+- Produces a global summary per article
+- Lists all associated pages
 
-Mécanismes de robustesse:
-- Retry automatique en cas d'erreur (max 3 tentatives)
-- Sauvegarde progressive des résultats
-- Reprise possible à partir des fichiers déjà traités
+Robustness mechanisms:
+- Automatic retry on error (max 3 attempts)
+- Progressive result saving
+- Resumption possible from already processed files
 
 Usage:
     python 02_AI_generate_summaries_issue.py
@@ -68,16 +68,16 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 load_dotenv()
 
-# Configuration retry
+# Retry configuration
 MAX_RETRIES = 3
-RETRY_DELAY = 2  # secondes
-RETRY_BACKOFF = 2  # multiplicateur pour backoff exponentiel
+RETRY_DELAY = 2  # seconds
+RETRY_BACKOFF = 2  # multiplier for exponential backoff
 
 # ------------------------------------------------------------------
 # Prompt Loading
 # ------------------------------------------------------------------
 def load_extraction_prompt() -> str:
-    """Charge le prompt pour l'étape 1 (extraction page par page)."""
+    """Load the prompt for step 1 (page-by-page extraction)."""
     script_dir = Path(__file__).parent
     prompt_file = script_dir / 'summary_prompt_issue.md'
     try:
@@ -92,7 +92,7 @@ def load_extraction_prompt() -> str:
         raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}")
 
 def load_consolidation_prompt() -> str:
-    """Charge le prompt pour l'étape 2 (consolidation)."""
+    """Load the prompt for step 2 (consolidation)."""
     script_dir = Path(__file__).parent
     prompt_file = script_dir / 'consolidation_prompt_issue.md'
     try:
@@ -110,17 +110,17 @@ def load_consolidation_prompt() -> str:
 # Client Initialization
 # ------------------------------------------------------------------
 def get_model_pair() -> Tuple[ModelOption, ModelOption]:
-    """Permet à l'utilisateur de sélectionner la paire de modèles pour le pipeline.
+    """Allow the user to select the model pair for the pipeline.
     
     Returns:
-        Tuple de (model_step1, model_step2) où step1 est le modèle performant
-        et step2 est le modèle rapide.
+        Tuple of (model_step1, model_step2) where step1 is the high-performance model
+        and step2 is the fast model.
     """
-    print("\n=== Sélection des modèles pour le pipeline ===")
-    print("Étape 1 (extraction page par page): Modèle performant")
-    print("Étape 2 (consolidation): Modèle rapide\n")
+    print("\n=== Model Selection for Pipeline ===")
+    print("Step 1 (page-by-page extraction): High-performance model")
+    print("Step 2 (consolidation): Fast model\n")
     
-    # Définir les paires disponibles
+    # Define available pairs
     model_pairs = {
         "gemini": {
             "step1": "gemini-pro",
@@ -134,12 +134,12 @@ def get_model_pair() -> Tuple[ModelOption, ModelOption]:
         }
     }
     
-    print("Paires de modèles disponibles:")
-    print("  1) Gemini (Pro + Flash) - Pro pour extraction, Flash pour consolidation")
-    print("  2) OpenAI (GPT-5.1 full + mini) - Full pour extraction, mini pour consolidation")
+    print("Available model pairs:")
+    print("  1) Gemini (Pro + Flash) - Pro for extraction, Flash for consolidation")
+    print("  2) OpenAI (GPT-5.1 full + mini) - Full for extraction, mini for consolidation")
     
     while True:
-        choice = input("\nChoisissez la paire de modèles (1 ou 2): ").strip()
+        choice = input("\nChoose model pair (1 or 2): ").strip()
         if choice == "1":
             pair_key = "gemini"
             break
@@ -147,15 +147,15 @@ def get_model_pair() -> Tuple[ModelOption, ModelOption]:
             pair_key = "openai"
             break
         else:
-            print("Choix invalide. Veuillez entrer 1 ou 2.")
+            print("Invalid choice. Please enter 1 or 2.")
     
     pair = model_pairs[pair_key]
     step1_option = get_model_option(pair["step1"])
     step2_option = get_model_option(pair["step2"])
     
-    logging.info(f"\nModèles sélectionnés: {pair['name']}")
-    logging.info(f"  Étape 1: {summary_from_option(step1_option)}")
-    logging.info(f"  Étape 2: {summary_from_option(step2_option)}")
+    logging.info(f"\nSelected models: {pair['name']}")
+    logging.info(f"  Step 1: {summary_from_option(step1_option)}")
+    logging.info(f"  Step 2: {summary_from_option(step2_option)}")
     
     return step1_option, step2_option
 
@@ -164,13 +164,13 @@ def get_model_pair() -> Tuple[ModelOption, ModelOption]:
 # ------------------------------------------------------------------
 def extract_text_from_pdf(pdf_path: Path) -> Dict[int, str]:
     """
-    Extrait le texte de chaque page d'un PDF.
+    Extract text from each page of a PDF.
     
     Args:
-        pdf_path: Chemin vers le fichier PDF
+        pdf_path: Path to the PDF file
         
     Returns:
-        Dictionnaire {numéro_page: texte}
+        Dictionary {page_number: text}
     """
     pages_text = {}
     try:
@@ -181,7 +181,7 @@ def extract_text_from_pdf(pdf_path: Path) -> Dict[int, str]:
             for page_num in range(total_pages):
                 page = pdf_reader.pages[page_num]
                 text = page.extract_text()
-                pages_text[page_num + 1] = text  # Numérotation à partir de 1
+                pages_text[page_num + 1] = text  # Numbering starts from 1
                 
         logging.info(f"Extracted text from {total_pages} pages in {pdf_path.name}")
         return pages_text
@@ -191,15 +191,15 @@ def extract_text_from_pdf(pdf_path: Path) -> Dict[int, str]:
 
 def load_txt_files_as_pages(txt_dir: Path) -> Dict[int, str]:
     """
-    Charge les fichiers TXT numérotés comme pages.
-    Attend des fichiers nommés comme: page_1.txt, page_2.txt, etc.
-    Ou simplement tous les .txt dans l'ordre alphabétique.
+    Load numbered TXT files as pages.
+    Expects files named like: page_1.txt, page_2.txt, etc.
+    Or simply all .txt files in alphabetical order.
     
     Args:
-        txt_dir: Répertoire contenant les fichiers TXT
+        txt_dir: Directory containing TXT files
         
     Returns:
-        Dictionnaire {numéro_page: texte}
+        Dictionary {page_number: text}
     """
     pages_text = {}
     try:
@@ -212,12 +212,12 @@ def load_txt_files_as_pages(txt_dir: Path) -> Dict[int, str]:
             with open(txt_file, 'r', encoding='utf-8') as f:
                 text = f.read()
             
-            # Essayer d'extraire le numéro de page du nom de fichier
+            # Try to extract page number from filename
             match = re.search(r'page[_\s]?(\d+)', txt_file.stem, re.IGNORECASE)
             if match:
                 page_num = int(match.group(1))
             else:
-                page_num = idx  # Utiliser l'ordre alphabétique
+                page_num = idx  # Use alphabetical order
             
             pages_text[page_num] = text
         
@@ -232,11 +232,11 @@ def load_txt_files_as_pages(txt_dir: Path) -> Dict[int, str]:
 # ------------------------------------------------------------------
 def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
     """
-    Décorateur pour retry automatique en cas d'erreur.
+    Decorator for automatic retry on error.
     
     Args:
-        max_retries: Nombre maximum de tentatives
-        delay: Délai initial entre les tentatives (avec backoff exponentiel)
+        max_retries: Maximum number of attempts
+        delay: Initial delay between attempts (with exponential backoff)
     """
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -262,21 +262,21 @@ def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def generate_with_llm(llm_client: BaseLLMClient, prompt: str) -> Optional[str]:
     """
-    Génère une réponse avec le client LLM avec retry automatique.
+    Generate a response with the LLM client with automatic retry.
     
     Args:
-        llm_client: Client LLM (OpenAI ou Gemini)
-        prompt: Prompt à envoyer
+        llm_client: LLM client (OpenAI or Gemini)
+        prompt: Prompt to send
         
     Returns:
-        Réponse générée ou None
+        Generated response or None
     """
     if not prompt.strip():
         return None
     
     try:
         response = llm_client.generate(
-            system_prompt="",  # Le prompt est complet dans user_prompt
+            system_prompt="",  # The prompt is complete in user_prompt
             user_prompt=prompt
         )
         
@@ -287,7 +287,7 @@ def generate_with_llm(llm_client: BaseLLMClient, prompt: str) -> Optional[str]:
         return None
     except Exception as e:
         logging.error(f"Generation error: {e}")
-        raise  # Laisser le décorateur retry gérer
+        raise  # Let the retry decorator handle it
 
 # ------------------------------------------------------------------
 # Pipeline Functions
@@ -296,19 +296,19 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
                         extraction_prompt: str, output_dir: Path, magazine_id: str,
                         model_name: str) -> Path:
     """
-    Étape 1 : Extraction page par page avec le modèle performant.
-    Sauvegarde progressive pour permettre la reprise en cas d'interruption.
+    Step 1: Page-by-page extraction with high-performance model.
+    Progressive saving to allow resumption in case of interruption.
     
     Args:
-        llm_client: Client LLM configuré
-        pages_text: Dictionnaire {page_num: text}
-        extraction_prompt: Template de prompt pour l'extraction
-        output_dir: Répertoire de sortie
-        magazine_id: Identifiant du magazine
-        model_name: Nom du modèle pour logging
+        llm_client: Configured LLM client
+        pages_text: Dictionary {page_num: text}
+        extraction_prompt: Prompt template for extraction
+        output_dir: Output directory
+        magazine_id: Magazine identifier
+        model_name: Model name for logging
         
     Returns:
-        Chemin du fichier consolidé de l'étape 1
+        Path to the step 1 consolidated file
     """
     step1_dir = output_dir / "step1_page_extractions"
     step1_dir.mkdir(parents=True, exist_ok=True)
@@ -320,7 +320,7 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
     for page_num in tqdm(sorted(pages_text.keys()), desc="Extracting articles per page"):
         page_file = step1_dir / f"page_{page_num:03d}.md"
         
-        # Vérifier si la page a déjà été traitée
+        # Check if page has already been processed
         if page_file.exists():
             logging.info(f"Page {page_num} already processed, loading from cache...")
             with open(page_file, 'r', encoding='utf-8') as f:
@@ -330,56 +330,56 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
         
         page_text = pages_text[page_num]
         
-        # Préparer le prompt avec le texte (pas de numéro de page)
+        # Prepare the prompt with text (no page number)
         prompt = extraction_prompt.replace('{text}', page_text)
         
-        # Générer l'extraction avec retry automatique
+        # Generate extraction with automatic retry
         try:
             extraction = generate_with_llm(llm_client, prompt)
             
             if extraction:
-                # Ajouter le numéro de page au début de la réponse de l'IA
+                # Add page number at the beginning of the AI response
                 extraction_with_page = f"## Page : {page_num}\n\n{extraction}"
                 all_extractions.append(f"\n{extraction_with_page}\n")
                 
-                # Sauvegarder immédiatement l'extraction individuelle
+                # Save the individual extraction immediately
                 with open(page_file, 'w', encoding='utf-8') as f:
                     f.write(extraction_with_page)
                 logging.info(f"✓ Page {page_num} processed and saved")
             else:
                 logging.error(f"✗ No extraction generated for page {page_num}")
-                # Créer un placeholder pour éviter de bloquer le pipeline
-                placeholder = f"## Page : {page_num}\n\nErreur lors du traitement de cette page.\n"
+                # Create a placeholder to avoid blocking the pipeline
+                placeholder = f"## Page : {page_num}\n\nError processing this page.\n"
                 all_extractions.append(f"\n{placeholder}\n")
                 with open(page_file, 'w', encoding='utf-8') as f:
                     f.write(placeholder)
         except Exception as e:
             logging.error(f"✗ Failed to process page {page_num} after retries: {e}")
-            placeholder = f"## Page : {page_num}\n\nErreur: {str(e)}\n"
+            placeholder = f"## Page : {page_num}\n\nError: {str(e)}\n"
             all_extractions.append(f"\n{placeholder}\n")
             with open(page_file, 'w', encoding='utf-8') as f:
                 f.write(placeholder)
     
-    # Consolider toutes les extractions dans un seul fichier
+    # Consolidate all extractions into a single file
     consolidated_file = output_dir / f"{magazine_id}_step1_consolidated.md"
     with open(consolidated_file, 'w', encoding='utf-8') as f:
-        f.write(f"# Extraction page par page - Magazine {magazine_id}\n\n")
+        f.write(f"# Page-by-page extraction - Magazine {magazine_id}\n\n")
         f.write('\n---\n'.join(all_extractions))
     
     logging.info(f"Step 1 complete. Consolidated file: {consolidated_file}")
     
-    # Supprimer les fichiers individuels pour économiser l'espace
+    # Delete individual files to save space
     logging.info("Cleaning up individual page files...")
     for page_file in step1_dir.glob('page_*.md'):
         page_file.unlink()
     logging.info(f"Deleted {len(list(step1_dir.glob('page_*.md')))} individual page files")
     
-    # Optionnel : supprimer le dossier s'il est vide
+    # Optional: remove directory if empty
     try:
         step1_dir.rmdir()
         logging.info(f"Removed empty directory: {step1_dir}")
     except OSError:
-        # Le dossier n'est pas vide, on le garde
+        # Directory not empty, keep it
         pass
     
     return consolidated_file
@@ -387,29 +387,29 @@ def step1_extract_pages(llm_client: BaseLLMClient, pages_text: Dict[int, str],
 def step2_consolidate(llm_client: BaseLLMClient, step1_file: Path, 
                      output_dir: Path, magazine_id: str, model_name: str) -> Path:
     """
-    Étape 2 : Consolidation au niveau du magazine avec le modèle rapide.
+    Step 2: Magazine-level consolidation with fast model.
     
     Args:
-        llm_client: Client LLM configuré
-        step1_file: Fichier consolidé de l'étape 1
-        output_dir: Répertoire de sortie
-        magazine_id: Identifiant du magazine
-        model_name: Nom du modèle pour logging
+        llm_client: Configured LLM client
+        step1_file: Step 1 consolidated file
+        output_dir: Output directory
+        magazine_id: Magazine identifier
+        model_name: Model name for logging
         
     Returns:
-        Chemin du fichier final consolidé
+        Path to the final consolidated file
     """
     logging.info(f"Step 2: Consolidating articles at magazine level with {model_name}...")
     
-    # Lire le fichier consolidé de l'étape 1
+    # Read the step 1 consolidated file
     with open(step1_file, 'r', encoding='utf-8') as f:
         extracted_content = f.read()
     
-    # Charger le prompt de consolidation
+    # Load the consolidation prompt
     consolidation_prompt = load_consolidation_prompt()
     full_prompt = consolidation_prompt.replace('{extracted_content}', extracted_content)
     
-    # Générer la consolidation avec retry automatique
+    # Generate consolidation with automatic retry
     try:
         consolidated = generate_with_llm(llm_client, full_prompt)
         
@@ -417,7 +417,7 @@ def step2_consolidate(llm_client: BaseLLMClient, step1_file: Path,
             logging.error("Failed to generate consolidated output")
             raise RuntimeError("Step 2 consolidation failed - no output generated")
         
-        # Sauvegarder le résultat final
+        # Save the final result
         final_file = output_dir / f"{magazine_id}_final_index.md"
         with open(final_file, 'w', encoding='utf-8') as f:
             f.write(consolidated)
@@ -435,16 +435,16 @@ def step2_consolidate(llm_client: BaseLLMClient, step1_file: Path,
 def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
                     input_path: Path, output_dir: Path, magazine_id: str = None):
     """
-    Pipeline complet pour traiter un magazine.
+    Complete pipeline to process a magazine.
     
     Args:
-        model_step1: Option de modèle pour l'étape 1 (performant)
-        model_step2: Option de modèle pour l'étape 2 (rapide)
-        input_path: Chemin vers le PDF ou répertoire TXT
-        output_dir: Répertoire de sortie
-        magazine_id: Identifiant du magazine (optionnel)
+        model_step1: Model option for step 1 (high-performance)
+        model_step2: Model option for step 2 (fast)
+        input_path: Path to PDF or TXT directory
+        output_dir: Output directory
+        magazine_id: Magazine identifier (optional)
     """
-    # Déterminer l'identifiant du magazine
+    # Determine magazine identifier
     if magazine_id is None:
         magazine_id = input_path.stem
     
@@ -452,8 +452,8 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     logging.info(f"Input: {input_path}")
     logging.info(f"Output: {output_dir}")
     
-    # Configurer les clients LLM pour chaque étape
-    # Étape 1: Modèle performant avec medium reasoning pour extraction détaillée
+    # Configure LLM clients for each step
+    # Step 1: High-performance model with medium reasoning for detailed extraction
     config_step1 = LLMConfig(
         reasoning_effort="medium",
         text_verbosity="medium",
@@ -462,7 +462,7 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     )
     llm_client_step1 = build_llm_client(model_step1, config=config_step1)
     
-    # Étape 2: Modèle rapide avec low reasoning pour consolidation simple
+    # Step 2: Fast model with low reasoning for simple consolidation
     config_step2 = LLMConfig(
         reasoning_effort="low",
         text_verbosity="low",
@@ -471,10 +471,10 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     )
     llm_client_step2 = build_llm_client(model_step2, config=config_step2)
     
-    # Charger le prompt d'extraction
+    # Load the extraction prompt
     extraction_prompt = load_extraction_prompt()
     
-    # Extraire le texte page par page
+    # Extract text page by page
     if input_path.is_file() and input_path.suffix.lower() == '.pdf':
         logging.info("Input is PDF file - extracting text...")
         pages_text = extract_text_from_pdf(input_path)
@@ -487,16 +487,16 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     if not pages_text:
         raise RuntimeError("No pages extracted from input")
     
-    # Créer le répertoire de sortie
+    # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Étape 1 : Extraction page par page (modèle performant)
+    # Step 1: Page-by-page extraction (high-performance model)
     step1_file = step1_extract_pages(
         llm_client_step1, pages_text, extraction_prompt, output_dir, magazine_id,
         summary_from_option(model_step1)
     )
     
-    # Étape 2 : Consolidation (modèle rapide)
+    # Step 2: Consolidation (fast model)
     final_file = step2_consolidate(
         llm_client_step2, step1_file, output_dir, magazine_id,
         summary_from_option(model_step2)
@@ -511,67 +511,67 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
 # User Interaction
 # ------------------------------------------------------------------
 def get_input_pdfs(script_dir: Path) -> list[Path]:
-    """Obtient la liste de tous les PDFs à traiter."""
-    # Utiliser le dossier PDF par défaut
+    """Get the list of all PDFs to process."""
+    # Use the default PDF folder
     default_pdf_dir = script_dir / "PDF"
     
     if not default_pdf_dir.exists():
-        raise FileNotFoundError(f"Le dossier PDF n'existe pas: {default_pdf_dir}")
+        raise FileNotFoundError(f"PDF folder does not exist: {default_pdf_dir}")
     
-    # Récupérer tous les PDFs
+    # Get all PDFs
     pdf_files = sorted(list(default_pdf_dir.glob('*.pdf')))
     
     if not pdf_files:
-        raise FileNotFoundError(f"Aucun fichier PDF trouvé dans {default_pdf_dir}")
+        raise FileNotFoundError(f"No PDF files found in {default_pdf_dir}")
     
-    logging.info(f"{len(pdf_files)} fichier(s) PDF trouvé(s) dans {default_pdf_dir}")
+    logging.info(f"{len(pdf_files)} PDF file(s) found in {default_pdf_dir}")
     return pdf_files
 
 # ------------------------------------------------------------------
 # Main Entry Point
 # ------------------------------------------------------------------
 def main():
-    """Point d'entrée principal du script."""
+    """Main entry point of the script."""
     try:
         script_dir = Path(__file__).parent
         
-        logging.info("=== Pipeline d'Extraction d'Articles de Magazines ===")
-        logging.info("Étape 1: Extraction page par page (modèle performant)")
-        logging.info("Étape 2: Consolidation au niveau du magazine (modèle rapide)")
+        logging.info("=== Magazine Article Extraction Pipeline ===")
+        logging.info("Step 1: Page-by-page extraction (high-performance model)")
+        logging.info("Step 2: Magazine-level consolidation (fast model)")
         logging.info("")
         
-        # Sélection des modèles
+        # Model selection
         model_step1, model_step2 = get_model_pair()
         
-        # Obtenir la liste des PDFs à traiter
+        # Get the list of PDFs to process
         pdf_files = get_input_pdfs(script_dir)
         
-        # Traiter chaque PDF
+        # Process each PDF
         for i, pdf_path in enumerate(pdf_files, 1):
             logging.info(f"\n{'='*60}")
-            logging.info(f"Traitement du PDF {i}/{len(pdf_files)}: {pdf_path.name}")
+            logging.info(f"Processing PDF {i}/{len(pdf_files)}: {pdf_path.name}")
             logging.info(f"{'='*60}")
             
-            # Utiliser le nom du fichier comme Omeka ID
+            # Use the filename as Omeka ID
             omeka_id = pdf_path.stem
             logging.info(f"Omeka ID: {omeka_id}")
             
-            # Définir le répertoire de sortie
+            # Define the output directory
             output_dir = script_dir / "Magazine_Extractions" / omeka_id
             
-            # Exécuter le pipeline pour ce PDF
+            # Execute the pipeline for this PDF
             process_magazine(model_step1, model_step2, pdf_path, output_dir, omeka_id)
             
-            logging.info(f"PDF {i}/{len(pdf_files)} terminé: {pdf_path.name}")
+            logging.info(f"PDF {i}/{len(pdf_files)} completed: {pdf_path.name}")
         
         logging.info(f"\n{'='*60}")
-        logging.info(f"=== Pipeline terminé avec succès - {len(pdf_files)} magazine(s) traité(s) ===")
+        logging.info(f"=== Pipeline completed successfully - {len(pdf_files)} magazine(s) processed ===")
         logging.info(f"{'='*60}")
         
     except KeyboardInterrupt:
-        logging.info("Processus interrompu par l'utilisateur")
+        logging.info("Process interrupted by user")
     except Exception as e:
-        logging.error(f"Échec du pipeline: {e}", exc_info=True)
+        logging.error(f"Pipeline failed: {e}", exc_info=True)
         raise
 
 if __name__ == '__main__':
