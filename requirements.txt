@@ -1,12 +1,26 @@
-google-genai
-python-dotenv
-tqdm
-requests
-urllib3
-pdf2image
-Pillow
-PyPDF2
-ratelimit
-tenacity
-openai
-pydub
+# =============================================================================
+# AI Provider APIs
+# =============================================================================
+google-genai          # Google Gemini API
+openai                # OpenAI GPT API
+mistralai             # Mistral AI API (OCR and chat models)
+
+# =============================================================================
+# PDF Processing
+# =============================================================================
+PyPDF2                # PDF reading and page extraction
+
+# =============================================================================
+# Omeka S Integration
+# =============================================================================
+requests              # HTTP requests for Omeka API
+urllib3               # HTTP client library
+
+# =============================================================================
+# Utilities
+# =============================================================================
+python-dotenv         # Environment variable management
+tqdm                  # Progress bars
+ratelimit             # Rate limiting for API calls
+tenacity              # Retry logic with exponential backoff
+pydub                 # Audio processing
