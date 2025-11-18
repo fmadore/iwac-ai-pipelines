@@ -1,4 +1,4 @@
-"""French Summary Generation using OpenAI GPT-5.1 mini or Gemini 2.5 Flash.
+"""French Summary Generation using OpenAI GPT-5 mini or Gemini 2.5 Flash.
 
 Optimized for cost-effective document summarization with low reasoning effort.
 """
