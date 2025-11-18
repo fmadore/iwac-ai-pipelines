@@ -1,24 +1,64 @@
 # Magazine Article Extraction Pipeline
 
-A two-step AI-powered pipeline for extracting and consolidating articles from digitized Islamic magazines using Google Gemini models.
+A two-step AI-powered pipeline for extracting and consolidating articles from digitized Islamic magazines.
+
+## Available Implementations
+
+### 1. **Gemini Version** (Recommended) - `02_AI_generate_summaries_issue.py`
+Uses Google Gemini's native PDF understanding with individual page extraction.
+
+**Models:**
+- Gemini 2.5 Pro (Step 1: page-by-page extraction)
+- Gemini 2.5 Flash (Step 2: consolidation)
+
+**Features:**
+- ✅ Native PDF processing - Each page extracted and sent individually
+- ✅ No image conversion needed
+- ✅ Excellent document understanding
+
+### 2. **Mistral Version** - `02_Mistral_generate_summaries_issue.py`
+Uses Mistral's Document AI with OCR specialization for document understanding.
+
+**Models:**
+- Mistral OCR (Step 1: page-by-page extraction with document understanding)
+- Mistral Small (Step 2: cost-effective consolidation)
+
+**Features:**
+- ✅ Document OCR specialization - Extracts markdown text from PDFs
+- ✅ Single PDF upload with signed URL workflow
+- ✅ Cost-optimized with Small model for consolidation
 
 ## Overview
 
-This pipeline processes PDF magazines to:
-1. **Extract articles page-by-page** using Gemini 2.5 Pro with native PDF understanding
-2. **Consolidate fragmented articles** across multiple pages using Gemini 2.5 Flash
+This pipeline processes PDF magazines to extract and consolidate articles using AI vision models.
+
+**Common Pipeline:**
+1. **Extract articles page-by-page** using vision-capable AI models
+2. **Consolidate fragmented articles** across multiple pages
 3. Generate a comprehensive article index with titles, page ranges, and summaries
+
+**Choose Your Implementation:**
+- **Gemini**: Best for general use, individual page processing
+- **Mistral**: OCR specialization, single upload with signed URLs
 
 ## Features
 
+### Gemini Version
 - ✅ **Native PDF processing** - Each page extracted and sent individually to Gemini
 - ✅ **No image conversion needed** - Leverages Gemini's native PDF understanding
+- ✅ **PyPDF2 page extraction** - Individual pages sent as separate PDFs
+
+### Mistral Version
+- ✅ **Document OCR specialization** - Mistral OCR model extracts markdown text
+- ✅ **Single upload workflow** - Upload once, get signed URL, reference per page
+- ✅ **Cost-optimized** - Uses Small model for consolidation step
+
+### Common Features
 - ✅ **Robust error handling** with automatic retry (max 3 attempts)
 - ✅ **Progressive saving** - resume from cached results if interrupted
 - ✅ **Smart page numbering** - controlled by script, not AI (more reliable)
 - ✅ **Dual-prompt system** - separate prompts for extraction and consolidation
 - ✅ **Omeka S integration** - download PDFs directly from Omeka collections
-- ✅ **Gemini-only** - Optimized for Google's Gemini models (Pro + Flash)
 
 ## Workflow
 
@@ -56,8 +96,9 @@ pip install -r requirements.txt
 ```
 
 Required packages:
-- `google-genai` - Google Gemini API client
-- `PyPDF2` - PDF page extraction (not text extraction)
+- `google-genai` - Google Gemini API client (for Gemini version)
+- `mistralai` - Mistral AI API client (for Mistral version)
+- `PyPDF2` - PDF page extraction and metadata
 - `python-dotenv` - Environment variable management
 - `tqdm` - Progress bars
 - `requests` - HTTP requests (for Omeka downloader)
@@ -66,8 +107,13 @@ Required packages:
 
 Create a `.env` file in the project root:
 ```bash
-# Gemini API Key (required)
+# Choose your provider (or configure both)
+
+# For Gemini version
 GEMINI_API_KEY=your_gemini_api_key_here
+
+# For Mistral version  
+MISTRAL_API_KEY=your_mistral_api_key_here
 
 # For Omeka downloader (optional)
 OMEKA_BASE_URL=https://your-omeka-instance.org
@@ -88,21 +134,35 @@ python 01_omeka_pdf_downloader.py
 - Files are named using Omeka item ID (e.g., `12345.pdf`)
 
 2. **Run the extraction pipeline:**
+
+**Gemini version (recommended):**
 ```bash
 python 02_AI_generate_summaries_issue.py
 ```
-- Automatically detects PDFs in `PDF/` folder
-- Extracts each page individually using PyPDF2
-- Sends individual page PDFs to Gemini for analysis
-- Uses PDF filename as magazine ID
-- Fully automated (Gemini Pro → Flash pipeline)
+
+**Mistral version:**
+```bash
+python 02_Mistral_generate_summaries_issue.py
+```
+
+Both versions:
+- Automatically detect PDFs in `PDF/` folder
+- Use PDF filename as magazine ID
+- Fully automated processing
 
 ### Option B: Use Existing PDFs
 
 1. Place your PDF file(s) in the `PDF/` folder
 2. Run the pipeline:
+
+**Gemini version:**
 ```bash
 python 02_AI_generate_summaries_issue.py
+```
+
+**Mistral version:**
+```bash
+python 02_Mistral_generate_summaries_issue.py
 ```
 
 ### Automatic Processing
@@ -288,6 +348,33 @@ If AI returns no content:
 - Ensure PDF language matches prompt expectations (French/Arabic)
 - Check if PDF pages are actually extractable by PyPDF2
 - Verify individual page PDFs are being created correctly
+
+## Choosing Between Gemini and Mistral
+
+### Use Gemini when:
+- ✅ You want the most reliable general-purpose solution
+- ✅ You prefer individual page processing for better error isolation
+- ✅ You need excellent multilingual support
+- ✅ Cost-efficiency is important (Flash model for consolidation)
+
+### Use Mistral when:
+- ✅ You want specialized OCR model for document processing
+- ✅ You need cost-effective consolidation (Small model)
+- ✅ You prefer a single upload workflow
+- ✅ You want to experiment with Mistral's document capabilities
+
+### Performance Comparison
+
+| Feature | Gemini | Mistral |
+|---------|--------|---------|
+| **Upload** | Per-page extraction | Single upload with signed URL |
+| **Page Processing** | Individual PDFs | OCR by page number |
+| **Text Format** | Native PDF | Markdown from OCR |
+| **Models** | Pro + Flash | OCR + Small |
+| **Speed** | Fast (Flash consolidation) | Fast (OCR + Small) |
+| **Cost** | Lower (Flash tier) | Lower (Small tier) |
+
+Both implementations share the same prompts and output format, making it easy to switch between them or compare results.
 
 ## License
 
