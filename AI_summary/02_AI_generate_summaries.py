@@ -122,7 +122,7 @@ def main():
         logging.info(f"Output: {output_dir}")
         
         # Get model selection (restricted to mini and flash)
-        model_option = get_model_option(None, allowed_keys=["openai", "gemini-flash"])
+        model_option = get_model_option(None, allowed_keys=["gpt-5-mini", "gemini-flash"])
         logging.info(f"Using AI model: {summary_from_option(model_option)}")
         
         # Configure for cost-effective summarization

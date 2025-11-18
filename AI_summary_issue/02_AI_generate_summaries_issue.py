@@ -128,8 +128,8 @@ def get_model_pair() -> Tuple[ModelOption, ModelOption]:
             "name": "Gemini (Pro + Flash)"
         },
         "openai": {
-            "step1": "openai-5.1",
-            "step2": "openai",
+            "step1": "gpt-5.1",
+            "step2": "gpt-5-mini",
             "name": "OpenAI (GPT-5.1 full + mini)"
         }
     }

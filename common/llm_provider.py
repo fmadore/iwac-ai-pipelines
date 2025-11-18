@@ -83,19 +83,19 @@ class LLMConfig:
     thinking_budget: Optional[int] = None
 
 MODEL_REGISTRY: Dict[str, ModelOption] = {
-    "openai": ModelOption(
-        key="openai",
+    "gpt-5-mini": ModelOption(
+        key="gpt-5-mini",
         provider=PROVIDER_OPENAI,
         model=DEFAULT_OPENAI_MODEL,
         label="ChatGPT (GPT-5 mini)",
         description="OpenAI Responses API — cost-optimized gpt-5-mini"
     ),
-    "openai-5": ModelOption(
-        key="openai-5",
+    "gpt-5.1": ModelOption(
+        key="gpt-5.1",
         provider=PROVIDER_OPENAI,
         model=OPENAI_FULL_MODEL,
-        label="ChatGPT (GPT-5 full)",
-        description="OpenAI Responses API — flagship gpt-5"
+        label="ChatGPT (GPT-5.1 full)",
+        description="OpenAI Responses API — flagship gpt-5.1"
     ),
     "gemini-flash": ModelOption(
         key="gemini-flash",
@@ -116,17 +116,17 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
 
 MODEL_ALIASES = {
     "gemini": "gemini-flash",
-    "gpt-5-mini": "openai",
-    "openai:gpt-5-mini": "openai",
-    "gpt-5.1": "openai-5.1",
-    "openai:gpt-5.1": "openai-5.1",
+    "openai": "gpt-5-mini",  # Legacy generic name
+    "openai:gpt-5-mini": "gpt-5-mini",
+    "openai:gpt-5.1": "gpt-5.1",
     # Legacy aliases for decommissioned models/flags
-    "openai-mini": "openai",
-    "gpt-5.1-mini": "openai",  # Legacy incorrect naming
-    "openai:gpt-5.1-mini": "openai",
-    "gpt-5": "openai-5.1",  # gpt-5 is previous flagship, maps to 5.1
-    "openai:gpt-5": "openai-5.1",
-    "openai-5": "openai-5.1",
+    "openai-mini": "gpt-5-mini",
+    "gpt-5.1-mini": "gpt-5-mini",  # Legacy incorrect naming
+    "openai:gpt-5.1-mini": "gpt-5-mini",
+    "gpt-5": "gpt-5.1",  # gpt-5 is previous flagship, maps to 5.1
+    "openai:gpt-5": "gpt-5.1",
+    "openai-5": "gpt-5.1",  # Legacy key name
+    "openai-5.1": "gpt-5.1",  # Legacy key name
     "gemini-2.5-flash": "gemini-flash",
     "gemini-2.5-pro": "gemini-pro",
 }

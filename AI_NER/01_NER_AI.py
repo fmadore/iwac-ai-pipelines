@@ -485,8 +485,8 @@ def parse_arguments():
     parser.add_argument(
         "--model",
         type=str,
-        choices=["openai", "gemini-flash"],
-        help="Model: 'openai' (GPT-5.1 mini) or 'gemini-flash'. Defaults to interactive prompt."
+        choices=["gpt-5-mini", "gemini-flash"],
+        help="Model: 'gpt-5-mini' (GPT-5 mini) or 'gemini-flash'. Defaults to interactive prompt."
     )
     return parser.parse_args()
 
@@ -505,7 +505,7 @@ def _build_output_path(item_set_ids: List[str], output_dir: str, model_key: str)
     return os.path.join(output_dir, f"item_sets_{sets_str}_processed_{slug}.csv")
 
 async def async_main(args) -> None:
-    model_option = get_model_option(args.model, allowed_keys=["openai", "gemini-flash"])
+    model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash"])
     config = load_config(model_option=model_option, batch_size=args.batch_size, max_retries=args.max_retries,
                          timeout=args.timeout)
     logger.info(f"Using AI model: {summary_from_option(model_option)}")
@@ -540,7 +540,7 @@ def main() -> None:
     if getattr(args, 'async', False):
         asyncio.run(async_main(args))
         return
-    model_option = get_model_option(args.model, allowed_keys=["openai", "gemini-flash"])
+    model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash"])
     config = load_config(model_option=model_option, batch_size=args.batch_size, max_retries=args.max_retries,
                          timeout=args.timeout)
     logger.info(f"Using AI model: {summary_from_option(model_option)}")
