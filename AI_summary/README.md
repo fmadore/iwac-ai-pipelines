@@ -86,7 +86,7 @@ python 01_extract_omeka_content.py
 python 02_AI_generate_summaries.py
 ```
 
-You will be prompted with the available models (OpenAI gpt-5.1-mini default, OpenAI gpt-5.1, Gemini 2.5 Flash/Pro). Select the desired option and the script will:
+You will be prompted with the available models (OpenAI gpt-5.1-mini default, OpenAI gpt-5.1, Gemini 2.5 Flash / 3.0 Pro). Select the desired option and the script will:
 
 * Reads all `.txt` files from `TXT/`
 * Loads the shared prompt template `summary_prompt.md`

@@ -106,7 +106,7 @@ python 01_omeka_pdf_downloader.py
 python 02_gemini_ocr_processor.py
 ```
 
-- Select Gemini model (2.5 Flash or 2.5 Pro)
+- Select Gemini model (2.5 Flash or 3.0 Pro)
 - Processes PDFs page-by-page directly (no image conversion)
 - Uses `ocr_system_prompt.md` for extraction rules
 - Saves extracted text to `OCR_Results/` directory
