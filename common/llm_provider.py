@@ -36,7 +36,7 @@ PROVIDER_GEMINI = "gemini"
 DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 OPENAI_FULL_MODEL = "gpt-5.1"
 DEFAULT_GEMINI_FLASH = "gemini-2.5-flash"
-DEFAULT_GEMINI_PRO = "gemini-2.5-pro"
+DEFAULT_GEMINI_PRO = "gemini-3-pro-preview"
 
 @dataclass(frozen=True)
 class ModelOption:
@@ -108,8 +108,8 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         key="gemini-pro",
         provider=PROVIDER_GEMINI,
         model=DEFAULT_GEMINI_PRO,
-        label="Gemini 2.5 Pro",
-        description="Google Gemini 2.5 Pro — highest quality",
+        label="Gemini 3.0 Pro",
+        description="Google Gemini 3.0 Pro — highest quality",
         default_thinking_mode=True  # Pro requires thinking, cannot be disabled
     ),
 }
@@ -128,6 +128,7 @@ MODEL_ALIASES = {
     "openai-5": "gpt-5.1",  # Legacy key name
     "openai-5.1": "gpt-5.1",  # Legacy key name
     "gemini-2.5-flash": "gemini-flash",
+    "gemini-3-pro-preview": "gemini-pro",
     "gemini-2.5-pro": "gemini-pro",
 }
 

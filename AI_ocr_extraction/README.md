@@ -20,7 +20,7 @@ The pipeline consists of three main scripts:
 - **Robust error handling** with comprehensive logging
 - **Academic-grade text extraction** with proper formatting & French typography
 - **Automatic database updates** preserving existing metadata
-- **Configurable AI models** (Gemini 2.5 Flash or Pro)
+- **Configurable AI models** (Gemini 2.5 Flash or Gemini 3.0 Pro)
 - **Intelligent copyright handling** with automatic RECITATION error recovery
 - **Fair use compliance** with academic research-focused prompts
 - **Cost-effective processing** (~$0.54 per 450-page document with Flash, ~€5 with Pro)
@@ -60,7 +60,7 @@ The OCR script offers two Gemini model options:
 - **Cost**: ~$0.54 per 450-page document
 - **Fallback handling**: Automatic alternative prompts for RECITATION errors
 
-### Gemini 2.5 Pro  
+### Gemini 3.0 Pro  
 - **Higher accuracy** and more sophisticated reasoning
 - **Slower processing** and higher cost
 - **Less restrictive** copyright detection (lower RECITATION rate)

@@ -85,7 +85,7 @@ class GeminiHTR:
         """
         # Set thinking budget based on model capabilities
         if "2.5-pro" in self.model_name.lower():
-            # Gemini 2.5 Pro requires thinking mode (minimum budget 128)
+            # Gemini 3.0 Pro requires thinking mode (minimum budget 128)
             thinking_budget = 128  # Minimum for Pro model
             print(f"🧠 Using thinking budget {thinking_budget} for {self.model_name}")
         else:
@@ -615,7 +615,7 @@ def main():
     # Present model selection options to user
     print("\nPlease choose the Gemini model to use:")
     print("1: gemini-2.5-flash (Faster, good for most cases)")
-    print("2: gemini-2.5-pro (More powerful, more accurate but slower)")
+    print("2: gemini-3-pro-preview (More powerful, more accurate but slower)")
     
     # Get valid model choice from user
     model_choice = ""
@@ -628,7 +628,7 @@ def main():
     if model_choice == "1":
         selected_model_name = "gemini-2.5-flash"
     else:
-        selected_model_name = "gemini-2.5-pro"
+        selected_model_name = "gemini-3-pro-preview"
     
     print(f"✅ Using model: {selected_model_name}")
     

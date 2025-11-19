@@ -8,7 +8,7 @@ A two-step AI-powered pipeline for extracting and consolidating articles from di
 Uses Google Gemini's native PDF understanding with individual page extraction.
 
 **Models:**
-- Gemini 2.5 Pro (Step 1: page-by-page extraction)
+- Gemini 3.0 Pro (Step 1: page-by-page extraction)
 - Gemini 2.5 Flash (Step 2: consolidation)
 
 **Features:**
@@ -69,7 +69,7 @@ This pipeline processes PDF magazines to extract and consolidate articles using 
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Step 1: Page-by-Page Extraction (Gemini 2.5 Pro)           │
+│ Step 1: Page-by-Page Extraction (Gemini 3.0 Pro)           │
 │ → Extract individual pages from PDF using PyPDF2           │
 │ → Send each page separately to Gemini as PDF bytes         │
 │ → Identify exact titles on each page                       │
@@ -274,7 +274,7 @@ Edit `02_AI_generate_summaries_issue.py` to adjust:
 
 ```python
 # AI Models
-GEMINI_MODEL_STEP1 = "gemini-2.5-pro"      # Extraction (more accurate)
+GEMINI_MODEL_STEP1 = "gemini-3-pro-preview"      # Extraction (more accurate)
 GEMINI_MODEL_STEP2 = "gemini-2.5-flash"    # Consolidation (faster)
 
 # Retry Settings
@@ -299,7 +299,7 @@ Page numbers are injected by the script (not AI) for reliability:
 - ✅ **Easier consolidation** - page numbers are trustworthy
 
 ### Why Two Different Models?
-- **Gemini 2.5 Pro (Step 1)**: Higher accuracy for initial extraction with thinking enabled
+- **Gemini 3.0 Pro (Step 1)**: Higher accuracy for initial extraction with thinking enabled
 - **Gemini 2.5 Flash (Step 2)**: Faster consolidation with thinking disabled
 
 ### Why Gemini Only?

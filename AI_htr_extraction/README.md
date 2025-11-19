@@ -12,7 +12,7 @@ A high-precision HTR system using Google's Gemini vision model for research-grad
 - **Research-Grade Quality**: Archival-quality transcription with zero summarization
 - **Intelligent Zone Processing**: Recognizes columns, marginalia, headers, footers, and annotations
 - **Semantic Line Joining**: Merges hyphenated words and joins lines within paragraphs
-- **Multiple AI Models**: Choose between Gemini 2.5 Flash (fast) or Pro (more accurate)
+- **Multiple AI Models**: Choose between Gemini 2.5 Flash (fast) or Gemini 3.0 Pro (more accurate)
 - **Batch Processing**: Process multiple PDF files automatically
 - **Robust Error Handling**: Retry logic, copyright detection handling, safety filtering
 
@@ -75,7 +75,7 @@ python 02_gemini_htr_processor.py
    
    - **Choose Gemini model:**
      - `1` - gemini-2.5-flash (Faster, good for most cases)
-     - `2` - gemini-2.5-pro (More powerful, potentially more accurate)
+     - `2` - gemini-3-pro-preview (More powerful, potentially more accurate)
 
 4. Results will be saved in `OCR_Results/` as `.txt` files
 
