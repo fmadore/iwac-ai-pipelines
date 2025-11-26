@@ -52,6 +52,8 @@ AI_ocr_correction/log
 AI_summary_issue/log
 
 # Output directories
+AI_audio_summary/Audio/
+AI_audio_summary/Transcriptions/
 AI_htr_extraction/PDF/
 AI_htr_extraction/OCR_Results
 AI_NER/output/

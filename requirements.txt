@@ -24,3 +24,4 @@ tqdm                  # Progress bars
 ratelimit             # Rate limiting for API calls
 tenacity              # Retry logic with exponential backoff
 pydub                 # Audio processing
+audioop-lts           # Audio operations for Python 3.13+ (pydub dependency)
