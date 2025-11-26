@@ -155,7 +155,14 @@ Then proceed with the transcription following language-specific rules.
 - MARK uncertain readings with [?] when text is illegible or ambiguous.  
 - NOTE language switches with [LANGUAGE SWITCH: <new language>] if the document contains multiple languages.
 
-### 7. Self-Review Protocol
+### 7. Exclusion Protocol
+
+- EXCLUDE archival stamps, library stamps, and institutional markings.  
+- EXCLUDE modern archival reference numbers and catalog annotations.  
+- EXCLUDE barcodes, digitization markers, and other non-original additions.  
+- TRANSCRIBE only content original to the historical document.
+
+### 8. Self-Review Protocol
 
 Examine your initial output against these criteria:  
 - VERIFY correct language and script identification.
@@ -165,7 +172,7 @@ Examine your initial output against these criteria:
 - ASSESS semantic flow and coherence.  
 Correct any deviations before delivering final output.  
 
-### 8. Final Formatting Reflection
+### 9. Final Formatting Reflection
 
 Before delivering your output, pause and verify:  
 
