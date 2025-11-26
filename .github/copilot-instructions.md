@@ -4,10 +4,17 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 
 ## Core expectation: shared LLM provider
 
-- **Always route AI calls through `common/llm_provider.py`.** Import `build_llm_client`, `get_model_option`, `LLMConfig`, and `summary_from_option`; never instantiate `openai.OpenAI()` or `google.genai.Client()` directly in scripts.
+- **For text-only pipelines, route AI calls through `common/llm_provider.py`.** Import `build_llm_client`, `get_model_option`, `LLMConfig`, and `summary_from_option`; never instantiate `openai.OpenAI()` or `google.genai.Client()` directly in text-processing scripts.
 - Let `get_model_option()` drive model selection (interactive prompt or `--model` flag). Use `allowed_keys` parameter to restrict choices per pipeline.
-- Registry contains: `openai` (GPT-5.1 mini), `openai-5.1` (GPT-5.1 full), `gemini-flash`, `gemini-pro`.
+- Registry keys: `gpt-5-mini`, `gpt-5.1`, `gemini-flash`, `gemini-pro`. Common aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`.
 - When logging or naming output files, reuse `summary_from_option(model_option)` and `model_option.key` so runs clearly identify the provider.
+
+## Exception: Multimodal pipelines (audio, vision, HTR)
+
+- **Audio transcription (`AI_audio_summary/`)** and **HTR (`AI_htr_extraction/`)** use `google.genai.Client()` directly because they require multimodal features (audio bytes, PDF uploads) not supported by the shared text-only wrapper.
+- These scripts handle their own model selection (`gemini-3-pro-preview`, `gemini-2.5-flash`) and API configuration.
+- When adding new multimodal pipelines, it's acceptable to use Gemini's client directly for file uploads, vision, or audio processing.
+- Still load prompts from `.md` files and follow other conventions where applicable.
 
 ## CLI + configuration conventions
 
@@ -40,12 +47,12 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 
 ## Anti-patterns (do not do this)
 
-- Re-implementing OpenAI/Gemini client setup inside individual scripts.
-- Hard-coding model names outside `common/llm_provider.py` (besides documentation or command examples).
-- Bypassing `summary_from_option` when logging model choice.
+- Re-implementing OpenAI/Gemini client setup inside text-only scripts (use `common/llm_provider.py`).
+- Hard-coding model names outside `common/llm_provider.py` (besides documentation, command examples, or multimodal scripts).
+- Bypassing `summary_from_option` when logging model choice (for text pipelines).
 - Calling `llm_client.generate` without guarding against empty content.
 
-## Checklist for new AI scripts
+## Checklist for new text-only AI scripts
 
 - [ ] Imports `common.llm_provider` helpers (`build_llm_client`, `LLMConfig`, `get_model_option`, `summary_from_option`).
 - [ ] Provides `--model` flag with appropriate `choices=[...]` for the pipeline, or uses `allowed_keys` in `get_model_option()`.
@@ -54,4 +61,12 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 - [ ] Loads prompts from sibling `.md` files.
 - [ ] Skips empty text before requesting an LLM.
 
-Following these rules keeps every pipeline aligned; when APIs change, a single edit to `common/llm_provider.py` fixes the whole repo.
+## Checklist for new multimodal scripts (audio/vision/HTR)
+
+- [ ] Uses `google.genai.Client()` directly with `GEMINI_API_KEY` from environment.
+- [ ] Offers model selection between `gemini-2.5-flash` and `gemini-3-pro-preview`.
+- [ ] Loads prompts from sibling `.md` files in the pipeline directory.
+- [ ] Handles API errors with appropriate retry logic.
+- [ ] Logs the selected model before processing.
+
+Following these rules keeps every pipeline aligned; when APIs change, a single edit to `common/llm_provider.py` fixes text pipelines across the repo.
