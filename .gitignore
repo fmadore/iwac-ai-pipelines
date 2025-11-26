@@ -53,7 +53,7 @@ AI_summary_issue/log
 
 # Output directories
 AI_audio_summary/Audio/
-AI_audio_summary/Transcriptions/
+AI_audio_summary/temp_segments/
 AI_htr_extraction/PDF/
 AI_htr_extraction/OCR_Results
 AI_NER/output/
