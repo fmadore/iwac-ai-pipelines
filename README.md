@@ -47,6 +47,9 @@ The result: tasks that might take months can be completed in days, freeing resea
 ### 🎙️ Audio Transcription (`AI_audio_summary/`)
 Transcribes interviews, sermons, and oral histories using Google Gemini. Supports multiple audio formats and languages including **Hausa**. Features automatic splitting for long recordings and speaker detection.
 
+### 🎬 Video Processing (`AI_video_summary/`)
+Processes video files for summarization or full transcription with periodic visual descriptions. Uses Gemini's multimodal capabilities to analyze both audio and visual content. Handles files of any size through automatic upload management.
+
 ### ✍️ Handwritten Text Recognition (`AI_htr_extraction/`)
 Reads handwritten documents—colonial correspondence, manuscript annotations, personal letters—in **French, Arabic, or mixed languages**. Essential for materials that standard OCR cannot process.
 
