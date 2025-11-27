@@ -87,7 +87,7 @@ class GeminiPDFProcessor:
             model_option: ModelOption from llm_provider
             llm_config (LLMConfig): LLM configuration for generation parameters
         """
-        self.client = genai.Client(api_key=api_key)
+        self.client = build_llm_client(model_option)
         self.model_option = model_option
         self.model_name = model_option.model
         self.llm_config = llm_config
@@ -155,6 +155,31 @@ class GeminiPDFProcessor:
             config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
         
         return types.GenerateContentConfig(**config_kwargs)
+    
+    def _extract_text_from_response(self, response) -> str:
+        """
+        Safely extract text from response, ignoring thought traces.
+        
+        Args:
+            response: The generation response object
+            
+        Returns:
+            str: The extracted text content
+        """
+        if not response.candidates:
+            return ""
+            
+        candidate = response.candidates[0]
+        if not candidate.content or not candidate.content.parts:
+            return ""
+            
+        text_parts = []
+        for part in candidate.content.parts:
+            # Only include parts that have text (skips thought_signature etc.)
+            if hasattr(part, 'text') and part.text:
+                text_parts.append(part.text)
+                
+        return "".join(text_parts).replace('\xa0', ' ').strip()
     
     def _get_system_instruction(self):
         """
@@ -271,7 +296,7 @@ class GeminiPDFProcessor:
                 else:
                     raise Exception(f"No valid response. Finish reason: {finish_reason}")
             
-            text_content = response.text.replace('\xa0', ' ').strip()
+            text_content = self._extract_text_from_response(response)
             if not text_content:
                 raise Exception("Empty text response from Gemini")
             
@@ -362,7 +387,7 @@ class GeminiPDFProcessor:
                     else:
                         raise Exception(f"No valid response. Finish reason: {finish_reason}")
                 
-                text_content = response.text.replace('\xa0', ' ').strip()
+                text_content = self._extract_text_from_response(response)
                 if not text_content:
                     raise Exception("Empty text response from Gemini")
                 
@@ -427,7 +452,7 @@ class GeminiPDFProcessor:
                 if (retry_response.candidates and 
                     retry_response.candidates[0].content and 
                     retry_response.candidates[0].content.parts):
-                    text_content = retry_response.text.replace('\xa0', ' ').strip()
+                    text_content = self._extract_text_from_response(retry_response)
                     if text_content:
                         print(f"  └─ ✅ Page {page_num} complete (using {strategy_name})")
                         return text_content
