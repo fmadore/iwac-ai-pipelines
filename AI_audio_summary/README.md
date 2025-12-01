@@ -1,14 +1,15 @@
 # Audio Transcription Pipeline
 
-AI-powered audio transcription using Google Gemini for oral histories, interviews, sermons, and multilingual recordings.
+AI-powered audio and video transcription using Google Gemini for oral histories, interviews, sermons, and multilingual recordings.
 
 ## Overview
 
-This pipeline transcribes audio files using Google Gemini's multimodal capabilities. It supports multiple audio formats, offers different transcription modes (verbatim, translation, segmented summaries), and can automatically split long recordings for improved accuracy.
+This pipeline transcribes audio and video files using Google Gemini's multimodal capabilities. Video files are automatically converted to audio before transcription. It supports multiple formats, offers different transcription modes (verbatim, translation, segmented summaries), and can automatically split long recordings for improved accuracy.
 
 ## Features
 
 - **Multiple audio formats**: MP3, WAV, M4A, FLAC, OGG, WebM, MP4, AAC
+- **Video support**: MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, MPEG, MPG, 3GP (auto-converted to audio)
 - **Flexible prompts**: Full transcription, translation to English, or Hausa-specific segmentation
 - **Long audio handling**: Automatic splitting into 10-minute segments for better accuracy
 - **Speaker detection**: Labels speaker changes with timestamps
@@ -79,10 +80,11 @@ python 02_AI_transcribe_audio.py --audio-folder MyAudio --output-folder MyOutput
 
 ### Workflow
 
-1. Place audio files in the `Audio/` folder
+1. Place audio or video files in the `Audio/` folder
 2. Run the script
 3. Select your options
-4. Find transcriptions in the `Transcriptions/` folder
+4. Video files are automatically converted to audio (requires ffmpeg)
+5. Find transcriptions in the `Transcriptions/` folder
 
 ## Available Prompts
 
@@ -154,9 +156,10 @@ AI_audio_summary/
 │   ├── 1_full_audio_transcription.md
 │   ├── 2_full_audio_translation.md
 │   └── 3_hausa_prompt.md
-├── Audio/                      # Input: Place audio files here
+├── Audio/                      # Input: Place audio/video files here
 ├── Transcriptions/             # Output: Transcriptions saved here
-└── temp_segments/              # Temporary: Split audio segments (auto-cleaned)
+├── temp_segments/              # Temporary: Split audio segments (auto-cleaned)
+└── temp_converted_audio/       # Temporary: Converted video audio (auto-cleaned)
 ```
 
 ## Output Format
@@ -189,9 +192,14 @@ To create a new transcription mode:
 pip install pydub
 ```
 
-### "ffmpeg not found" (when trying to split)
+### "ffmpeg not found" (when trying to split or convert video)
 - Install ffmpeg and ensure it's on PATH, or set `FFMPEG_PATH` in `.env`
 - Windows: `winget install Gyan.FFmpeg`
+
+### Video file not converting
+- Ensure ffmpeg is installed and accessible
+- Check that the video file is not corrupted
+- Verify the video format is supported (mp4, mkv, avi, mov, wmv, flv, webm, m4v, mpeg, mpg, 3gp)
 
 ### Audio file not detected
 - Check file extension is supported (mp3, wav, m4a, flac, ogg, webm, mp4, aac)

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
 Audio Transcription Script using Google Gemini 3.0 Pro
-Transcribes audio files from the Audio folder and saves them as text files.
+Transcribes audio and video files from the Audio folder and saves them as text files.
+Video files are automatically converted to audio before transcription.
 """
 
 import argparse
 import mimetypes
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from shutil import which
 
@@ -75,6 +78,24 @@ class AudioTranscriber:
             '.mp4': 'audio/mp4',
             '.aac': 'audio/aac'
         }
+        
+        # Supported video formats (will be converted to audio)
+        self.video_formats = {
+            '.mp4': 'video/mp4',
+            '.mkv': 'video/x-matroska',
+            '.avi': 'video/x-msvideo',
+            '.mov': 'video/quicktime',
+            '.wmv': 'video/x-ms-wmv',
+            '.flv': 'video/x-flv',
+            '.webm': 'video/webm',
+            '.m4v': 'video/x-m4v',
+            '.mpeg': 'video/mpeg',
+            '.mpg': 'video/mpeg',
+            '.3gp': 'video/3gpp'
+        }
+        
+        # Track temporary converted audio files for cleanup
+        self._temp_audio_files = []
         
         # Default transcription prompt (fallback)
         self.default_prompt = """
@@ -169,15 +190,145 @@ class AudioTranscriber:
                 print("(Using paths from environment variables)")
         return self._ffmpeg_available
     
+    def is_video_file(self, file_path):
+        """
+        Check if a file is a video file based on its extension and MIME type.
+        
+        Args:
+            file_path (Path): Path to the file
+            
+        Returns:
+            bool: True if the file is a video file
+        """
+        extension = file_path.suffix.lower()
+        
+        # Check by extension first
+        if extension in self.video_formats:
+            return True
+        
+        # Use mimetypes as fallback
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        if mime_type and mime_type.startswith('video/'):
+            return True
+        
+        return False
+    
+    def convert_video_to_audio(self, video_file_path, output_format='mp3'):
+        """
+        Convert a video file to audio using ffmpeg.
+        
+        Args:
+            video_file_path (Path): Path to the video file
+            output_format (str): Output audio format (default: mp3)
+            
+        Returns:
+            Path: Path to the converted audio file, or None if conversion failed
+        """
+        if not self.ensure_ffmpeg():
+            print(f"Cannot convert video '{video_file_path.name}': ffmpeg not available")
+            return None
+        
+        try:
+            # Create temp directory for converted audio files
+            temp_dir = SCRIPT_DIR / "temp_converted_audio"
+            temp_dir.mkdir(exist_ok=True)
+            
+            # Create output filename
+            output_filename = f"{video_file_path.stem}_audio.{output_format}"
+            output_path = temp_dir / output_filename
+            
+            # Get ffmpeg path
+            ffmpeg_path = getattr(AudioSegment, 'converter', None) or which("ffmpeg") or "ffmpeg"
+            
+            print(f"Converting video to audio: {video_file_path.name} -> {output_filename}")
+            
+            # Build ffmpeg command
+            # -i: input file
+            # -vn: no video
+            # -acodec: audio codec (libmp3lame for mp3, copy for m4a)
+            # -ab: audio bitrate
+            # -y: overwrite output file
+            if output_format == 'mp3':
+                cmd = [
+                    ffmpeg_path,
+                    '-i', str(video_file_path),
+                    '-vn',
+                    '-acodec', 'libmp3lame',
+                    '-ab', '192k',
+                    '-ar', '44100',
+                    '-y',
+                    str(output_path)
+                ]
+            else:
+                # For other formats, let ffmpeg choose the codec
+                cmd = [
+                    ffmpeg_path,
+                    '-i', str(video_file_path),
+                    '-vn',
+                    '-ab', '192k',
+                    '-y',
+                    str(output_path)
+                ]
+            
+            # Run ffmpeg
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1 hour timeout for very long videos
+            )
+            
+            if result.returncode != 0:
+                print(f"Error converting video: {result.stderr}")
+                return None
+            
+            if output_path.exists():
+                print(f"Video converted successfully: {output_path.name}")
+                self._temp_audio_files.append(output_path)
+                return output_path
+            else:
+                print(f"Conversion failed: output file not created")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            print(f"Video conversion timed out for {video_file_path.name}")
+            return None
+        except Exception as e:
+            print(f"Error converting video {video_file_path.name}: {e}")
+            return None
+    
+    def cleanup_converted_audio(self):
+        """
+        Clean up temporary converted audio files.
+        """
+        for temp_file in self._temp_audio_files:
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+                    print(f"Cleaned up converted audio: {temp_file.name}")
+            except Exception as e:
+                print(f"Warning: Could not clean up {temp_file}: {e}")
+        
+        self._temp_audio_files.clear()
+        
+        # Clean up temp directory if empty
+        temp_dir = SCRIPT_DIR / "temp_converted_audio"
+        if temp_dir.exists() and temp_dir.is_dir():
+            try:
+                temp_dir.rmdir()
+            except OSError:
+                pass  # Directory not empty
+    
     def get_audio_files(self, audio_folder="Audio"):
         """
-        Get all supported audio files from the specified folder.
+        Get all supported audio and video files from the specified folder.
+        Video files will be converted to audio during transcription.
         
         Args:
             audio_folder (str): Path to the audio folder (relative to script directory)
             
         Returns:
-            list: List of audio file paths
+            list: List of tuples (file_path, is_video)
         """
         # Resolve audio folder relative to script directory
         audio_path = SCRIPT_DIR / audio_folder
@@ -185,12 +336,16 @@ class AudioTranscriber:
             print(f"Audio folder '{audio_path}' not found!")
             return []
         
-        audio_files = []
+        media_files = []
         for file_path in audio_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in self.supported_formats:
-                audio_files.append(file_path)
+            if file_path.is_file():
+                extension = file_path.suffix.lower()
+                if extension in self.supported_formats:
+                    media_files.append((file_path, False))  # Audio file
+                elif extension in self.video_formats:
+                    media_files.append((file_path, True))   # Video file
         
-        return sorted(audio_files)
+        return sorted(media_files, key=lambda x: x[0])
     
     def prepare_audio_for_api(self, audio_file_path):
         """
@@ -402,76 +557,103 @@ class AudioTranscriber:
 
     def transcribe_all_audio_files(self, audio_folder="Audio", output_folder="Transcriptions", custom_prompt=None, split_segments=False, segment_minutes=10):
         """
-        Transcribe all audio files in the specified folder.
+        Transcribe all audio and video files in the specified folder.
+        Video files are automatically converted to audio before transcription.
         
         Args:
             audio_folder (str): Path to the audio folder
             output_folder (str): Output folder for transcriptions
             custom_prompt (str, optional): Custom transcription prompt
+            split_segments (bool): Whether to split audio into segments
+            segment_minutes (int): Length of each segment in minutes
         """
-        audio_files = self.get_audio_files(audio_folder)
+        media_files = self.get_audio_files(audio_folder)
         
-        if not audio_files:
-            print("No supported audio files found in the Audio folder.")
-            print(f"Supported formats: {', '.join(self.supported_formats.keys())}")
+        if not media_files:
+            print("No supported audio or video files found in the Audio folder.")
+            print(f"Supported audio formats: {', '.join(self.supported_formats.keys())}")
+            print(f"Supported video formats: {', '.join(self.video_formats.keys())}")
             return
         
-        print(f"Found {len(audio_files)} audio file(s) to transcribe:")
-        for file_path in audio_files:
-            print(f"  - {file_path.name}")
+        audio_count = sum(1 for _, is_video in media_files if not is_video)
+        video_count = sum(1 for _, is_video in media_files if is_video)
+        
+        print(f"Found {len(media_files)} file(s) to transcribe:")
+        print(f"  - {audio_count} audio file(s)")
+        print(f"  - {video_count} video file(s) (will be converted to audio)")
+        print()
+        for file_path, is_video in media_files:
+            file_type = "[VIDEO]" if is_video else "[AUDIO]"
+            print(f"  {file_type} {file_path.name}")
         
         print("\nStarting transcription process...\n")
         
         successful_transcriptions = 0
         failed_transcriptions = 0
         
-        for audio_file in audio_files:
-            try:
-                if split_segments:
-                    # Split into segments (or return original if no splitting applied)
-                    segment_paths = self.split_audio_file(audio_file, segment_minutes=segment_minutes)
-                    combined_transcription_parts = []
-                    all_segments_successful = True
+        try:
+            for original_file, is_video in media_files:
+                try:
+                    # Convert video to audio if needed
+                    if is_video:
+                        audio_file = self.convert_video_to_audio(original_file)
+                        if not audio_file:
+                            print(f"Skipping {original_file.name}: video conversion failed")
+                            failed_transcriptions += 1
+                            continue
+                    else:
+                        audio_file = original_file
                     
-                    for idx, segment_path in enumerate(segment_paths, start=1):
-                        print(f"Processing segment {idx}/{len(segment_paths)}: {segment_path.name}")
-                        seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
-                        if seg_transcription:
-                            header = f"[Segment {idx}]" if len(segment_paths) > 1 else ""
-                            combined_transcription_parts.append(f"{header}\n{seg_transcription}\n")
+                    if split_segments:
+                        # Split into segments (or return original if no splitting applied)
+                        segment_paths = self.split_audio_file(audio_file, segment_minutes=segment_minutes)
+                        combined_transcription_parts = []
+                        all_segments_successful = True
+                        
+                        for idx, segment_path in enumerate(segment_paths, start=1):
+                            print(f"Processing segment {idx}/{len(segment_paths)}: {segment_path.name}")
+                            seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
+                            if seg_transcription:
+                                header = f"[Segment {idx}]" if len(segment_paths) > 1 else ""
+                                combined_transcription_parts.append(f"{header}\n{seg_transcription}\n")
+                            else:
+                                combined_transcription_parts.append(f"[Segment {idx}] TRANSCRIPTION FAILED")
+                                all_segments_successful = False
+
+                        # Combine
+                        transcription = "\n".join(combined_transcription_parts).strip()
+                        
+                        # Clean up temporary segments if all were successful and we actually split the file
+                        if all_segments_successful and len(segment_paths) > 1:
+                            self.cleanup_temp_segments(audio_file, segment_paths)
+                    else:
+                        transcription = self.transcribe_audio(audio_file, custom_prompt)
+
+                    if transcription:
+                        # Use original file name for output (not the converted audio name)
+                        output_file = self.save_transcription(transcription, original_file, output_folder)
+                        if output_file:
+                            successful_transcriptions += 1
                         else:
-                            combined_transcription_parts.append(f"[Segment {idx}] TRANSCRIPTION FAILED")
-                            all_segments_successful = False
-
-                    # Combine
-                    transcription = "\n".join(combined_transcription_parts).strip()
-                    
-                    # Clean up temporary segments if all were successful and we actually split the file
-                    if all_segments_successful and len(segment_paths) > 1:
-                        self.cleanup_temp_segments(audio_file, segment_paths)
-                else:
-                    transcription = self.transcribe_audio(audio_file, custom_prompt)
-
-                if transcription:
-                    output_file = self.save_transcription(transcription, audio_file, output_folder)
-                    if output_file:
-                        successful_transcriptions += 1
+                            failed_transcriptions += 1
                     else:
                         failed_transcriptions += 1
-                else:
+
+                except Exception as e:
+                    print(f"Unexpected error processing {original_file.name}: {e}")
                     failed_transcriptions += 1
 
-            except Exception as e:
-                print(f"Unexpected error processing {audio_file.name}: {e}")
-                failed_transcriptions += 1
-
-            print()  # Add spacing between files
+                print()  # Add spacing between files
+        
+        finally:
+            # Clean up converted audio files
+            self.cleanup_converted_audio()
         
         # Summary
         print("=" * 50)
         print("TRANSCRIPTION SUMMARY")
         print("=" * 50)
-        print(f"Total files processed: {len(audio_files)}")
+        print(f"Total files processed: {len(media_files)}")
         print(f"Successful transcriptions: {successful_transcriptions}")
         print(f"Failed transcriptions: {failed_transcriptions}")
         
