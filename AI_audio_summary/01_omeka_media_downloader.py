@@ -285,7 +285,10 @@ class MediaDownloader:
     def create_filename(self, item_data: Dict[str, Any], media_data: Dict[str, Any], 
                         index: int = 0, total_media: int = 1) -> str:
         """
-        Create a descriptive filename for a media file based on item and media data.
+        Create a filename for a media file using the original source filename from Omeka S.
+        
+        Uses the 'o:source' field (e.g., 'iwac-video-0000001-1.mp4') to preserve
+        the original naming and ordering. Falls back to item ID if source unavailable.
         
         Args:
             item_data (Dict[str, Any]): Omeka S item data
@@ -296,36 +299,30 @@ class MediaDownloader:
         Returns:
             str: Valid filename for the media file
         """
-        item_id = item_data.get('o:id', 'unknown')
-        
-        # Try to get a meaningful title
-        title = None
-        if 'dcterms:title' in item_data and item_data['dcterms:title']:
-            title_data = item_data['dcterms:title']
-            if isinstance(title_data, list) and title_data:
-                title = title_data[0].get('@value', '')
-            elif isinstance(title_data, dict):
-                title = title_data.get('@value', '')
-        
-        # Get original filename and extension
+        # Use the original source filename to preserve correct ordering
         original_source = media_data.get('o:source', '')
-        extension = Path(original_source).suffix.lower() if original_source else ''
         
-        # Build filename
-        if title:
-            base_name = self.sanitize_filename(title)
-        else:
-            base_name = f"item_{item_id}"
+        if original_source:
+            return self.sanitize_filename(original_source)
         
-        # Add index suffix for multiple media files
-        if total_media > 1:
-            base_name = f"{base_name}_{index + 1}"
+        # Fallback: use item ID and media ID if no source available
+        item_id = item_data.get('o:id', 'unknown')
+        media_id = media_data.get('o:id', index + 1)
         
-        # Ensure we have an extension
-        if not extension and original_source:
-            extension = Path(original_source).suffix
+        # Determine file extension
+        extension = ''
+        original_url = media_data.get('o:original_url', '')
+        if original_url:
+            extension = Path(original_url).suffix.lower()
         
-        return f"{base_name}{extension}"
+        if not extension:
+            media_type = media_data.get('o:media_type', '')
+            if media_type.startswith('video/'):
+                extension = '.mp4'
+            elif media_type.startswith('audio/'):
+                extension = '.mp3'
+        
+        return f"{item_id}-{media_id}{extension}"
         
     def process_item(self, item: Dict[str, Any]) -> Optional[Tuple[str, List[str]]]:
         """
