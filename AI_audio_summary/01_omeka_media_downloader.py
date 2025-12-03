@@ -28,7 +28,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from dotenv import load_dotenv
-from tqdm import tqdm
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+# Initialize rich console
+console = Console()
 
 # Script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -478,27 +485,38 @@ def download_media_from_item_set(item_set_id: str, media_folder: Path,
     downloader = MediaDownloader(client, media_folder)
     
     # Retrieve all items from the specified item set
-    print(f"\nFetching items from item set {item_set_id}...")
-    items = client.get_items(item_set_id)
+    with console.status(f"[cyan]Fetching items from item set {item_set_id}...[/]"):
+        items = client.get_items(item_set_id)
     
     if not items:
-        print(f"No items found for item set {item_set_id}")
+        console.print(f"[yellow]⚠[/] No items found for item set {item_set_id}")
         logging.warning(f"No items found for item set {item_set_id}")
         return []
     
-    print(f"Found {len(items)} item(s) to process\n")
+    console.print(f"[green]✓[/] Found [cyan]{len(items)}[/] item(s) to process\n")
         
     # Process items concurrently with thread pool
     results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all download tasks
-        futures = {executor.submit(downloader.process_item, item): item for item in items}
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("[cyan]Downloading media...", total=len(items))
         
-        # Collect results with progress bar
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Downloading media"):
-            result = future.result()
-            if result:
-                results.append(result)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all download tasks
+            futures = {executor.submit(downloader.process_item, item): item for item in items}
+            
+            # Collect results with progress bar
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+                progress.update(task, advance=1)
                 
     return results
 
@@ -522,12 +540,13 @@ def download_media_from_single_item(item_id: str, media_folder: Path) -> Optiona
     client = OmekaClient(config)
     downloader = MediaDownloader(client, media_folder)
     
-    print(f"\nProcessing item {item_id}...")
+    console.print(f"\n[cyan]Processing item {item_id}...[/]")
     
     # Create item dict in the format expected by process_item
     item = {'o:id': item_id}
     
-    return downloader.process_item(item)
+    with console.status("[cyan]Downloading media...[/]"):
+        return downloader.process_item(item)
 
 
 def get_download_choice() -> Tuple[str, str]:
@@ -537,31 +556,41 @@ def get_download_choice() -> Tuple[str, str]:
     Returns:
         Tuple[str, str]: Tuple of (choice_type, id) where choice_type is 'item_set' or 'item'
     """
-    print("\n" + "=" * 60)
-    print("OMEKA S AUDIO/VIDEO MEDIA DOWNLOADER")
-    print("=" * 60)
-    print("\nSupported formats:")
-    print(f"  Audio: {', '.join(sorted(AUDIO_EXTENSIONS))}")
-    print(f"  Video: {', '.join(sorted(VIDEO_EXTENSIONS))}")
-    print("\nDownload options:")
-    print("  1. Download from an item set (multiple items)")
-    print("  2. Download from a single item")
-    print()
+    # Display welcome banner
+    console.print(Panel(
+        "Download audio and video files from Omeka S digital collections",
+        title="🎵 Omeka S Audio/Video Media Downloader",
+        border_style="cyan"
+    ))
+    
+    # Display supported formats table
+    formats_table = Table(title="📁 Supported Formats", box=box.ROUNDED)
+    formats_table.add_column("Type", style="cyan")
+    formats_table.add_column("Extensions", style="green")
+    formats_table.add_row("Audio", ", ".join(sorted(AUDIO_EXTENSIONS)))
+    formats_table.add_row("Video", ", ".join(sorted(VIDEO_EXTENSIONS)))
+    console.print(formats_table)
+    
+    # Display options
+    console.print("\n[bold]Download Options:[/]")
+    console.print("  [cyan]1.[/] Download from an item set (multiple items)")
+    console.print("  [cyan]2.[/] Download from a single item")
+    console.print()
     
     while True:
-        choice = input("Select option (1 or 2): ").strip()
+        choice = console.input("[bold]Select option (1 or 2):[/] ").strip()
         if choice == '1':
-            item_set_id = input("Enter the Omeka S item set ID: ").strip()
+            item_set_id = console.input("[bold]Enter the Omeka S item set ID:[/] ").strip()
             if item_set_id:
                 return 'item_set', item_set_id
-            print("Error: Item set ID cannot be empty.")
+            console.print("[red]✗[/] Error: Item set ID cannot be empty.")
         elif choice == '2':
-            item_id = input("Enter the Omeka S item ID: ").strip()
+            item_id = console.input("[bold]Enter the Omeka S item ID:[/] ").strip()
             if item_id:
                 return 'item', item_id
-            print("Error: Item ID cannot be empty.")
+            console.print("[red]✗[/] Error: Item ID cannot be empty.")
         else:
-            print("Invalid choice. Please enter 1 or 2.")
+            console.print("[red]✗[/] Invalid choice. Please enter 1 or 2.")
 
 
 def print_summary(results: List[Tuple[str, List[str]]], media_folder: Path) -> None:
@@ -572,20 +601,15 @@ def print_summary(results: List[Tuple[str, List[str]]], media_folder: Path) -> N
         results: List of (item_id, downloaded_files) tuples
         media_folder: Path where media files were saved
     """
-    print("\n" + "=" * 60)
-    print("DOWNLOAD SUMMARY")
-    print("=" * 60)
+    console.print()
+    console.rule("[bold]Download Summary", style="cyan")
     
     if not results:
-        print("No media files were downloaded.")
+        console.print("[yellow]⚠[/] No media files were downloaded.")
         return
     
     total_files = sum(len(files) for _, files in results)
     total_items = len(results)
-    
-    print(f"Items with media: {total_items}")
-    print(f"Total files downloaded: {total_files}")
-    print(f"Output folder: {media_folder}")
     
     # Count by type
     audio_count = 0
@@ -598,16 +622,33 @@ def print_summary(results: List[Tuple[str, List[str]]], media_folder: Path) -> N
             elif ext in VIDEO_EXTENSIONS:
                 video_count += 1
     
+    # Create summary table
+    summary_table = Table(title="📊 Results", box=box.ROUNDED)
+    summary_table.add_column("Metric", style="dim")
+    summary_table.add_column("Value", style="green")
+    summary_table.add_row("Items with media", str(total_items))
+    summary_table.add_row("Total files downloaded", str(total_files))
     if audio_count:
-        print(f"  - Audio files: {audio_count}")
+        summary_table.add_row("Audio files", f"🎵 {audio_count}")
     if video_count:
-        print(f"  - Video files: {video_count}")
+        summary_table.add_row("Video files", f"🎬 {video_count}")
+    summary_table.add_row("Output folder", str(media_folder))
+    console.print(summary_table)
     
-    print("\nDownloaded files:")
+    # Create files table
+    files_table = Table(title="📁 Downloaded Files", box=box.ROUNDED)
+    files_table.add_column("Item ID", style="cyan")
+    files_table.add_column("Filename", style="green")
+    files_table.add_column("Type", style="dim")
+    
     for item_id, files in results:
-        print(f"\n  Item {item_id}:")
         for file_path in files:
-            print(f"    - {Path(file_path).name}")
+            filename = Path(file_path).name
+            ext = Path(file_path).suffix.lower()
+            media_type = "🎵 Audio" if ext in AUDIO_EXTENSIONS else "🎬 Video"
+            files_table.add_row(str(item_id), filename, media_type)
+    
+    console.print(files_table)
 
 
 def main():
@@ -626,6 +667,17 @@ def main():
         # Get user choice
         choice_type, target_id = get_download_choice()
         
+        # Display configuration
+        console.print()
+        config_table = Table(title="⚙️ Configuration", box=box.ROUNDED)
+        config_table.add_column("Setting", style="dim")
+        config_table.add_column("Value", style="green")
+        config_table.add_row("Mode", "Item Set" if choice_type == 'item_set' else "Single Item")
+        config_table.add_row("Target ID", target_id)
+        config_table.add_row("Output Folder", str(media_folder))
+        console.print(config_table)
+        console.print()
+        
         # Process based on choice
         if choice_type == 'item_set':
             results = download_media_from_item_set(target_id, media_folder, max_workers=2)
@@ -636,16 +688,17 @@ def main():
         # Print summary
         print_summary(results, media_folder)
         
+        console.print(f"\n[green]✓[/] Download complete. Total items with media: [cyan]{len(results)}[/]")
         logging.info(f"Download complete. Total items with media: {len(results)}")
         
     except ValueError as e:
-        print(f"\nConfiguration Error: {e}")
+        console.print(f"\n[red]✗ Configuration Error:[/] {e}")
         logging.error(f"Configuration error: {e}")
     except KeyboardInterrupt:
-        print("\n\nDownload cancelled by user.")
+        console.print("\n\n[yellow]⚠[/] Download cancelled by user.")
         logging.info("Download cancelled by user")
     except Exception as e:
-        print(f"\nUnexpected error: {e}")
+        console.print(f"\n[red]✗ Unexpected error:[/] {e}")
         logging.exception(f"Unexpected error: {e}")
 
 
