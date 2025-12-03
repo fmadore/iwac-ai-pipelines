@@ -29,11 +29,8 @@ CONFIGURATION:
    OMEKA_KEY_CREDENTIAL=your_key_credential
 
 2. Omeka S Item Set Configuration:
-   - Item Set 268: Spatial/location authorities
-   - Item Set 854, 2, 266: Subject authorities
-   - Item Set 1: Topic authorities
-   
-   (Modify the item_set_ids in main() function to match your setup)
+   Configure SPATIAL_AUTHORITY_ITEM_SETS, SUBJECT_AUTHORITY_ITEM_SETS, 
+   and TOPIC_AUTHORITY_ITEM_SETS constants to match your setup.
 
 3. Input CSV Format:
    Required columns:
@@ -59,21 +56,23 @@ Author: [Your name]
 Date: August 2025
 """
 
-from typing import Dict, List, Tuple # Added Tuple
+from typing import Dict, List, Tuple
 from dotenv import load_dotenv
-from tqdm import tqdm
-from collections import Counter, defaultdict # Added defaultdict
-import csv # Added csv
-import logging # Ensure logging, os, requests are imported
+from collections import Counter, defaultdict
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+import csv
 import os
 import requests
 import unicodedata
 from difflib import SequenceMatcher
 import re
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Initialize rich console
+console = Console()
 
 # Load environment variables
 load_dotenv()
@@ -119,6 +118,21 @@ SPATIAL_COLUMN = "Spatial AI"
 SUBJECT_COLUMN = "Subject AI"
 SPATIAL_OUTPUT_COLUMN = "Spatial AI Reconciled ID"
 SUBJECT_OUTPUT_COLUMN = "Subject AI Reconciled ID"
+
+# Match type constants
+MATCH_TYPE_PRIMARY = "primary_title"
+MATCH_TYPE_ALTERNATIVE = "alternative"
+
+# Ambiguous marker suffix
+AMBIGUOUS_MARKER = "(Ambiguous)"
+
+# File naming tags
+TAG_SPATIAL = "spatial"
+TAG_SUBJECT_AND_TOPIC = "subject_and_topic"
+
+# API pagination
+API_PER_PAGE = 100
+
 
 def make_api_request(endpoint: str, params: Dict = None) -> Dict:
     """
@@ -208,8 +222,12 @@ def normalize_location_name(name: str) -> str:
     compact = text_no_diacritics.replace('-', '').replace(' ', '')
     return compact
 
-def build_authority_dict(item_set_ids: List[str]) -> Tuple[Dict[str, str], Dict[str, List[str]], Dict[str, Dict[str, str]]]: # Signature changed
+def build_authority_dict(item_set_ids: List[str], authority_type: str = "authority") -> Tuple[Dict[str, str], Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     """Build dictionary of authority terms from specified item sets and identify ambiguous terms.
+    
+    Args:
+        item_set_ids: List of Omeka item set IDs to fetch authorities from
+        authority_type: Label for progress display (e.g., "SPATIAL", "SUBJECT")
     
     Returns:
         - authority_dict: mapping from normalized names to item IDs
@@ -217,72 +235,76 @@ def build_authority_dict(item_set_ids: List[str]) -> Tuple[Dict[str, str], Dict[
         - authority_metadata: mapping from item IDs to their metadata (original titles, alternatives)
     """
     
-    potential_lookups: List[tuple[str, str]] = [] # Stores (lookup_key, item_id)
-    authority_metadata: Dict[str, Dict[str, str]] = {} # Stores metadata for each item_id
+    potential_lookups: List[tuple[str, str]] = []
+    authority_metadata: Dict[str, Dict[str, str]] = {}
 
-    logger.info(f"Starting to build authority dictionary for item sets: {item_set_ids}")
-    for item_set_id in item_set_ids:
-        page = 1
-        logger.info(f"Fetching items from item set ID: {item_set_id}")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task(f"[cyan]Building {authority_type} authority dictionary...", total=None)
         
-        while True:
-            try:
-                items = make_api_request('items', {
-                    'item_set_id': item_set_id,
-                    'page': page,
-                    'per_page': 100  # Assuming 100 is the per_page limit
-                })
-            except requests.exceptions.HTTPError as e:
-                logger.error(f"HTTP error {e.response.status_code} for item_set_id {item_set_id}, page {page}: {e.response.text}")
-                break 
+        for item_set_id in item_set_ids:
+            page = 1
+            progress.update(task, description=f"[cyan]Fetching from item set {item_set_id}...")
             
-            if not items:
-                break
-            
-            for item in items:
-                item_id = str(item['o:id'])
+            while True:
+                try:
+                    items = make_api_request('items', {
+                        'item_set_id': item_set_id,
+                        'page': page,
+                        'per_page': API_PER_PAGE
+                    })
+                except requests.exceptions.HTTPError as e:
+                    console.print(f"[red]✗[/] HTTP error {e.response.status_code} for item_set_id {item_set_id}, page {page}")
+                    break 
                 
-                # Store metadata for this item
-                metadata = {
-                    'primary_title': '',
-                    'alternatives': []
-                }
+                if not items:
+                    break
                 
-                titles_to_process = []
-                if 'dcterms:title' in item:
-                    for title_obj in item['dcterms:title']:
-                        title = title_obj['@value'].strip()
-                        if title: # Ensure title is not empty
-                            titles_to_process.append(title)
-                            if not metadata['primary_title']:
-                                metadata['primary_title'] = title
-                
-                if 'dcterms:alternative' in item:
-                    for alt in item['dcterms:alternative']:
-                        alt_value = alt['@value'].strip()
-                        if alt_value: # Ensure alt_value is not empty
-                            titles_to_process.append(alt_value)
-                            metadata['alternatives'].append(alt_value)
-                
-                # Store metadata
-                authority_metadata[item_id] = metadata
+                for item in items:
+                    item_id = str(item['o:id'])
+                    
+                    metadata = {
+                        'primary_title': '',
+                        'alternatives': []
+                    }
+                    
+                    titles_to_process = []
+                    if 'dcterms:title' in item:
+                        for title_obj in item['dcterms:title']:
+                            title = title_obj['@value'].strip()
+                            if title:
+                                titles_to_process.append(title)
+                                if not metadata['primary_title']:
+                                    metadata['primary_title'] = title
+                    
+                    if 'dcterms:alternative' in item:
+                        for alt in item['dcterms:alternative']:
+                            alt_value = alt['@value'].strip()
+                            if alt_value:
+                                titles_to_process.append(alt_value)
+                                metadata['alternatives'].append(alt_value)
+                    
+                    authority_metadata[item_id] = metadata
 
-                for title_text in titles_to_process:
-                    lower_variant = title_text.lower()
-                    normalized_title = normalize_location_name(title_text)
-                    # Also add diacritic-stripped spaced form to broaden matches
-                    diacritic_stripped_spaced = _strip_diacritics(lower_variant)
-                    for variant in {lower_variant, normalized_title, diacritic_stripped_spaced}:
-                        if variant:
-                            potential_lookups.append((variant, item_id))
-            
-            if len(items) < 100:
-                break
-            page += 1
-        logger.info(f"Finished fetching items for item set ID: {item_set_id}")
+                    for title_text in titles_to_process:
+                        lower_variant = title_text.lower()
+                        normalized_title = normalize_location_name(title_text)
+                        diacritic_stripped_spaced = _strip_diacritics(lower_variant)
+                        for variant in {lower_variant, normalized_title, diacritic_stripped_spaced}:
+                            if variant:
+                                potential_lookups.append((variant, item_id))
+                
+                if len(items) < API_PER_PAGE:
+                    break
+                page += 1
 
-    logger.info(f"Processing {len(potential_lookups)} potential lookups to identify authorities and ambiguities.")
-    
+    # Process lookups to identify authorities and ambiguities
     name_to_ids_map = defaultdict(set)
     for name, item_id_val in potential_lookups:
         name_to_ids_map[name].add(item_id_val)
@@ -294,11 +316,7 @@ def build_authority_dict(item_set_ids: List[str]) -> Tuple[Dict[str, str], Dict[
         if len(ids_set) == 1:
             authority_dict_final[name] = list(ids_set)[0]
         else:
-            # This name maps to multiple item IDs, so it's ambiguous
-            ambiguous_terms_dict[name] = sorted(list(ids_set)) # Store as sorted list of IDs
-            
-    logger.info(f"Authority dictionary built with {len(authority_dict_final)} unique terms.")
-    logger.info(f"Identified {len(ambiguous_terms_dict)} ambiguous terms.")
+            ambiguous_terms_dict[name] = sorted(list(ids_set))
     
     return authority_dict_final, ambiguous_terms_dict, authority_metadata
 
@@ -409,11 +427,11 @@ def find_potential_matches(unreconciled_value: str,
         if primary:
             sim_primary = calculate_similarity(unreconciled_value, primary)
             if sim_primary >= min_similarity:
-                candidates.append((item_id, primary, sim_primary, 'primary_title'))
+                candidates.append((item_id, primary, sim_primary, MATCH_TYPE_PRIMARY))
         for alt in metadata.get('alternatives', [])[:50]:  # safety slice
             sim_alt = calculate_similarity(unreconciled_value, alt)
             if sim_alt >= min_similarity:
-                candidates.append((item_id, alt, sim_alt, 'alternative'))
+                candidates.append((item_id, alt, sim_alt, MATCH_TYPE_ALTERNATIVE))
 
     # De-duplicate by item_id keeping best variant
     best_by_item = {}
@@ -470,41 +488,58 @@ def create_potential_reconciliation_csv(unreconciled_csv_path: str,
         Hamdallaye,8,Hamdalaye,329,0.947,primary_title,Hamdalaye,
     """
     if not os.path.exists(unreconciled_csv_path):
-        logger.warning(f"Unreconciled CSV file not found: {unreconciled_csv_path}")
+        console.print(f"[yellow]⚠[/] Unreconciled CSV file not found: {unreconciled_csv_path}")
         return
     
     potential_matches = []
     
     try:
+        # Count rows first for progress bar
+        with open(unreconciled_csv_path, 'r', encoding='utf-8') as csvfile:
+            row_count = sum(1 for _ in csv.DictReader(csvfile))
+        
         with open(unreconciled_csv_path, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             
-            for row in tqdm(reader, desc="Finding potential matches"):
-                unreconciled_value = row['Unreconciled Value']
-                count = row['Count']
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("[cyan]Finding potential matches...", total=row_count)
                 
-                # Skip ambiguous values (they contain "(Ambiguous)" in the name)
-                if "(Ambiguous)" in unreconciled_value:
-                    continue
-                
-                matches = find_potential_matches(
-                    unreconciled_value,
-                    authority_metadata,
-                    min_similarity=min_similarity,
-                    max_candidates=max_candidates_per_value
-                )
-                
-                for item_id, matched_name, similarity, match_type in matches:
-                    potential_matches.append({
-                        'Unreconciled Value': unreconciled_value,
-                        'Count': count,
-                        'Potential Match': matched_name,
-                        'Item ID': item_id,
-                        'Similarity Score': f"{similarity:.3f}",
-                        'Match Type': match_type,
-                        'Primary Title': authority_metadata[item_id]['primary_title'],
-                        'All Alternatives': ' | '.join(authority_metadata[item_id]['alternatives']) if authority_metadata[item_id]['alternatives'] else ''
-                    })
+                for row in reader:
+                    unreconciled_value = row['Unreconciled Value']
+                    count = row['Count']
+                    
+                    # Skip ambiguous values
+                    if AMBIGUOUS_MARKER in unreconciled_value:
+                        progress.update(task, advance=1)
+                        continue
+                    
+                    matches = find_potential_matches(
+                        unreconciled_value,
+                        authority_metadata,
+                        min_similarity=min_similarity,
+                        max_candidates=max_candidates_per_value
+                    )
+                    
+                    for item_id, matched_name, similarity, match_type in matches:
+                        potential_matches.append({
+                            'Unreconciled Value': unreconciled_value,
+                            'Count': count,
+                            'Potential Match': matched_name,
+                            'Item ID': item_id,
+                            'Similarity Score': f"{similarity:.3f}",
+                            'Match Type': match_type,
+                            'Primary Title': authority_metadata[item_id]['primary_title'],
+                            'All Alternatives': ' | '.join(authority_metadata[item_id]['alternatives']) if authority_metadata[item_id]['alternatives'] else ''
+                        })
+                    
+                    progress.update(task, advance=1)
         
         # Write potential matches to CSV
         if potential_matches:
@@ -517,13 +552,13 @@ def create_potential_reconciliation_csv(unreconciled_csv_path: str,
                 writer.writeheader()
                 writer.writerows(potential_matches)
             
-            logger.info(f"Potential reconciliation candidates written to: {output_csv_path}")
-            logger.info(f"Found {len(potential_matches)} potential matches for unreconciled values")
+            console.print(f"[green]✓[/] Potential reconciliation candidates written to: {os.path.basename(output_csv_path)}")
+            console.print(f"  Found {len(potential_matches)} potential matches")
         else:
-            logger.info(f"No potential matches found above similarity threshold {min_similarity}")
+            console.print(f"[dim]No potential matches found above similarity threshold {min_similarity}[/]")
             
     except Exception as e:
-        logger.error(f"Error creating potential reconciliation CSV: {e}", exc_info=True)
+        console.print(f"[red]✗[/] Error creating potential reconciliation CSV: {e}")
 
 def reconcile_column_values(input_csv_path: str, 
                             output_reconciled_csv_path: str, 
@@ -532,13 +567,14 @@ def reconcile_column_values(input_csv_path: str,
                             target_column_name: str, 
                             initial_csv_base_for_unreconciled: str, 
                             output_file_tag: str,
-                            ambiguous_authority_dict: Dict[str, List[str]]) -> str: # Added ambiguous_authority_dict
+                            ambiguous_authority_dict: Dict[str, List[str]]) -> Tuple[str, int, int, int]:
     """Reconcile values in a specific CSV column, writing to a designated output CSV. 
        Unreconciled values are saved separately, named based on the initial input file and a tag.
        Ambiguous values are not reconciled and are logged.
+       
+    Returns:
+        Tuple of (output_path, matched_count, total_values, unreconciled_count)
     """
-    # Use the provided path for the main reconciled output
-    # Unreconciled file path is based on the initial CSV base and the current tag
     unreconciled_path = f"{initial_csv_base_for_unreconciled}_unreconciled_{output_file_tag}.csv"
     
     rows_processed = []
@@ -546,108 +582,115 @@ def reconcile_column_values(input_csv_path: str,
     matched_count = 0
     total_values_in_source_col = 0
     rows_with_source_col = 0
+    ambiguous_warnings = []
     
     try:
+        # Count rows first for progress bar
         with open(input_csv_path, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             if not reader.fieldnames:
-                logger.error(f"CSV file is empty or header is missing: {input_csv_path}")
-                # If input is invalid, we probably shouldn't write an output file.
-                # Return the intended output path, but it won't be valid.
-                return output_reconciled_csv_path 
-                
+                console.print(f"[red]✗[/] CSV file is empty or header is missing: {input_csv_path}")
+                return output_reconciled_csv_path, 0, 0, 0
+            row_count = sum(1 for _ in csvfile)
+        
+        with open(input_csv_path, 'r', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
             original_fieldnames = list(reader.fieldnames)
-            output_fieldnames = list(original_fieldnames) # Start with existing fieldnames
+            output_fieldnames = list(original_fieldnames)
             if target_column_name not in output_fieldnames:
                 output_fieldnames.append(target_column_name)
-            else:
-                # If target column already exists, we will overwrite its contents for matched rows.
-                logger.info(f"Target column '{target_column_name}' already exists. Its content will be updated.")
 
             if source_column_name not in original_fieldnames:
-                logger.warning(f"Source column '{source_column_name}' not found in {input_csv_path}. "
-                               f"Skipping reconciliation for this column. Target column '{target_column_name}' will be empty.")
-                # Populate rows_processed with original rows, ensuring target_column_name exists
-                for row in tqdm(reader, desc=f"Copying rows (source '{source_column_name}' missing)"):
+                console.print(f"[yellow]⚠[/] Source column '{source_column_name}' not found. Skipping reconciliation.")
+                for row in reader:
                     processed_row = row.copy()
                     if target_column_name not in processed_row:
-                         processed_row[target_column_name] = "" # Ensure column exists
+                        processed_row[target_column_name] = ""
                     rows_processed.append(processed_row)
             else:
-                for row in tqdm(reader, desc=f"Reconciling {source_column_name}"):
-                    processed_row = row.copy()
-                    reconciled_values_str = processed_row.get(target_column_name, "") # Preserve existing if not overwritten
-                    source_value = processed_row.get(source_column_name)
-
-                    if source_value: 
-                        rows_with_source_col += 1
-                        individual_values = source_value.split('|')
-                        total_values_in_source_col += len(individual_values)
-                        reconciled_ids = []
-                        # unreconciled_ids = [] # This line was present in the original but seems unused, consider removing if truly not needed.
-
-                        for value in individual_values:
-                            value_stripped = value.strip()
-                            if not value_stripped: 
-                                continue 
-                            
-                            value_lower = value_stripped.lower()
-                            value_normalized = normalize_location_name(value_stripped)
-                            value_diacritic_free = _strip_diacritics(value_lower)
-                            
-                            # Check if the term is ambiguous first
-                            if (value_lower in ambiguous_authority_dict or
-                                value_normalized in ambiguous_authority_dict or
-                                value_diacritic_free in ambiguous_authority_dict):
-                                logger.warning(f"Term '{value_stripped}' is ambiguous and will not be reconciled. Found in row: {row}")
-                                unreconciled_counts[f"{value_stripped} (Ambiguous)"] += 1
-                                # Do not add to reconciled_ids, effectively skipping it for reconciliation
-                                continue # Move to the next value in individual_values
-
-                            found_match = False
-                            if value_lower in authority_dict:
-                                reconciled_id = authority_dict[value_lower]
-                                reconciled_ids.append(reconciled_id) 
-                                matched_count += 1
-                                found_match = True
-                            elif value_normalized in authority_dict:
-                                reconciled_id = authority_dict[value_normalized]
-                                reconciled_ids.append(reconciled_id) 
-                                matched_count += 1
-                                found_match = True
-                            elif value_diacritic_free in authority_dict:
-                                reconciled_id = authority_dict[value_diacritic_free]
-                                reconciled_ids.append(reconciled_id)
-                                matched_count += 1
-                                found_match = True
-                                
-                            if not found_match:
-                                unreconciled_counts[value_stripped] += 1
-                                
-                        reconciled_values_str = '|'.join(reconciled_ids)
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    TimeElapsedColumn(),
+                    console=console
+                ) as progress:
+                    task = progress.add_task(f"[cyan]Reconciling {source_column_name}...", total=row_count)
                     
-                    processed_row[target_column_name] = reconciled_values_str
-                    rows_processed.append(processed_row)
+                    for row in reader:
+                        processed_row = row.copy()
+                        reconciled_values_str = processed_row.get(target_column_name, "")
+                        source_value = processed_row.get(source_column_name)
+
+                        if source_value: 
+                            rows_with_source_col += 1
+                            individual_values = source_value.split('|')
+                            total_values_in_source_col += len(individual_values)
+                            reconciled_ids = []
+
+                            for value in individual_values:
+                                value_stripped = value.strip()
+                                if not value_stripped: 
+                                    continue 
+                                
+                                value_lower = value_stripped.lower()
+                                value_normalized = normalize_location_name(value_stripped)
+                                value_diacritic_free = _strip_diacritics(value_lower)
+                                
+                                # Check if the term is ambiguous first
+                                if (value_lower in ambiguous_authority_dict or
+                                    value_normalized in ambiguous_authority_dict or
+                                    value_diacritic_free in ambiguous_authority_dict):
+                                    ambiguous_warnings.append(value_stripped)
+                                    unreconciled_counts[f"{value_stripped} {AMBIGUOUS_MARKER}"] += 1
+                                    continue
+
+                                found_match = False
+                                if value_lower in authority_dict:
+                                    reconciled_id = authority_dict[value_lower]
+                                    reconciled_ids.append(reconciled_id) 
+                                    matched_count += 1
+                                    found_match = True
+                                elif value_normalized in authority_dict:
+                                    reconciled_id = authority_dict[value_normalized]
+                                    reconciled_ids.append(reconciled_id) 
+                                    matched_count += 1
+                                    found_match = True
+                                elif value_diacritic_free in authority_dict:
+                                    reconciled_id = authority_dict[value_diacritic_free]
+                                    reconciled_ids.append(reconciled_id)
+                                    matched_count += 1
+                                    found_match = True
+                                    
+                                if not found_match:
+                                    unreconciled_counts[value_stripped] += 1
+                                    
+                            reconciled_values_str = '|'.join(reconciled_ids)
+                        
+                        processed_row[target_column_name] = reconciled_values_str
+                        rows_processed.append(processed_row)
+                        progress.update(task, advance=1)
     
     except FileNotFoundError:
-        logger.error(f"Input CSV file not found: {input_csv_path}")
-        return output_reconciled_csv_path # Return intended path, but it might not be created
+        console.print(f"[red]✗[/] Input CSV file not found: {input_csv_path}")
+        return output_reconciled_csv_path, 0, 0, 0
     except Exception as e:
-        logger.error(f"Error reading CSV {input_csv_path}: {e}", exc_info=True)
+        console.print(f"[red]✗[/] Error reading CSV: {e}")
         raise 
 
-    # Write reconciled data to the designated output CSV path
+    # Write reconciled data
     try:
         with open(output_reconciled_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=output_fieldnames)
             writer.writeheader()
             writer.writerows(rows_processed)
     except Exception as e:
-        logger.error(f"Error writing reconciled CSV {output_reconciled_csv_path}: {e}", exc_info=True)
+        console.print(f"[red]✗[/] Error writing reconciled CSV: {e}")
         raise
 
     # Write unreconciled values
-    if unreconciled_counts: # Only write if there are unreconciled items
+    if unreconciled_counts:
         try:
             with open(unreconciled_path, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
@@ -655,41 +698,195 @@ def reconcile_column_values(input_csv_path: str,
                 sorted_unreconciled = sorted(unreconciled_counts.items(), key=lambda item: item[1], reverse=True)
                 for value, count in sorted_unreconciled:
                     writer.writerow([value, count])
-                logger.info(f"Unreconciled values for {output_file_tag} written to: {unreconciled_path}")
         except Exception as e:
-            logger.error(f"Error writing unreconciled CSV {unreconciled_path}: {e}", exc_info=True)
-    else:
-        logger.info(f"No unreconciled values to write for {output_file_tag}.")
+            console.print(f"[red]✗[/] Error writing unreconciled CSV: {e}")
 
-    # Log statistics
-    match_rate = (matched_count / total_values_in_source_col * 100) if total_values_in_source_col > 0 else 0
-    logger.info(f"Reconciliation for column '{source_column_name}' (tag: {output_file_tag}) complete:")
-    logger.info(f"Input file processed: {input_csv_path}")
-    logger.info(f"Rows with data in '{source_column_name}': {rows_with_source_col}")
-    logger.info(f"Total values processed in '{source_column_name}': {total_values_in_source_col}")
-    logger.info(f"Values matched with authorities: {matched_count}")
-    logger.info(f"Unreconciled unique values: {len(unreconciled_counts)}")
-    logger.info(f"Match rate: {match_rate:.2f}%")
-    logger.info(f"Main reconciled data updated in: {output_reconciled_csv_path}")
+    # Log ambiguous term warnings (summarized)
+    if ambiguous_warnings:
+        unique_ambiguous = set(ambiguous_warnings)
+        console.print(f"[yellow]⚠[/] {len(unique_ambiguous)} ambiguous terms skipped (see unreconciled file)")
     
-    return output_reconciled_csv_path
+    return output_reconciled_csv_path, matched_count, total_values_in_source_col, len(unreconciled_counts)
 
 def write_ambiguous_terms_to_file(ambiguous_dict: Dict[str, List[str]], output_path: str):
     """Writes ambiguous terms and their associated item IDs to a CSV file."""
     if not ambiguous_dict:
-        logger.info(f"No ambiguous terms to write to {output_path}.")
         return
 
     try:
-        with open(output_path, 'w', newline='', encoding='utf-8') as csvfile_obj: # Renamed csvfile to csvfile_obj
+        with open(output_path, 'w', newline='', encoding='utf-8') as csvfile_obj:
             writer = csv.writer(csvfile_obj)
             writer.writerow(['Ambiguous Term', 'Item IDs'])
-            # Sort by term for consistent output
             for term, ids in sorted(ambiguous_dict.items()):
-                writer.writerow([term, '|'.join(ids)]) # Join IDs with a pipe
-        logger.info(f"Ambiguous terms written to: {output_path}")
+                writer.writerow([term, '|'.join(ids)])
+        console.print(f"[green]✓[/] Ambiguous terms written to: {os.path.basename(output_path)}")
     except Exception as e:
-        logger.error(f"Error writing ambiguous terms CSV {output_path}: {e}", exc_info=True)
+        console.print(f"[red]✗[/] Error writing ambiguous terms CSV: {e}")
+
+
+def display_authority_stats(authority_dict: Dict, ambiguous_dict: Dict, authority_type: str):
+    """Display statistics for an authority dictionary in a formatted table."""
+    stats_table = Table(box=box.ROUNDED, show_header=False)
+    stats_table.add_column("Metric", style="dim")
+    stats_table.add_column("Value", style="cyan")
+    stats_table.add_row("Authority type", authority_type)
+    stats_table.add_row("Unique terms", str(len(authority_dict)))
+    stats_table.add_row("Ambiguous terms", str(len(ambiguous_dict)))
+    console.print(stats_table)
+
+
+def display_reconciliation_stats(matched: int, total: int, unreconciled: int, column_name: str):
+    """Display reconciliation statistics in a formatted table."""
+    match_rate = (matched / total * 100) if total > 0 else 0
+    
+    stats_table = Table(title=f"📊 {column_name} Reconciliation Results", box=box.ROUNDED)
+    stats_table.add_column("Metric", style="dim")
+    stats_table.add_column("Value", justify="right")
+    stats_table.add_row("Total values processed", str(total))
+    stats_table.add_row("Matched with authorities", f"[green]{matched}[/]")
+    stats_table.add_row("Unreconciled unique values", f"[yellow]{unreconciled}[/]")
+    stats_table.add_row("Match rate", f"[cyan]{match_rate:.1f}%[/]")
+    console.print(stats_table)
+
+
+def find_input_csv(output_dir: str) -> str | None:
+    """Find the most recent unprocessed CSV file in the output directory."""
+    try:
+        csv_files = [
+            f for f in os.listdir(output_dir) 
+            if f.endswith('.csv') 
+            and '_reconciled' not in f 
+            and '_unreconciled' not in f 
+            and '_ambiguous_authorities' not in f
+            and '_potential_reconciliation' not in f
+        ]
+        if not csv_files:
+            return None
+        return max(csv_files, key=lambda x: os.path.getctime(os.path.join(output_dir, x)))
+    except OSError:
+        return None
+
+
+def run_spatial_reconciliation(
+    initial_csv_path: str,
+    initial_csv_base: str,
+    final_reconciled_csv_path: str
+) -> Tuple[str, Dict[str, Dict[str, str]]]:
+    """Run spatial entity reconciliation and return the output path and metadata."""
+    console.rule("[bold cyan]Step 1: Spatial Reconciliation")
+    
+    # Build spatial authority dictionary
+    spatial_authority_dict, spatial_ambiguous_dict, spatial_metadata = build_authority_dict(
+        SPATIAL_AUTHORITY_ITEM_SETS, "SPATIAL"
+    )
+    display_authority_stats(spatial_authority_dict, spatial_ambiguous_dict, "Spatial/Location")
+    
+    # Write ambiguous spatial terms
+    ambiguous_spatial_path = f"{initial_csv_base}_ambiguous_authorities_{TAG_SPATIAL}.csv"
+    write_ambiguous_terms_to_file(spatial_ambiguous_dict, ambiguous_spatial_path)
+    
+    # Perform spatial reconciliation
+    output_path, matched, total, unreconciled = reconcile_column_values(
+        input_csv_path=initial_csv_path,
+        output_reconciled_csv_path=final_reconciled_csv_path,
+        authority_dict=spatial_authority_dict,
+        source_column_name=SPATIAL_COLUMN,
+        target_column_name=SPATIAL_OUTPUT_COLUMN,
+        initial_csv_base_for_unreconciled=initial_csv_base,
+        output_file_tag=TAG_SPATIAL,
+        ambiguous_authority_dict=spatial_ambiguous_dict
+    )
+    
+    display_reconciliation_stats(matched, total, unreconciled, "Spatial")
+    return output_path, spatial_metadata
+
+
+def run_subject_topic_reconciliation(
+    current_input_path: str,
+    initial_csv_base: str,
+    final_reconciled_csv_path: str
+) -> Tuple[str, Dict[str, Dict[str, str]]]:
+    """Run combined subject and topic entity reconciliation."""
+    console.rule("[bold cyan]Step 2: Subject & Topic Reconciliation")
+    
+    # Build subject authority dictionary
+    console.print("\n[dim]Building subject authorities...[/]")
+    subject_authority_dict, subject_ambiguous_dict, subject_metadata = build_authority_dict(
+        SUBJECT_AUTHORITY_ITEM_SETS, "SUBJECT"
+    )
+    display_authority_stats(subject_authority_dict, subject_ambiguous_dict, "Subject")
+    
+    # Build topic authority dictionary
+    console.print("\n[dim]Building topic authorities...[/]")
+    topic_authority_dict, topic_ambiguous_dict, topic_metadata = build_authority_dict(
+        TOPIC_AUTHORITY_ITEM_SETS, "TOPIC"
+    )
+    display_authority_stats(topic_authority_dict, topic_ambiguous_dict, "Topic")
+    
+    # Combine dictionaries
+    combined_authority_dict = {**subject_authority_dict, **topic_authority_dict}
+    combined_ambiguous_dict = {**subject_ambiguous_dict, **topic_ambiguous_dict}
+    combined_metadata = {**subject_metadata, **topic_metadata}
+    
+    console.print(f"\n[dim]Combined: {len(combined_authority_dict)} terms, {len(combined_ambiguous_dict)} ambiguous[/]")
+    
+    # Write combined ambiguous terms
+    ambiguous_subject_path = f"{initial_csv_base}_ambiguous_authorities_{TAG_SUBJECT_AND_TOPIC}.csv"
+    write_ambiguous_terms_to_file(combined_ambiguous_dict, ambiguous_subject_path)
+    
+    # Perform subject/topic reconciliation
+    output_path, matched, total, unreconciled = reconcile_column_values(
+        input_csv_path=current_input_path,
+        output_reconciled_csv_path=final_reconciled_csv_path,
+        authority_dict=combined_authority_dict,
+        source_column_name=SUBJECT_COLUMN,
+        target_column_name=SUBJECT_OUTPUT_COLUMN,
+        initial_csv_base_for_unreconciled=initial_csv_base,
+        output_file_tag=TAG_SUBJECT_AND_TOPIC,
+        ambiguous_authority_dict=combined_ambiguous_dict
+    )
+    
+    display_reconciliation_stats(matched, total, unreconciled, "Subject & Topic")
+    return output_path, combined_metadata
+
+
+def generate_potential_matches(
+    initial_csv_base: str,
+    spatial_metadata: Dict[str, Dict[str, str]],
+    combined_metadata: Dict[str, Dict[str, str]]
+):
+    """Generate potential reconciliation candidates for unreconciled values."""
+    console.rule("[bold cyan]Step 3: Generate Potential Matches")
+    
+    # Spatial potential matches
+    spatial_unreconciled_path = f"{initial_csv_base}_unreconciled_{TAG_SPATIAL}.csv"
+    spatial_potential_path = f"{initial_csv_base}_potential_reconciliation_{TAG_SPATIAL}.csv"
+    if os.path.exists(spatial_unreconciled_path):
+        console.print("\n[dim]Processing spatial unreconciled values...[/]")
+        create_potential_reconciliation_csv(
+            unreconciled_csv_path=spatial_unreconciled_path,
+            authority_metadata=spatial_metadata,
+            output_csv_path=spatial_potential_path,
+            min_similarity=MULTI_WORD_MIN_SIMILARITY,
+            max_candidates_per_value=DEFAULT_MAX_CANDIDATES
+        )
+    else:
+        console.print("[dim]No spatial unreconciled values to process[/]")
+    
+    # Subject/Topic potential matches
+    subject_topic_unreconciled_path = f"{initial_csv_base}_unreconciled_{TAG_SUBJECT_AND_TOPIC}.csv"
+    subject_topic_potential_path = f"{initial_csv_base}_potential_reconciliation_{TAG_SUBJECT_AND_TOPIC}.csv"
+    if os.path.exists(subject_topic_unreconciled_path):
+        console.print("\n[dim]Processing subject/topic unreconciled values...[/]")
+        create_potential_reconciliation_csv(
+            unreconciled_csv_path=subject_topic_unreconciled_path,
+            authority_metadata=combined_metadata,
+            output_csv_path=subject_topic_potential_path,
+            min_similarity=MULTI_WORD_MIN_SIMILARITY,
+            max_candidates_per_value=DEFAULT_MAX_CANDIDATES
+        )
+    else:
+        console.print("[dim]No subject/topic unreconciled values to process[/]")
 
 def main():
     """
@@ -703,12 +900,10 @@ def main():
     5. Generates potential reconciliation candidates for unmatched values
     
     Input Requirements:
-        - CSV file with columns 'Spatial AI' and 'Subject AI' containing pipe-separated values
+        - CSV file with columns defined by SPATIAL_COLUMN and SUBJECT_COLUMN constants
         - .env file with Omeka S API credentials
-        - Configured item sets in Omeka S:
-          * Item set 268: Spatial/location authorities
-          * Item sets 854, 2, 266: Subject authorities  
-          * Item set 1: Topic authorities
+        - Configured item sets via SPATIAL_AUTHORITY_ITEM_SETS, SUBJECT_AUTHORITY_ITEM_SETS,
+          and TOPIC_AUTHORITY_ITEM_SETS constants
     
     Output Files:
         - *_reconciled.csv: Main file with reconciled entity IDs
@@ -716,152 +911,74 @@ def main():
         - *_unreconciled_subject_and_topic.csv: Unmatched subject/topic entities
         - *_ambiguous_authorities_*.csv: Terms matching multiple authorities
         - *_potential_reconciliation_*.csv: Suggested matches for manual review
-    
-    File Naming Convention:
-        All output files use the base name of the input CSV with descriptive suffixes.
-        Example: input_file.csv → input_file_reconciled.csv, input_file_unreconciled_spatial.csv
-    
-    Error Handling:
-        - HTTP errors from Omeka API are logged and continue processing
-        - File not found errors are logged 
-        - Unexpected errors include full traceback for debugging
     """
     try:
-        # STEP 1: Setup and file discovery
+        # Display welcome banner
+        console.print(Panel(
+            "[bold]NER Reconciliation Pipeline[/bold]\n"
+            "Reconciles AI-generated entities with Omeka S authority records",
+            title="🔗 Omeka S NER Reconciliation",
+            border_style="cyan"
+        ))
+        
+        # Setup and file discovery
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_dir = os.path.join(script_dir, "output")
 
-        # Find the most recent unprocessed CSV file
-        csv_files = [
-            f for f in os.listdir(output_dir) 
-            if f.endswith('.csv') and '_reconciled' not in f and '_unreconciled' not in f and '_ambiguous_authorities' not in f
-        ]
-        if not csv_files:
-            logger.error("No suitable CSV files found in output directory for initial processing.")
+        latest_csv_filename = find_input_csv(output_dir)
+        if not latest_csv_filename:
+            console.print("[red]✗[/] No suitable CSV files found in output directory.")
             return
             
-        latest_csv_filename = max(csv_files, key=lambda x: os.path.getctime(os.path.join(output_dir, x)))
         initial_csv_path = os.path.join(output_dir, latest_csv_filename)
         initial_csv_base, initial_csv_ext = os.path.splitext(initial_csv_path)
-        
-        # Define the single output path for all reconciled data
         final_reconciled_csv_path = f"{initial_csv_base}_reconciled{initial_csv_ext}"
 
-        logger.info(f"Starting reconciliation process with initial file: {initial_csv_path}")
-        logger.info(f"Final reconciled data will be written to: {final_reconciled_csv_path}")
+        # Display configuration
+        config_table = Table(title="📁 File Configuration", box=box.ROUNDED)
+        config_table.add_column("Setting", style="dim")
+        config_table.add_column("Value", style="green")
+        config_table.add_row("Input file", latest_csv_filename)
+        config_table.add_row("Output file", os.path.basename(final_reconciled_csv_path))
+        config_table.add_row("Spatial item sets", ", ".join(SPATIAL_AUTHORITY_ITEM_SETS))
+        config_table.add_row("Subject item sets", ", ".join(SUBJECT_AUTHORITY_ITEM_SETS))
+        config_table.add_row("Topic item sets", ", ".join(TOPIC_AUTHORITY_ITEM_SETS))
+        console.print(config_table)
+        console.print()
 
-        current_input_path = initial_csv_path
-
-        # STEP 2: Spatial Entity Reconciliation
-        logger.info("--- Starting Spatial Reconciliation ---")
-        logger.info(f"Building SPATIAL authority dictionary from item set(s): {SPATIAL_AUTHORITY_ITEM_SETS}...")
-        spatial_authority_dict, spatial_ambiguous_dict, spatial_metadata = build_authority_dict(SPATIAL_AUTHORITY_ITEM_SETS)
-        logger.info(f"SPATIAL authority dictionary built with {len(spatial_authority_dict)} terms. Found {len(spatial_ambiguous_dict)} ambiguous terms.")
-        
-        # Write ambiguous spatial terms for manual review
-        ambiguous_spatial_tag = "spatial"
-        ambiguous_spatial_path = f"{initial_csv_base}_ambiguous_authorities_{ambiguous_spatial_tag}.csv"
-        write_ambiguous_terms_to_file(spatial_ambiguous_dict, ambiguous_spatial_path)
-        
-        # Perform spatial reconciliation
-        logger.info(f"Processing SPATIAL reconciliation for column '{SPATIAL_COLUMN}'. Input: {current_input_path}, Output: {final_reconciled_csv_path}")
-        reconciled_after_spatial_path = reconcile_column_values(
-            input_csv_path=current_input_path,
-            output_reconciled_csv_path=final_reconciled_csv_path, 
-            authority_dict=spatial_authority_dict,
-            source_column_name=SPATIAL_COLUMN,
-            target_column_name=SPATIAL_OUTPUT_COLUMN,
-            initial_csv_base_for_unreconciled=initial_csv_base,
-            output_file_tag="spatial",
-            ambiguous_authority_dict=spatial_ambiguous_dict
+        # Step 1: Spatial Reconciliation
+        reconciled_after_spatial_path, spatial_metadata = run_spatial_reconciliation(
+            initial_csv_path, initial_csv_base, final_reconciled_csv_path
         )
-        logger.info(f"Spatial reconciliation step complete. Main data at: {reconciled_after_spatial_path}")
-        current_input_path = reconciled_after_spatial_path  # Chain reconciliation steps
+        console.print()
 
-        # STEP 3: Subject and Topic Entity Reconciliation
-        logger.info("--- Starting Combined Subject and Topic Reconciliation ---")
-        
-        # Build subject authority dictionary
-        logger.info(f"Building SUBJECT authority dictionary from item set(s): {SUBJECT_AUTHORITY_ITEM_SETS}...")
-        subject_authority_dict, subject_ambiguous_dict, subject_metadata = build_authority_dict(SUBJECT_AUTHORITY_ITEM_SETS)
-        logger.info(f"SUBJECT authority dictionary built with {len(subject_authority_dict)} terms. Found {len(subject_ambiguous_dict)} ambiguous terms.")
-
-        # Build topic authority dictionary
-        logger.info(f"Building TOPIC authority dictionary from item set(s): {TOPIC_AUTHORITY_ITEM_SETS}...")
-        topic_authority_dict, topic_ambiguous_dict, topic_metadata = build_authority_dict(TOPIC_AUTHORITY_ITEM_SETS)
-        logger.info(f"TOPIC authority dictionary built with {len(topic_authority_dict)} terms. Found {len(topic_ambiguous_dict)} ambiguous terms.")
-
-        # Combine authority dictionaries for unified reconciliation
-        combined_authority_dict = {**subject_authority_dict, **topic_authority_dict}
-        combined_ambiguous_dict = {**subject_ambiguous_dict, **topic_ambiguous_dict}
-        logger.info(f"Combined authority dictionary has {len(combined_authority_dict)} unique terms.")
-        logger.info(f"Combined ambiguous terms: {len(combined_ambiguous_dict)} terms.")
-
-        # Write combined ambiguous terms for manual review
-        ambiguous_subject_tag = "subject_and_topic"
-        ambiguous_subject_path = f"{initial_csv_base}_ambiguous_authorities_{ambiguous_subject_tag}.csv"
-        write_ambiguous_terms_to_file(combined_ambiguous_dict, ambiguous_subject_path)
-
-        # Perform subject/topic reconciliation
-        logger.info(f"Processing combined SUBJECT+TOPIC reconciliation for column '{SUBJECT_COLUMN}'. Input: {current_input_path}, Output: {final_reconciled_csv_path}")
-        final_reconciled_path = reconcile_column_values(
-            input_csv_path=current_input_path, 
-            output_reconciled_csv_path=final_reconciled_csv_path, 
-            authority_dict=combined_authority_dict,
-            source_column_name=SUBJECT_COLUMN,
-            target_column_name=SUBJECT_OUTPUT_COLUMN,
-            initial_csv_base_for_unreconciled=initial_csv_base,
-            output_file_tag="subject_and_topic",
-            ambiguous_authority_dict=combined_ambiguous_dict
+        # Step 2: Subject and Topic Reconciliation
+        final_reconciled_path, combined_metadata = run_subject_topic_reconciliation(
+            reconciled_after_spatial_path, initial_csv_base, final_reconciled_csv_path
         )
-        logger.info(f"Combined subject and topic reconciliation complete. Final reconciled data at: {final_reconciled_path}")
+        console.print()
+
+        # Step 3: Generate Potential Reconciliation Candidates
+        generate_potential_matches(initial_csv_base, spatial_metadata, combined_metadata)
         
-        # STEP 4: Generate Potential Reconciliation Candidates for Manual Review
-        logger.info("--- Generating Potential Reconciliation Candidates ---")
-        
-        # Create potential matches for spatial unreconciled values
-        spatial_unreconciled_path = f"{initial_csv_base}_unreconciled_spatial.csv"
-        spatial_potential_path = f"{initial_csv_base}_potential_reconciliation_spatial.csv"
-        if os.path.exists(spatial_unreconciled_path):
-            logger.info(f"Creating potential reconciliation candidates for spatial values...")
-            create_potential_reconciliation_csv(
-                unreconciled_csv_path=spatial_unreconciled_path,
-                authority_metadata=spatial_metadata,
-                output_csv_path=spatial_potential_path,
-                min_similarity=MULTI_WORD_MIN_SIMILARITY,
-                max_candidates_per_value=DEFAULT_MAX_CANDIDATES
-            )
-        else:
-            logger.info(f"No spatial unreconciled file found at: {spatial_unreconciled_path}")
-        
-        # Create potential matches for subject and topic unreconciled values
-        subject_topic_unreconciled_path = f"{initial_csv_base}_unreconciled_subject_and_topic.csv"
-        subject_topic_potential_path = f"{initial_csv_base}_potential_reconciliation_subject_and_topic.csv"
-        if os.path.exists(subject_topic_unreconciled_path):
-            logger.info(f"Creating potential reconciliation candidates for subject and topic values...")
-            # Combine metadata for both subject and topic authorities
-            combined_metadata = {**subject_metadata, **topic_metadata}
-            create_potential_reconciliation_csv(
-                unreconciled_csv_path=subject_topic_unreconciled_path,
-                authority_metadata=combined_metadata,
-                output_csv_path=subject_topic_potential_path,
-                min_similarity=MULTI_WORD_MIN_SIMILARITY,
-                max_candidates_per_value=DEFAULT_MAX_CANDIDATES
-            )
-        else:
-            logger.info(f"No subject/topic unreconciled file found at: {subject_topic_unreconciled_path}")
-        
-        logger.info(f"--- Potential Reconciliation Generation Complete ---")
-        logger.info(f"--- Reconciliation Process Finished ---")
+        # Final summary
+        console.print()
+        console.print(Panel(
+            f"[green]✓[/] Reconciliation complete!\n\n"
+            f"Main output: [cyan]{os.path.basename(final_reconciled_path)}[/]",
+            title="✨ Process Complete",
+            border_style="green"
+        ))
         
     except requests.exceptions.HTTPError as http_err:
-        logger.error(f"An HTTP error occurred during API request: {http_err} - Response: {http_err.response.text if http_err.response else 'No response'}")
-        # Depending on the severity, you might want to raise or handle differently
+        console.print(f"[red]✗[/] HTTP error during API request: {http_err}")
+        if http_err.response:
+            console.print(f"[dim]Response: {http_err.response.text[:200]}...[/]")
     except FileNotFoundError as fnf_err:
-        logger.error(f"A required file was not found: {fnf_err}")
+        console.print(f"[red]✗[/] File not found: {fnf_err}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred in main: {e}", exc_info=True) # Add exc_info for traceback
-        # raise # Optionally re-raise if you want the script to terminate with an error status
+        console.print(f"[red]✗[/] Unexpected error: {e}")
+        console.print_exception()
 
 if __name__ == "__main__":
     main()
