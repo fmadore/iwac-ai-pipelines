@@ -116,8 +116,12 @@ class GeminiPDFProcessor:
         # Check if this is a Gemini 3 model (uses thinking_level instead of thinking_budget)
         is_gemini_3 = "gemini-3" in self.model_name.lower()
         
-        # Use latest SDK string-based safety settings (per Context7 docs)
+        # Load system instruction from file (modern API pattern)
+        system_instruction = self._get_system_instruction()
+        
+        # Use latest SDK with system_instruction in config (per Context7 docs)
         config_kwargs = {
+            "system_instruction": system_instruction,  # Use proper system_instruction parameter
             "temperature": self.llm_config.temperature or 0.1,
             "top_p": 0.95,
             "top_k": 40,
@@ -277,17 +281,16 @@ class GeminiPDFProcessor:
             
             print(f"  └─ 🤖 Generating OCR text for page {page_num}...")
             
-            # Following Google's best practice: put prompt AFTER the document
-            combined_prompt = (
-                self._get_system_instruction() + "\n\n" +
+            # System instruction is in the config, just provide user request with document
+            user_prompt = (
                 "Please perform complete OCR transcription of this single page. "
                 "Extract all visible text maintaining original formatting and structure."
             )
             
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=[pdf_part, combined_prompt],  # Document first, then prompt
-                config=self.generation_config
+                contents=[pdf_part, user_prompt],  # Document first, then user request
+                config=self.generation_config  # Contains system_instruction
             )
             
             # Validate response
@@ -380,17 +383,16 @@ class GeminiPDFProcessor:
                 
                 print(f"  └─ 🤖 Generating OCR text for page {page_num}...")
                 
-                # Following Google's best practice: put prompt AFTER the document
-                combined_prompt = (
-                    self._get_system_instruction() + "\n\n" +
+                # System instruction is in the config, just provide user request with document
+                user_prompt = (
                     "Please perform complete OCR transcription of this single page. "
                     "Extract all visible text maintaining original formatting and structure."
                 )
                 
                 response = self.client.models.generate_content(
                     model=self.model_name,
-                    contents=[pdf_file, combined_prompt],  # Document first, then prompt
-                    config=self.generation_config
+                    contents=[pdf_file, user_prompt],  # Document first, then user request
+                    config=self.generation_config  # Contains system_instruction
                 )
                 
                 # Validate response
