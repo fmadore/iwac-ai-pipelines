@@ -4,11 +4,12 @@ AI-powered audio and video transcription using Google Gemini for oral histories,
 
 ## Overview
 
-This pipeline transcribes audio and video files using Google Gemini's multimodal capabilities. Video files are automatically converted to audio before transcription. It supports multiple formats, offers different transcription modes (verbatim, translation, segmented summaries), and can automatically split long recordings for improved accuracy.
+This pipeline downloads and transcribes audio and video files using Google Gemini's multimodal capabilities. It can fetch media directly from Omeka S collections or process local files. Video files are automatically converted to audio before transcription. It supports multiple formats, offers different transcription modes (verbatim, translation, segmented summaries), and can automatically split long recordings for improved accuracy.
 
 ## Features
 
-- **Multiple audio formats**: MP3, WAV, M4A, FLAC, OGG, WebM, MP4, AAC
+- **Omeka S integration**: Download audio/video from item sets or individual items
+- **Multiple audio formats**: MP3, WAV, M4A, FLAC, OGG, WebM, MP4, AAC, WMA
 - **Video support**: MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, MPEG, MPG, 3GP (auto-converted to audio)
 - **Flexible prompts**: Full transcription, translation to English, or Hausa-specific segmentation
 - **Long audio handling**: Automatic splitting into 10-minute segments for better accuracy
@@ -35,21 +36,54 @@ This pipeline transcribes audio and video files using Google Gemini's multimodal
 
 1. Install dependencies:
 ```bash
-pip install google-genai python-dotenv pydub
+pip install google-genai python-dotenv pydub requests tqdm
 ```
 
-2. Configure your API key in the project root `.env` file:
+2. Configure your API keys in the project root `.env` file:
 ```env
+# Required for transcription
 GEMINI_API_KEY=your_gemini_api_key_here
+
+# Required for Omeka S media download
+OMEKA_BASE_URL=https://your-omeka-instance.org
+OMEKA_KEY_IDENTITY=your_key_identity
+OMEKA_KEY_CREDENTIAL=your_key_credential
 
 # Optional: Explicit ffmpeg paths (if not on PATH)
 FFMPEG_PATH=C:\path\to\ffmpeg.exe
 FFPROBE_PATH=C:\path\to\ffprobe.exe
 ```
 
-## Usage
+## Scripts
 
-### Interactive Mode (Recommended)
+### 1. Media Downloader (`01_omeka_media_downloader.py`)
+
+Downloads audio and video files from Omeka S collections.
+
+```bash
+python 01_omeka_media_downloader.py
+```
+
+The script will prompt you to:
+1. Choose between downloading from an item set or a single item
+2. Enter the item set ID or item ID
+
+**Features:**
+- Downloads from entire item sets or individual items
+- Handles multiple media files per item
+- Skips already downloaded files
+- Uses item titles for descriptive filenames
+- Concurrent downloads with progress bar
+
+**Supported formats:**
+- Audio: `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.aac`, `.wma`
+- Video: `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`, `.m4v`, `.mpeg`, `.mpg`, `.3gp`
+
+### 2. Audio Transcription (`02_AI_transcribe_audio.py`)
+
+Transcribes audio and video files using Google Gemini.
+
+#### Interactive Mode (Recommended)
 
 ```bash
 cd AI_audio_summary
@@ -61,7 +95,7 @@ The script will prompt you to:
 2. Choose a transcription prompt
 3. Decide whether to split long audio files
 
-### Command Line Options
+#### Command Line Options
 
 ```bash
 # Specify model directly
@@ -78,10 +112,25 @@ python 02_AI_transcribe_audio.py --split --segment-minutes 15
 python 02_AI_transcribe_audio.py --audio-folder MyAudio --output-folder MyOutput
 ```
 
-### Workflow
+## Workflow
+
+### Complete Pipeline (Omeka S to Transcription)
+
+1. Run the media downloader to fetch files from Omeka S:
+   ```bash
+   python 01_omeka_media_downloader.py
+   ```
+2. Files are saved to `Audio/` folder
+3. Run the transcription script:
+   ```bash
+   python 02_AI_transcribe_audio.py
+   ```
+4. Find transcriptions in the `Transcriptions/` folder
+
+### Local Files Only
 
 1. Place audio or video files in the `Audio/` folder
-2. Run the script
+2. Run the transcription script
 3. Select your options
 4. Video files are automatically converted to audio (requires ffmpeg)
 5. Find transcriptions in the `Transcriptions/` folder
@@ -150,16 +199,18 @@ Temporary segment files are automatically cleaned up after successful transcript
 
 ```
 AI_audio_summary/
-├── 02_AI_transcribe_audio.py   # Main transcription script
-├── README.md                   # This file
-├── prompts/                    # Transcription prompt templates
+├── 01_omeka_media_downloader.py  # Download media from Omeka S
+├── 02_AI_transcribe_audio.py     # Main transcription script
+├── README.md                     # This file
+├── prompts/                      # Transcription prompt templates
 │   ├── 1_full_audio_transcription.md
 │   ├── 2_full_audio_translation.md
 │   └── 3_hausa_prompt.md
-├── Audio/                      # Input: Place audio/video files here
-├── Transcriptions/             # Output: Transcriptions saved here
-├── temp_segments/              # Temporary: Split audio segments (auto-cleaned)
-└── temp_converted_audio/       # Temporary: Converted video audio (auto-cleaned)
+├── Audio/                        # Input: Place audio/video files here
+├── Transcriptions/               # Output: Transcriptions saved here
+├── log/                          # Download logs
+├── temp_segments/                # Temporary: Split audio segments (auto-cleaned)
+└── temp_converted_audio/         # Temporary: Converted video audio (auto-cleaned)
 ```
 
 ## Output Format
@@ -210,6 +261,12 @@ pip install pydub
 - Enable audio splitting for long recordings
 - Check audio quality (reduce background noise if possible)
 
+### Omeka S download issues
+- Verify `OMEKA_BASE_URL`, `OMEKA_KEY_IDENTITY`, and `OMEKA_KEY_CREDENTIAL` in `.env`
+- Check that the item set or item ID exists
+- Ensure the item has audio/video media attachments
+- Check `log/media_download.log` for detailed error messages
+
 ## API Costs
 
 Gemini API pricing varies. As of late 2024:
@@ -222,7 +279,8 @@ Check [Google AI Studio](https://aistudio.google.com/) for current pricing.
 
 ## Technical Notes
 
-- This script uses `google.genai.Client()` directly (not the shared `llm_provider.py`) because it requires multimodal audio processing
+- The transcription script uses `google.genai.Client()` directly (not the shared `llm_provider.py`) because it requires multimodal audio processing
 - Audio is sent as bytes with MIME type detection
 - Temperature is set to 0.1 for consistent transcription output
 - Max output tokens: 65,536 (sufficient for ~30 minutes of dense audio)
+- The media downloader uses concurrent downloads (2 workers by default) to speed up item set processing
