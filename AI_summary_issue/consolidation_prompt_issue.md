@@ -24,6 +24,7 @@ Analysez le document consolidé fourni et :
 
 3. **Fusionnez les occurrences** en un seul enregistrement par article :
    - Conservez le titre exact complet de l'article (incluant les termes arabes s'ils sont présents)
+   - **Conservez les auteurs** mentionnés dans les extractions (fusionnez sans doublons si plusieurs pages mentionnent le même auteur)
    - **Corrigez les erreurs OCR** dans les titres : supprimez les espaces multiples inutiles (ex: "nouvell e" → "nouvelle"), corrigez les caractères mal reconnus (ex: "arm0es" → "armées", "est-t -H" → "est-il", "PRE SSE" → "PRESSE")
    - Agrégez toutes les pages (ex: 1–3 ou 1, 3, 5)
    - Produisez un résumé global (4-6 phrases) en fusionnant les résumés partiels
@@ -35,6 +36,7 @@ Analysez le document consolidé fourni et :
 
 Pour chaque article unique identifié, fournissez :
 - **titre** : Le titre exact complet de l'article (corrigé des erreurs OCR)
+- **auteurs** : Liste des auteurs (ex: ["Jean Dupont", "La Rédaction"]) ou null si non mentionné
 - **pages** : Numéros de pages où l'article apparaît (ex: "1-3" ou "1, 3, 5")
 - **resume** : Résumé global de 4-6 phrases fusionnant les résumés partiels
 

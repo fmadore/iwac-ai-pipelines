@@ -83,6 +83,7 @@ from common.llm_provider import (  # noqa: E402
 class PageArticle(BaseModel):
     """An article found on a single page."""
     titre: str = Field(description="Titre exact de l'article tel qu'imprimé sur la page")
+    auteurs: Optional[List[str]] = Field(default=None, description="Liste des auteurs de l'article (ex: ['Jean Dupont', 'La Rédaction']). Null si non mentionné.")
     continuation: Optional[str] = Field(default=None, description="Indication de continuation: 'suite page X' ou null si aucune")
     resume: str = Field(description="Résumé bref de 2-3 phrases du contenu visible sur cette page")
 
@@ -97,6 +98,7 @@ class PageExtraction(BaseModel):
 class ConsolidatedArticle(BaseModel):
     """A consolidated article after merging fragmented pages."""
     titre: str = Field(description="Titre exact complet de l'article")
+    auteurs: Optional[List[str]] = Field(default=None, description="Liste des auteurs de l'article. Null si non mentionné.")
     pages: str = Field(description="Numéros de pages, ex: '1-3' ou '1, 3, 5'")
     resume: str = Field(description="Résumé global consolidé de 4-6 phrases")
 
@@ -378,8 +380,9 @@ def format_extraction_to_markdown(extraction: PageExtraction) -> str:
     
     for i, article in enumerate(extraction.articles, 1):
         lines.append(f"\n### Article {i}")
-        lines.append(f"- Titre exact : \"{article.titre}\"")
-        lines.append(f"- Continuation : {article.continuation or 'aucune'}")
+        lines.append(f"- Titre : {article.titre}")
+        if article.auteurs:
+            lines.append(f"- Auteur(s) : {', '.join(article.auteurs)}")
         lines.append(f"- Résumé :\n  {article.resume}")
     
     if extraction.other_content:
@@ -393,6 +396,8 @@ def format_index_to_markdown(index: MagazineIndex) -> str:
     
     for article in index.articles:
         lines.append(f"\n## {article.titre}")
+        if article.auteurs:
+            lines.append(f"- Auteur(s) : {', '.join(article.auteurs)}")
         lines.append(f"- Pages : {article.pages}")
         lines.append(f"- Résumé :")
         lines.append(f"  {article.resume}")
