@@ -23,38 +23,20 @@ Pour chaque article trouvé, vous devez :
    - Utilisez ces termes pour enrichir le contexte (ex: "L'article traite du Hajj (الحج) et de ses rites...")
 3. **Détecter les indices de continuation** : recherchez des mentions comme "suite page X", "à suivre", "(voir p. X)", "fin en page X", etc.
 
-## Format de sortie requis
+## Informations à extraire pour chaque article
 
-Répondez UNIQUEMENT au format suivant (Markdown strict), sans texte additionnel avant ou après :
+Pour chaque article identifié sur la page, fournissez :
+- **titre** : Le titre exact tel qu'imprimé
+- **continuation** : Indication de suite ("suite page X", "à suivre", ou null si aucune)
+- **resume** : Résumé de 2-3 phrases décrivant le contenu visible sur cette page
 
-```
-### Article 1
-- Titre exact : "<titre tel qu'imprimé>"
-- Continuation : <si mention de suite/fin sur autre page, indiquez "suite page X" ou "aucune">
-- Résumé :
-  <2-3 phrases décrivant le contenu visible sur cette page>
-
-### Article 2
-- Titre exact : "<deuxième titre s'il y a lieu>"
-- Continuation : <aucune ou "suite page X">
-- Résumé :
-  <2-3 phrases>
-
-### Autres contenus
-<Si présence d'éléments non considérés comme articles : annonces, publicités, brèves, table des matières, etc.>
-```
+Si des éléments non-articles sont présents (annonces, publicités, brèves, table des matières), mentionnez-les dans le champ "other_content".
 
 ## Règles importantes
 
-- **Page de couverture** : Si la page est une couverture (première page du magazine), indiquez simplement :
-  ```
-  Page de couverture du magazine.
-  ```
+- **Page de couverture** : Si la page est une couverture (première page du magazine), retournez une liste vide d'articles avec "Page de couverture du magazine." dans other_content.
 
-- **Si aucun article n'est présent** sur une page intérieure (page de publicité, page blanche, etc.), indiquez simplement :
-  ```
-  Aucun article identifié sur cette page.
-  ```
+- **Si aucun article n'est présent** sur une page intérieure (page de publicité, page blanche, etc.), retournez une liste vide d'articles avec une description appropriée dans other_content.
 
 - **Distinguez les articles des autres contenus** : éditorial, tribune, interview, reportage, fatwa sont des articles ; les annonces, publicités, brèves courtes (< 100 mots) ne le sont généralement pas.
 

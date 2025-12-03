@@ -12,22 +12,24 @@ Uses Google Gemini's native PDF understanding with individual page extraction.
 - Gemini 2.5 Flash (Step 2: consolidation with thinking_budget)
 
 **Features:**
+- ✅ Structured outputs - Pydantic models for guaranteed JSON schema compliance
 - ✅ Native PDF processing - Each page extracted and sent individually
 - ✅ Modern API patterns - Uses `system_instruction` in GenerateContentConfig
 - ✅ Rich console output - Beautiful progress bars, tables, and status indicators
-- ✅ Excellent document understanding
+- ✅ Dual output format - JSON for programmatic access + Markdown for readability
 
 ### 2. **Mistral Version** - `02_Mistral_generate_summaries_issue.py`
 Uses Mistral's Document AI with OCR specialization for document understanding.
 
 **Models:**
 - Mistral OCR (Step 1: page-by-page extraction with document understanding)
-- Mistral Small (Step 2: cost-effective consolidation)
+- Mistral Small (Step 2: cost-effective consolidation with structured outputs)
 
 **Features:**
+- ✅ Structured outputs - Pydantic models with `client.chat.parse()` for type-safe extraction
 - ✅ Document OCR specialization - Extracts markdown text from PDFs
 - ✅ Single PDF upload with signed URL workflow
-- ✅ Cost-optimized with Small model for consolidation
+- ✅ Dual output format - JSON for programmatic access + Markdown for readability
 
 ## Overview
 
@@ -45,6 +47,7 @@ This pipeline processes PDF magazines to extract and consolidate articles using 
 ## Features
 
 ### Gemini Version
+- ✅ **Structured outputs** - Pydantic models with `response_schema` for guaranteed JSON compliance
 - ✅ **Native PDF processing** - Each page extracted and sent individually to Gemini
 - ✅ **Modern API patterns** - Uses `system_instruction` parameter (not concatenated prompts)
 - ✅ **Rich console UI** - Color-coded progress bars, tables, panels, and status indicators
@@ -52,13 +55,16 @@ This pipeline processes PDF magazines to extract and consolidate articles using 
 - ✅ **Smart thinking config** - Uses `thinking_level` for Gemini 3, `thinking_budget` for 2.5
 
 ### Mistral Version
+- ✅ **Structured outputs** - Pydantic models with `client.chat.parse()` for type-safe extraction
 - ✅ **Document OCR specialization** - Mistral OCR model extracts markdown text
 - ✅ **Single upload workflow** - Upload once, get signed URL, reference per page
 - ✅ **Cost-optimized** - Uses Small model for consolidation step
 
 ### Common Features
+- ✅ **Structured outputs** - Type-safe extraction with Pydantic models
+- ✅ **Dual output format** - JSON files for programmatic access + Markdown for human readability
 - ✅ **Robust error handling** with automatic retry (max 3 attempts)
-- ✅ **Progressive saving** - resume from cached results if interrupted
+- ✅ **Progressive saving** - JSON caching allows resumption from interruptions
 - ✅ **Smart page numbering** - controlled by script, not AI (more reliable)
 - ✅ **Dual-prompt system** - separate prompts for extraction and consolidation
 - ✅ **Omeka S integration** - download PDFs directly from Omeka collections
@@ -75,19 +81,21 @@ This pipeline processes PDF magazines to extract and consolidate articles using 
 │ Step 1: Page-by-Page Extraction (Gemini 3.0 Pro)           │
 │ → Extract individual pages from PDF using PyPDF2           │
 │ → Send each page separately to Gemini as PDF bytes         │
+│ → Structured output: PageExtraction Pydantic model         │
 │ → Identify exact titles on each page                       │
 │ → Detect continuation markers ("suite page X")             │
 │ → Generate brief summaries (2-3 sentences)                 │
-│ Output: step1_page_extractions/*.md                        │
+│ Output: *_extractions.json + *_step1_consolidated.md       │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Step 2: Consolidation (Gemini 2.5 Flash)                   │
 │ → Merge fragmented articles across pages                   │
+│ → Structured output: MagazineIndex Pydantic model          │
 │ → Eliminate duplicates                                     │
 │ → Aggregate page ranges (e.g., 1–3, 5–7)                   │
 │ → Generate comprehensive summaries (4-6 sentences)         │
-│ Output: {omeka_id}_final_index.md                          │
+│ Output: *_index.json + *_final_index.md                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -186,68 +194,112 @@ AI_summary_issue/
 ├── Magazine_Extractions/
 │   └── 12345/                             # Omeka ID
 │       ├── step1_page_extractions/
-│       │   ├── page_001.md               # Individual page extractions
+│       │   ├── page_001.json             # Individual page extractions (JSON)
+│       │   ├── page_001.md               # Individual page extractions (Markdown)
+│       │   ├── page_002.json
 │       │   ├── page_002.md
-│       │   └── page_003.md
-│       ├── 12345_step1_consolidated.md   # All pages combined
-│       └── 12345_final_index.md          # Final consolidated index
+│       │   └── ...
+│       ├── 12345_extractions.json        # All extractions combined (JSON)
+│       ├── 12345_step1_consolidated.md   # All pages combined (Markdown)
+│       ├── 12345_index.json              # Final index (JSON)
+│       └── 12345_final_index.md          # Final index (Markdown)
 ```
 
 ## Output Format
 
 ### Step 1 - Page Extraction
-Each page extraction contains:
+
+**JSON format** (for programmatic access):
+```json
+{
+  "page_number": 1,
+  "is_cover": false,
+  "has_articles": true,
+  "articles": [
+    {
+      "titre": "The Islamic Revolution and Its Impact",
+      "continuation": "suite page 3",
+      "resume": "This article discusses the early stages of the Islamic Revolution..."
+    },
+    {
+      "titre": "Youth Education in Muslim Communities",
+      "continuation": null,
+      "resume": "The article explores educational challenges..."
+    }
+  ],
+  "other_content": null
+}
+```
+
+**Markdown format** (for human readability):
 ```markdown
 ## Page : 1
 
 ### Article 1
-- Titre exact : "The Islamic Revolution and Its Impact"
+- Titre : The Islamic Revolution and Its Impact
 - Continuation : suite page 3
-- Résumé :
-  This article discusses the early stages of the Islamic Revolution...
+- Résumé : This article discusses the early stages of the Islamic Revolution...
 
 ### Article 2
-- Titre exact : "Youth Education in Muslim Communities"
+- Titre : Youth Education in Muslim Communities
 - Continuation : aucune
-- Résumé :
-  The article explores educational challenges...
+- Résumé : The article explores educational challenges...
 ```
 
 ### Step 2 - Final Index
-Consolidated output:
+
+**JSON format** (for programmatic access):
+```json
+{
+  "articles": [
+    {
+      "titre": "The Islamic Revolution and Its Impact",
+      "pages": "1, 3-5",
+      "resume": "This comprehensive article examines the Islamic Revolution from multiple perspectives..."
+    },
+    {
+      "titre": "Youth Education in Muslim Communities",
+      "pages": "2",
+      "resume": "A focused analysis of educational challenges faced by Muslim youth..."
+    }
+  ]
+}
+```
+
+**Markdown format** (for human readability):
 ```markdown
 # Index des articles du magazine
 
-## Article 1
-- Titre exact : "The Islamic Revolution and Its Impact"
-- Pages : 1, 3–5
-- Résumé consolidé :
+## The Islamic Revolution and Its Impact
+- Pages : 1, 3-5
+- Résumé :
   This comprehensive article examines the Islamic Revolution from 
   multiple perspectives, including political, social, and religious 
   dimensions. The author traces the historical roots...
 
-## Article 2
-- Titre exact : "Youth Education in Muslim Communities"
+## Youth Education in Muslim Communities
 - Pages : 2
-- Résumé consolidé :
+- Résumé :
   A focused analysis of educational challenges faced by Muslim youth...
 ```
 
 ## Prompt Files
 
-The pipeline uses two separate prompt templates:
+The pipeline uses two separate prompt templates. With structured outputs, prompts focus on **extraction logic** while Pydantic models define the **output schema**.
 
 1. **`summary_prompt_issue.md`** - Step 1 extraction instructions
    - Identifies articles on each page
    - Detects continuation markers
    - Generates brief summaries
+   - Schema: `PageExtraction` → `PageArticle` models
 
 2. **`consolidation_prompt_issue.md`** - Step 2 consolidation instructions
    - Merges fragmented articles
    - Eliminates duplicates
    - Produces comprehensive summaries
+   - Schema: `MagazineIndex` → `ConsolidatedArticle` models
 
-You can customize these prompts to adjust extraction behavior.
+You can customize these prompts to adjust extraction behavior. The output structure is defined by Pydantic models in the Python scripts.
 
 ## Error Handling & Recovery
 
@@ -257,9 +309,9 @@ You can customize these prompts to adjust extraction behavior.
 - Handles connection errors and rate limits
 
 ### Progressive Caching
-- Each page extraction is saved immediately
-- If interrupted, restart will skip already-processed pages
-- Delete specific page files in `step1_page_extractions/` to re-process them
+- Each page extraction is saved immediately as JSON
+- If interrupted, restart will skip already-processed pages (checks for `.json` files)
+- Delete specific page `.json` files in `step1_page_extractions/` to re-process them
 
 ### Error Placeholders
 If a page fails after all retries, a placeholder is created:
@@ -270,6 +322,36 @@ Erreur lors du traitement de cette page.
 ```
 
 This prevents pipeline blocking while flagging problematic pages.
+
+## Pydantic Models (Structured Outputs)
+
+Both implementations use the same Pydantic models for type-safe extraction:
+
+```python
+class PageArticle(BaseModel):
+    """An article found on a single page."""
+    titre: str = Field(description="Titre exact de l'article")
+    continuation: Optional[str] = Field(default=None, description="'suite page X' ou null")
+    resume: str = Field(description="Résumé bref de 2-3 phrases")
+
+class PageExtraction(BaseModel):
+    """Extraction result for a single PDF page."""
+    page_number: int
+    is_cover: bool = False
+    has_articles: bool = True
+    articles: List[PageArticle] = []
+    other_content: Optional[str] = None
+
+class ConsolidatedArticle(BaseModel):
+    """A consolidated article after merging fragmented pages."""
+    titre: str = Field(description="Titre exact complet")
+    pages: str = Field(description="'1-3' ou '1, 3, 5'")
+    resume: str = Field(description="Résumé global de 4-6 phrases")
+
+class MagazineIndex(BaseModel):
+    """Final consolidated index of all articles."""
+    articles: List[ConsolidatedArticle]
+```
 
 ## Configuration
 
@@ -306,6 +388,14 @@ The Gemini version features rich console output:
 - ✓/✗ **Status indicators** - Clear success/failure markers
 
 ## Architecture Decisions
+
+### Why Structured Outputs?
+Both implementations use Pydantic models with native API support:
+- ✅ **Guaranteed JSON compliance** - APIs enforce schema validation
+- ✅ **Type safety** - Pydantic provides runtime validation and IDE support
+- ✅ **No parsing errors** - No regex or manual JSON extraction needed
+- ✅ **Dual outputs** - JSON for code, Markdown for humans from the same data
+- ✅ **Resumable** - JSON caching enables interruption recovery
 
 ### Why Extract Individual Pages?
 Each page is extracted separately and sent to Gemini as a standalone PDF:
@@ -398,11 +488,12 @@ If AI returns no content:
 | **Upload** | Per-page extraction | Single upload with signed URL |
 | **Page Processing** | Individual PDFs | OCR by page number |
 | **Text Format** | Native PDF | Markdown from OCR |
+| **Structured Outputs** | `response_schema` | `client.chat.parse()` |
 | **Models** | Pro + Flash | OCR + Small |
 | **Speed** | Fast (Flash consolidation) | Fast (OCR + Small) |
 | **Cost** | Lower (Flash tier) | Lower (Small tier) |
 
-Both implementations share the same prompts and output format, making it easy to switch between them or compare results.
+Both implementations share the same Pydantic models, prompts, and output format, making it easy to switch between them or compare results.
 
 ## License
 

@@ -1,7 +1,7 @@
 """Islamic Magazine Article Extraction Pipeline (2-Step Process)
 
 This script implements a two-step pipeline to extract and consolidate articles
-from an Islamic magazine using Gemini's native PDF understanding.
+from an Islamic magazine using Gemini's native PDF understanding with structured outputs.
 
 Supported models:
 - Gemini 3 Pro (step 1) - High-quality extraction with thinking_level
@@ -10,24 +10,31 @@ Supported models:
 Step 1: Page-by-page extraction (high-performance model)
 - Extracts individual pages using PyPDF2
 - Sends each page to Gemini using Part.from_bytes (native PDF understanding)
-- Uses system_instruction for the extraction prompt (modern API pattern)
-- Identifies articles present on the page
+- Uses structured outputs (Pydantic models) for guaranteed JSON schema compliance
+- Identifies articles present on the page with typed data extraction
 - Extracts exact titles and generates brief summaries
 - Detects continuation indicators
 
 Step 2: Magazine-level consolidation (fast model)
 - Merges articles fragmented across multiple pages
 - Eliminates duplicates with the fast model
+- Uses structured outputs for consistent article index format
 - Produces a global summary per article
 - Lists all associated pages
 
+Output formats:
+- JSON files for programmatic access (step1_consolidated.json, final_index.json)
+- Markdown files for human readability (step1_consolidated.md, final_index.md)
+
 Robustness mechanisms:
 - Automatic retry on error with exponential backoff (max 3 attempts)
-- Progressive result saving
+- Progressive result saving with JSON caching
 - Resumption possible from already processed files
 
 API Best Practices:
 - Uses system_instruction in GenerateContentConfig for prompts
+- Uses response_mime_type='application/json' for structured outputs
+- Uses response_schema with Pydantic models for type-safe extraction
 - Uses ThinkingConfig with thinking_level for Gemini 3 Pro
 - Uses ThinkingConfig with thinking_budget for Gemini 2.5 Flash
 - Passes PDF bytes via Part.from_bytes for native processing
@@ -39,12 +46,14 @@ Usage:
 import os
 import sys
 import io
+import json
 import logging
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader, PdfWriter
+from pydantic import BaseModel, Field
 
 # Rich console for beautiful output
 from rich.console import Console
@@ -66,6 +75,34 @@ from common.llm_provider import (  # noqa: E402
     get_model_option,
     summary_from_option,
 )
+
+# ------------------------------------------------------------------
+# Pydantic Models for Structured Outputs
+# ------------------------------------------------------------------
+
+class PageArticle(BaseModel):
+    """An article found on a single page."""
+    titre: str = Field(description="Titre exact de l'article tel qu'imprimé sur la page")
+    continuation: Optional[str] = Field(default=None, description="Indication de continuation: 'suite page X' ou null si aucune")
+    resume: str = Field(description="Résumé bref de 2-3 phrases du contenu visible sur cette page")
+
+class PageExtraction(BaseModel):
+    """Extraction result for a single PDF page."""
+    page_number: int = Field(description="Numéro de la page analysée")
+    is_cover: bool = Field(default=False, description="True si c'est une page de couverture")
+    has_articles: bool = Field(default=True, description="True si des articles sont présents")
+    articles: List[PageArticle] = Field(default_factory=list, description="Liste des articles trouvés sur cette page")
+    other_content: Optional[str] = Field(default=None, description="Description des autres contenus non-articles (publicités, annonces, etc.)")
+
+class ConsolidatedArticle(BaseModel):
+    """A consolidated article after merging fragmented pages."""
+    titre: str = Field(description="Titre exact complet de l'article")
+    pages: str = Field(description="Numéros de pages, ex: '1-3' ou '1, 3, 5'")
+    resume: str = Field(description="Résumé global consolidé de 4-6 phrases")
+
+class MagazineIndex(BaseModel):
+    """Final consolidated index of all articles in the magazine."""
+    articles: List[ConsolidatedArticle] = Field(description="Liste des articles consolidés du magazine")
 
 # Import Gemini types for PDF processing
 try:
@@ -89,14 +126,16 @@ RETRY_BACKOFF = 2  # multiplier for exponential backoff
 # Prompt Loading
 # ------------------------------------------------------------------
 def load_extraction_prompt() -> str:
-    """Load the prompt for step 1 (page-by-page extraction)."""
+    """Load the prompt for step 1 (page-by-page extraction).
+    
+    Note: With structured outputs, the prompt focuses on instructions
+    while the schema defines the output format.
+    """
     script_dir = Path(__file__).parent
     prompt_file = script_dir / 'summary_prompt_issue.md'
     try:
         with open(prompt_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        if '{text}' not in content and '{page_number}' not in content:
-            logging.warning("Prompt template missing required placeholders.")
         return content
     except FileNotFoundError:
         raise FileNotFoundError(f"Prompt template not found: {prompt_file}")
@@ -104,14 +143,16 @@ def load_extraction_prompt() -> str:
         raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}")
 
 def load_consolidation_prompt() -> str:
-    """Load the prompt for step 2 (consolidation)."""
+    """Load the prompt for step 2 (consolidation).
+    
+    Note: With structured outputs, the prompt focuses on instructions
+    while the schema defines the output format.
+    """
     script_dir = Path(__file__).parent
     prompt_file = script_dir / 'consolidation_prompt_issue.md'
     try:
         with open(prompt_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        if '{extracted_content}' not in content:
-            logging.warning("Consolidation prompt template missing '{extracted_content}' placeholder.")
         return content
     except FileNotFoundError:
         raise FileNotFoundError(f"Consolidation prompt template not found: {prompt_file}")
@@ -227,19 +268,19 @@ def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
 
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: bytes, 
-                        page_num: int, config: types.GenerateContentConfig) -> Optional[str]:
+                        page_num: int, config: types.GenerateContentConfig) -> Optional[PageExtraction]:
     """
-    Generate a response with Gemini for a single PDF page with automatic retry.
+    Generate structured page extraction with Gemini for a single PDF page.
     
     Args:
         client: Gemini client
         model_name: Model name to use
         page_bytes: Single PDF page as bytes
         page_num: Page number (for logging)
-        config: Generation config (includes system_instruction)
+        config: Generation config (includes system_instruction and response_schema)
         
     Returns:
-        Generated response or None
+        PageExtraction object or None
     """
     try:
         # Create PDF part from page bytes
@@ -249,10 +290,9 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
         )
         
         # Generate content with single page PDF
-        # System instruction is in the config, contents is just the PDF
         response = client.models.generate_content(
             model=model_name,
-            contents=[pdf_part, f"Analyze page {page_num} of this PDF document."],
+            contents=[pdf_part, f"Analysez la page {page_num} de ce document PDF."],
             config=config
         )
         
@@ -266,11 +306,14 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
             finish_reason = candidate.finish_reason
             raise Exception(f"No valid response. Finish reason: {finish_reason}")
         
-        text_content = response.text.replace('\xa0', ' ').strip().replace('*', '')
+        text_content = response.text.strip()
         if not text_content:
             raise Exception("Empty text response from Gemini")
         
-        return text_content
+        # Parse JSON response into Pydantic model
+        extraction = PageExtraction.model_validate_json(text_content)
+        extraction.page_number = page_num  # Ensure page number is set
+        return extraction
         
     except Exception as e:
         logging.error(f"Generation error for page {page_num}: {e}")
@@ -278,18 +321,18 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
 
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def generate_consolidation_with_gemini(client: genai.Client, model_name: str,
-                                      user_content: str, config: types.GenerateContentConfig) -> Optional[str]:
+                                      user_content: str, config: types.GenerateContentConfig) -> Optional[MagazineIndex]:
     """
-    Generate consolidation response with Gemini with automatic retry.
+    Generate structured consolidation response with Gemini.
     
     Args:
         client: Gemini client
         model_name: Model name to use
-        user_content: The extracted content to consolidate
-        config: Generation config (includes system_instruction)
+        user_content: The extracted content to consolidate (JSON)
+        config: Generation config (includes system_instruction and response_schema)
         
     Returns:
-        Generated response or None
+        MagazineIndex object or None
     """
     try:
         response = client.models.generate_content(
@@ -308,24 +351,63 @@ def generate_consolidation_with_gemini(client: genai.Client, model_name: str,
             finish_reason = candidate.finish_reason
             raise Exception(f"No valid response. Finish reason: {finish_reason}")
         
-        text_content = response.text.replace('\xa0', ' ').strip().replace('*', '')
+        text_content = response.text.strip()
         if not text_content:
             raise Exception("Empty text response from Gemini")
         
-        return text_content
+        # Parse JSON response into Pydantic model
+        return MagazineIndex.model_validate_json(text_content)
         
     except Exception as e:
         logging.error(f"Consolidation generation error: {e}")
         raise  # Let the retry decorator handle it
+
+def format_extraction_to_markdown(extraction: PageExtraction) -> str:
+    """Convert a PageExtraction to markdown format for intermediate files."""
+    lines = [f"## Page : {extraction.page_number}\n"]
+    
+    if extraction.is_cover:
+        lines.append("Page de couverture du magazine.\n")
+        return "\n".join(lines)
+    
+    if not extraction.has_articles:
+        lines.append("Aucun article identifié sur cette page.\n")
+        if extraction.other_content:
+            lines.append(f"\n### Autres contenus\n{extraction.other_content}\n")
+        return "\n".join(lines)
+    
+    for i, article in enumerate(extraction.articles, 1):
+        lines.append(f"\n### Article {i}")
+        lines.append(f"- Titre exact : \"{article.titre}\"")
+        lines.append(f"- Continuation : {article.continuation or 'aucune'}")
+        lines.append(f"- Résumé :\n  {article.resume}")
+    
+    if extraction.other_content:
+        lines.append(f"\n### Autres contenus\n{extraction.other_content}")
+    
+    return "\n".join(lines)
+
+def format_index_to_markdown(index: MagazineIndex) -> str:
+    """Convert a MagazineIndex to the final markdown format."""
+    lines = ["# Index des articles du magazine\n"]
+    
+    for article in index.articles:
+        lines.append(f"\n## {article.titre}")
+        lines.append(f"- Pages : {article.pages}")
+        lines.append(f"- Résumé :")
+        lines.append(f"  {article.resume}")
+    
+    return "\n".join(lines)
 
 # ------------------------------------------------------------------
 # Pipeline Functions
 # ------------------------------------------------------------------
 def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_config: LLMConfig,
                         pdf_path: Path, total_pages: int, extraction_prompt: str, 
-                        output_dir: Path, magazine_id: str) -> Path:
+                        output_dir: Path, magazine_id: str) -> Tuple[Path, List[PageExtraction]]:
     """
     Step 1: Page-by-page extraction with high-performance Gemini model.
+    Uses structured outputs for guaranteed JSON schema compliance.
     Progressive saving to allow resumption in case of interruption.
     
     Args:
@@ -339,33 +421,33 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
         magazine_id: Magazine identifier
         
     Returns:
-        Path to the step 1 consolidated file
+        Tuple of (consolidated markdown file path, list of PageExtraction objects)
     """
     step1_dir = output_dir / "step1_page_extractions"
     step1_dir.mkdir(parents=True, exist_ok=True)
     
-    all_extractions = []
+    all_extractions: List[PageExtraction] = []
+    all_markdown: List[str] = []
     model_name = summary_from_option(model_option)
     
-    # Setup generation config with system_instruction (modern API pattern)
+    # Setup generation config with structured output
     config_kwargs = {
-        "system_instruction": extraction_prompt,  # Use system_instruction for the prompt
+        "system_instruction": extraction_prompt,
         "temperature": llm_config.temperature or 0.2,
         "top_p": 0.95,
         "top_k": 40,
         "max_output_tokens": 8192,
-        "response_mime_type": "text/plain",
+        "response_mime_type": "application/json",  # Enable JSON mode
+        "response_schema": PageExtraction,  # Pydantic model for structured output
     }
     
     # Handle thinking config based on model type
     is_gemini_3 = "gemini-3" in model_option.model.lower()
     if is_gemini_3:
-        # Gemini 3 Pro uses thinking_level ("low" or "high")
         thinking_level = llm_config.thinking_level or model_option.default_thinking_level or "low"
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
         logging.info(f"Using Gemini 3 with thinking_level={thinking_level}")
     else:
-        # Gemini 2.5 series uses thinking_budget
         thinking_budget = llm_config.thinking_budget
         if thinking_budget is None:
             thinking_budget = model_option.default_thinking_budget
@@ -376,7 +458,8 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
     gen_config = types.GenerateContentConfig(**config_kwargs)
     
     console.print(f"\n[bold cyan]Step 1:[/] Processing {total_pages} pages with [green]{model_name}[/]")
-    logging.info(f"Step 1: Processing {total_pages} pages with {model_name}...")
+    console.print("[dim]Using structured outputs (JSON schema)[/]")
+    logging.info(f"Step 1: Processing {total_pages} pages with {model_name} (structured output)...")
     
     success_count = 0
     cached_count = 0
@@ -394,17 +477,22 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
         task = progress.add_task("[cyan]Extracting articles...", total=total_pages)
         
         for page_num in range(1, total_pages + 1):
-            page_file = step1_dir / f"page_{page_num:03d}.md"
+            page_json_file = step1_dir / f"page_{page_num:03d}.json"
+            page_md_file = step1_dir / f"page_{page_num:03d}.md"
             
-            # Check if page has already been processed
-            if page_file.exists():
+            # Check if page has already been processed (JSON cache)
+            if page_json_file.exists():
                 logging.info(f"Page {page_num} already processed, loading from cache...")
-                with open(page_file, 'r', encoding='utf-8') as f:
-                    extraction = f.read()
-                all_extractions.append(f"\n{extraction}\n")
-                cached_count += 1
-                progress.update(task, advance=1, description=f"[dim]Page {page_num}/{total_pages} (cached)[/]")
-                continue
+                try:
+                    with open(page_json_file, 'r', encoding='utf-8') as f:
+                        extraction = PageExtraction.model_validate_json(f.read())
+                    all_extractions.append(extraction)
+                    all_markdown.append(format_extraction_to_markdown(extraction))
+                    cached_count += 1
+                    progress.update(task, advance=1, description=f"[dim]Page {page_num}/{total_pages} (cached)[/]")
+                    continue
+                except Exception as e:
+                    logging.warning(f"Failed to load cached page {page_num}, re-processing: {e}")
             
             progress.update(task, description=f"[cyan]Page {page_num}/{total_pages}[/]")
             
@@ -413,35 +501,45 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
                 page_idx = page_num - 1  # 0-indexed for PyPDF2
                 page_bytes = extract_pdf_page(pdf_path, page_idx)
                 
-                # Generate extraction with automatic retry using Gemini
+                # Generate structured extraction with automatic retry
                 extraction = generate_with_gemini(
                     client, model_option.model, page_bytes, page_num, gen_config
                 )
                 
                 if extraction:
-                    # Add page number at the beginning of the AI response
-                    extraction_with_page = f"## Page : {page_num}\n\n{extraction}"
-                    all_extractions.append(f"\n{extraction_with_page}\n")
+                    all_extractions.append(extraction)
+                    markdown = format_extraction_to_markdown(extraction)
+                    all_markdown.append(markdown)
                     
-                    # Save the individual extraction immediately
-                    with open(page_file, 'w', encoding='utf-8') as f:
-                        f.write(extraction_with_page)
+                    # Save both JSON and markdown for debugging/resumption
+                    with open(page_json_file, 'w', encoding='utf-8') as f:
+                        f.write(extraction.model_dump_json(indent=2))
+                    with open(page_md_file, 'w', encoding='utf-8') as f:
+                        f.write(markdown)
+                    
                     logging.info(f"Page {page_num} processed and saved")
                     success_count += 1
                 else:
                     logging.error(f"No extraction generated for page {page_num}")
-                    # Create a placeholder to avoid blocking the pipeline
-                    placeholder = f"## Page : {page_num}\n\nError processing this page.\n"
-                    all_extractions.append(f"\n{placeholder}\n")
-                    with open(page_file, 'w', encoding='utf-8') as f:
-                        f.write(placeholder)
+                    # Create a placeholder extraction
+                    placeholder = PageExtraction(
+                        page_number=page_num,
+                        has_articles=False,
+                        other_content="Error processing this page."
+                    )
+                    all_extractions.append(placeholder)
+                    all_markdown.append(format_extraction_to_markdown(placeholder))
                     error_count += 1
+                    
             except Exception as e:
                 logging.error(f"Failed to extract or process page {page_num} after retries: {e}")
-                placeholder = f"## Page : {page_num}\n\nError: {str(e)}\n"
-                all_extractions.append(f"\n{placeholder}\n")
-                with open(page_file, 'w', encoding='utf-8') as f:
-                    f.write(placeholder)
+                placeholder = PageExtraction(
+                    page_number=page_num,
+                    has_articles=False,
+                    other_content=f"Error: {str(e)}"
+                )
+                all_extractions.append(placeholder)
+                all_markdown.append(format_extraction_to_markdown(placeholder))
                 error_count += 1
             
             progress.update(task, advance=1)
@@ -457,39 +555,43 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
         step1_summary.add_row("[red]✗ Errors[/]", str(error_count))
     console.print(step1_summary)
     
-    # Consolidate all extractions into a single file
-    consolidated_file = output_dir / f"{magazine_id}_step1_consolidated.md"
-    with open(consolidated_file, 'w', encoding='utf-8') as f:
+    # Save consolidated JSON (for step 2)
+    consolidated_json_file = output_dir / f"{magazine_id}_step1_consolidated.json"
+    with open(consolidated_json_file, 'w', encoding='utf-8') as f:
+        json.dump([e.model_dump() for e in all_extractions], f, ensure_ascii=False, indent=2)
+    
+    # Save consolidated markdown (for human review)
+    consolidated_md_file = output_dir / f"{magazine_id}_step1_consolidated.md"
+    with open(consolidated_md_file, 'w', encoding='utf-8') as f:
         f.write(f"# Page-by-page extraction - Magazine {magazine_id}\n\n")
-        f.write('\n---\n'.join(all_extractions))
+        f.write('\n---\n'.join(all_markdown))
     
-    console.print(f"[green]✓[/] Step 1 complete → [dim]{consolidated_file.name}[/]")
-    logging.info(f"Step 1 complete. Consolidated file: {consolidated_file}")
+    console.print(f"[green]✓[/] Step 1 complete → [dim]{consolidated_json_file.name}[/]")
+    logging.info(f"Step 1 complete. Consolidated files: {consolidated_json_file}, {consolidated_md_file}")
     
-    # Delete individual files to save space
-    page_files = list(step1_dir.glob('page_*.md'))
-    for page_file in page_files:
-        page_file.unlink()
-    logging.info(f"Cleaned up {len(page_files)} individual page files")
-    
-    # Optional: remove directory if empty
+    # Cleanup individual files
+    for f in step1_dir.glob('page_*.*'):
+        f.unlink()
     try:
         step1_dir.rmdir()
     except OSError:
         pass
     
-    return consolidated_file
+    return consolidated_json_file, all_extractions
 
 def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_config: LLMConfig,
-                     step1_file: Path, output_dir: Path, magazine_id: str) -> Path:
+                     step1_file: Path, extractions: List[PageExtraction], 
+                     output_dir: Path, magazine_id: str) -> Path:
     """
     Step 2: Magazine-level consolidation with fast Gemini model.
+    Uses structured outputs for guaranteed JSON schema compliance.
     
     Args:
         client: Gemini client
         model_option: Model option for step 2
         llm_config: LLM configuration
-        step1_file: Step 1 consolidated file
+        step1_file: Step 1 consolidated JSON file
+        extractions: List of PageExtraction objects from step 1
         output_dir: Output directory
         magazine_id: Magazine identifier
         
@@ -498,36 +600,37 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
     """
     model_name = summary_from_option(model_option)
     console.print(f"\n[bold cyan]Step 2:[/] Consolidating articles with [green]{model_name}[/]")
-    logging.info(f"Step 2: Consolidating articles at magazine level with {model_name}...")
+    console.print("[dim]Using structured outputs (JSON schema)[/]")
+    logging.info(f"Step 2: Consolidating articles at magazine level with {model_name} (structured output)...")
     
-    # Read the step 1 consolidated file
-    with open(step1_file, 'r', encoding='utf-8') as f:
-        extracted_content = f.read()
+    # Prepare extracted content as JSON for the model
+    # This provides structured input that's easier to consolidate
+    extracted_json = json.dumps([e.model_dump() for e in extractions], ensure_ascii=False, indent=2)
     
     # Load the consolidation prompt as system instruction
     consolidation_prompt = load_consolidation_prompt()
-    # Remove the {extracted_content} placeholder from the system prompt
-    # The extracted content will be passed as user content
+    # Remove the {extracted_content} placeholder - we'll pass JSON directly
     system_prompt = consolidation_prompt.split('{extracted_content}')[0].strip()
+    # Add instruction about JSON input/output
+    system_prompt += "\n\nL'entrée est fournie au format JSON structuré. Consolidez les articles et retournez le résultat au format JSON selon le schéma fourni."
     
-    # Setup generation config with system_instruction (modern API pattern)
+    # Setup generation config with structured output
     config_kwargs = {
         "system_instruction": system_prompt,
         "temperature": llm_config.temperature or 0.3,
         "top_p": 0.95,
         "top_k": 40,
         "max_output_tokens": 8192,
-        "response_mime_type": "text/plain",
+        "response_mime_type": "application/json",  # Enable JSON mode
+        "response_schema": MagazineIndex,  # Pydantic model for structured output
     }
     
     # Handle thinking config based on model type
     is_gemini_3 = "gemini-3" in model_option.model.lower()
     if is_gemini_3:
-        # Gemini 3 Pro uses thinking_level ("low" or "high")
         thinking_level = llm_config.thinking_level or model_option.default_thinking_level or "low"
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
     else:
-        # Gemini 2.5 series uses thinking_budget
         thinking_budget = llm_config.thinking_budget
         if thinking_budget is None:
             thinking_budget = model_option.default_thinking_budget
@@ -539,23 +642,28 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
     # Generate consolidation with automatic retry
     try:
         with console.status("[cyan]Generating article index...", spinner="dots"):
-            consolidated = generate_consolidation_with_gemini(
-                client, model_option.model, extracted_content, gen_config
+            index = generate_consolidation_with_gemini(
+                client, model_option.model, extracted_json, gen_config
             )
         
-        if not consolidated:
+        if not index:
             console.print("[red]✗[/] Failed to generate consolidated output")
             logging.error("Failed to generate consolidated output")
             raise RuntimeError("Step 2 consolidation failed - no output generated")
         
-        # Save the final result
-        final_file = output_dir / f"{magazine_id}_final_index.md"
-        with open(final_file, 'w', encoding='utf-8') as f:
-            f.write(consolidated)
+        # Save the final result as JSON
+        final_json_file = output_dir / f"{magazine_id}_final_index.json"
+        with open(final_json_file, 'w', encoding='utf-8') as f:
+            f.write(index.model_dump_json(indent=2))
         
-        console.print(f"[green]✓[/] Step 2 complete → [dim]{final_file.name}[/]")
-        logging.info(f"Step 2 complete. Final index: {final_file}")
-        return final_file
+        # Save the final result as markdown (for human readability)
+        final_md_file = output_dir / f"{magazine_id}_final_index.md"
+        with open(final_md_file, 'w', encoding='utf-8') as f:
+            f.write(format_index_to_markdown(index))
+        
+        console.print(f"[green]✓[/] Step 2 complete → [dim]{final_md_file.name}[/]")
+        logging.info(f"Step 2 complete. Final index: {final_md_file}")
+        return final_md_file
         
     except Exception as e:
         console.print(f"[red]✗[/] Step 2 failed: {e}")
@@ -644,16 +752,16 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
         # Create output directory
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Step 1: Page-by-page extraction (Gemini Pro)
-        # Each page will be extracted and sent individually to Gemini
-        step1_file = step1_extract_pages(
+        # Step 1: Page-by-page extraction (Gemini Pro) with structured output
+        # Returns both the consolidated file and the list of extractions
+        step1_file, extractions = step1_extract_pages(
             client, model_step1, config_step1, pdf_path, total_pages,
             extraction_prompt, output_dir, magazine_id
         )
         
-        # Step 2: Consolidation (Gemini Flash)
+        # Step 2: Consolidation (Gemini Flash) with structured output
         final_file = step2_consolidate(
-            client, model_step2, config_step2, step1_file, output_dir, magazine_id
+            client, model_step2, config_step2, step1_file, extractions, output_dir, magazine_id
         )
         
         logging.info(f"Pipeline complete for magazine {magazine_id}")

@@ -31,25 +31,12 @@ Analysez le document consolidé fourni et :
 
 4. **Produisez la liste finale** sans doublons et sans pages non-article
 
-## Format de sortie requis
+## Informations à fournir pour chaque article consolidé
 
-Répondez UNIQUEMENT au format suivant (Markdown strict) :
-
-```
-# Index des articles du magazine
-
-## Article 1
-- Titre exact : "<Titre exact de l'article>"
-- Pages : <numéros de pages, ex: 1–3 ou 1, 3, 5>
-- Résumé consolidé :
-  <Résumé global de 4-6 phrases maximum>
-
-## Article 2
-- Titre exact : "<Titre exact de l'article 2>"
-- Pages : <numéros>
-- Résumé consolidé :
-  <Résumé global>
-```
+Pour chaque article unique identifié, fournissez :
+- **titre** : Le titre exact complet de l'article (corrigé des erreurs OCR)
+- **pages** : Numéros de pages où l'article apparaît (ex: "1-3" ou "1, 3, 5")
+- **resume** : Résumé global de 4-6 phrases fusionnant les résumés partiels
 
 ## Règles de consolidation
 
