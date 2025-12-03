@@ -73,12 +73,19 @@ import os
 import re
 import sys
 import json
-import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Union, Tuple
 
 import requests
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn
+from rich import box
+
+# Initialize rich console for styled output
+console = Console()
 
 # Lightweight aliases to make intent clearer when reading types
 JSONObj = Dict[str, Any]
@@ -185,8 +192,8 @@ def load_env() -> Dict[str, str]:
         "OMEKA_KEY_CREDENTIAL": kcr,
     }.items() if not v]
     if missing:
-        print(f"Missing required environment variables: {', '.join(missing)}")
-        print("Create a .env file with: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL")
+        console.print(f"[red]✗[/] Missing required environment variables: {', '.join(missing)}")
+        console.print("[dim]Create a .env file with: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL[/]")
         sys.exit(1)
     return {"base": base.rstrip("/"), "kid": kid, "kcr": kcr}
 
@@ -210,7 +217,7 @@ def get_json(url: str, params: Dict[str, str]) -> Optional[JSONLike]:
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        console.print(f"[red]✗[/] Error fetching {url}: {e}")
         return None
 
 
@@ -434,7 +441,7 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
     if not isinstance(refs, list):
         refs = []
     total_refs = len(refs)
-    print(f"Found {total_refs} reverse subject references.")
+    console.print(f"[cyan]ℹ[/] Found {total_refs} reverse subject references.")
 
     # Process each reference to collect actual article items
     article_items: List[JSONObj] = []
@@ -442,104 +449,72 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
     skipped_non_article = 0      # Track items that aren't articles
     fetch_fail = 0               # Track API failures  
     dupes = 0                    # Track duplicate IDs encountered
-    start_ts = time.perf_counter()  # For progress reporting
     
-    for idx, ref in enumerate(refs, start=1):
-        if not isinstance(ref, dict):
-            continue
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Fetching articles...", total=total_refs)
         
-        # Optimization: Skip obvious non-articles using embedded type information
-        # This avoids unnecessary API calls for items we know we don't want
-        ref_types = ref.get("@type")
-        if isinstance(ref_types, list) and "bibo:Article" not in ref_types and "bibo:Issue" not in ref_types:
-            skipped_non_article += 1
-            # Update progress display (overwrite same line for live updates)
-            elapsed = max(time.perf_counter() - start_ts, 1e-6)
-            rate = idx / elapsed
-            remain = max(total_refs - idx, 0)
-            eta = remain / rate if rate > 0 else 0
-            eta_m, eta_s = divmod(int(eta), 60)
-            print(
-                f"  [{idx}/{total_refs}] added={len(article_items)} skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} ETA={eta_m:02d}:{eta_s:02d}",
-                end="\r",
-                flush=True,
-            )
-            continue
+        for idx, ref in enumerate(refs, start=1):
+            if not isinstance(ref, dict):
+                progress.update(task, advance=1)
+                continue
             
-        # Extract the numeric ID from various possible locations in the reference
-        rid = None
-        if isinstance(ref.get("o:id"), int):
-            rid = str(ref["o:id"]) 
-        elif isinstance(ref.get("o:id"), str) and ref["o:id"].isdigit():
-            rid = ref["o:id"]
-        elif isinstance(ref.get("@id"), str):
-            rid = parse_id_from_at_id(ref["@id"])
-        if not rid:
-            continue
+            # Optimization: Skip obvious non-articles using embedded type information
+            ref_types = ref.get("@type")
+            if isinstance(ref_types, list) and "bibo:Article" not in ref_types and "bibo:Issue" not in ref_types:
+                skipped_non_article += 1
+                progress.update(task, advance=1, description=f"Fetching articles... [dim](added={len(article_items)}, skipped={skipped_non_article})[/]")
+                continue
+                
+            # Extract the numeric ID from various possible locations in the reference
+            rid = None
+            if isinstance(ref.get("o:id"), int):
+                rid = str(ref["o:id"]) 
+            elif isinstance(ref.get("o:id"), str) and ref["o:id"].isdigit():
+                rid = ref["o:id"]
+            elif isinstance(ref.get("@id"), str):
+                rid = parse_id_from_at_id(ref["@id"])
+            if not rid:
+                progress.update(task, advance=1)
+                continue
+                
+            # Skip if we've already processed this ID
+            if rid in seen_ids:
+                dupes += 1
+                progress.update(task, advance=1)
+                continue
+            seen_ids.add(rid)
             
-        # Skip if we've already processed this ID
-        if rid in seen_ids:
-            dupes += 1
-            # live progress update
-            elapsed = max(time.perf_counter() - start_ts, 1e-6)
-            rate = idx / elapsed
-            remain = max(total_refs - idx, 0)
-            eta = remain / rate if rate > 0 else 0
-            eta_m, eta_s = divmod(int(eta), 60)
-            print(
-                f"  [{idx}/{total_refs}] added={len(article_items)} skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} ETA={eta_m:02d}:{eta_s:02d}",
-                end="\r",
-                flush=True,
-            )
-            continue
-        seen_ids.add(rid)
-        
-        # Fetch the full item record to get complete content and confirm type
-        item = fetch_item_or_resource(env, rid)
-        if not isinstance(item, dict):
-            fetch_fail += 1
-            # Update progress display
-            elapsed = max(time.perf_counter() - start_ts, 1e-6)
-            rate = idx / elapsed
-            remain = max(total_refs - idx, 0)
-            eta = remain / rate if rate > 0 else 0
-            eta_m, eta_s = divmod(int(eta), 60)
-            print(
-                f"  [{idx}/{total_refs}] added={len(article_items)} skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} ETA={eta_m:02d}:{eta_s:02d}",
-                end="\r",
-                flush=True,
-            )
-            continue
-            
-        # Final type check: only keep actual articles and issues
-        types = item.get("@type", [])
-        if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
-            article_items.append(item)
-            
-        # Live progress update (overwrites previous line)
-        elapsed = max(time.perf_counter() - start_ts, 1e-6)
-        rate = idx / elapsed
-        remain = max(total_refs - idx, 0)
-        eta = remain / rate if rate > 0 else 0
-        eta_m, eta_s = divmod(int(eta), 60)
-        msg = (
-            f"  [{idx}/{total_refs}] added={len(article_items)} "
-            f"skippedType={skipped_non_article} dup={dupes} fetchErr={fetch_fail} "
-            f"ETA={eta_m:02d}:{eta_s:02d}"
-        )
-        print(msg, end="\r", flush=True)
-        
-        # Every 50 items, print a newline snapshot to keep some history visible
-        if idx % 50 == 0 or idx == 1:
-            print("\n" + msg)
+            # Fetch the full item record to get complete content and confirm type
+            item = fetch_item_or_resource(env, rid)
+            if not isinstance(item, dict):
+                fetch_fail += 1
+                progress.update(task, advance=1)
+                continue
+                
+            # Final type check: only keep actual articles and issues
+            types = item.get("@type", [])
+            if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
+                article_items.append(item)
+                
+            progress.update(task, advance=1, description=f"Fetching articles... [dim](added={len(article_items)}, skipped={skipped_non_article})[/]")
 
-    # Finish line to move past carriage return
-    print()
-    elapsed_total = time.perf_counter() - start_ts
-    print(
-        f"Collected {len(article_items)} article/issue items from {total_refs} references in {elapsed_total:.1f}s. "
-        f"(skippedType={skipped_non_article}, dup={dupes}, fetchErr={fetch_fail})"
-    )
+    # Summary stats
+    stats_table = Table(show_header=False, box=box.SIMPLE)
+    stats_table.add_column("Metric", style="dim")
+    stats_table.add_column("Value", style="green")
+    stats_table.add_row("Articles collected", str(len(article_items)))
+    stats_table.add_row("Skipped (non-article)", str(skipped_non_article))
+    stats_table.add_row("Duplicates", str(dupes))
+    stats_table.add_row("Fetch errors", str(fetch_fail))
+    console.print(stats_table)
 
     return subject_item, article_items
 
@@ -587,29 +562,31 @@ def fetch_items_in_set(env: Dict[str, str], set_id: str, per_page: int = 100) ->
     all_items: List[JSONObj] = []
     page = 1
     
-    # Paginate through all items in the set
-    while True:
-        params = {
-            "key_identity": env["kid"],
-            "key_credential": env["kcr"],
-            "item_set_id": set_id,
-            "per_page": str(per_page),
-            "page": str(page),
-        }
-        data = get_json(base_items_url, params)
-        
-        # Stop if we get no data or an error
-        if not isinstance(data, list) or not data:
-            break
+    # Paginate through all items in the set with spinner
+    with console.status("[cyan]Fetching items from set...[/]", spinner="dots") as status:
+        while True:
+            params = {
+                "key_identity": env["kid"],
+                "key_credential": env["kcr"],
+                "item_set_id": set_id,
+                "per_page": str(per_page),
+                "page": str(page),
+            }
+            data = get_json(base_items_url, params)
             
-        # Filter to ensure we only get dict objects (valid items)
-        page_items = [d for d in data if isinstance(d, dict)]
-        all_items.extend(page_items)
-        
-        # If we got fewer items than requested, we've reached the end
-        if len(page_items) < per_page:
-            break
-        page += 1
+            # Stop if we get no data or an error
+            if not isinstance(data, list) or not data:
+                break
+                
+            # Filter to ensure we only get dict objects (valid items)
+            page_items = [d for d in data if isinstance(d, dict)]
+            all_items.extend(page_items)
+            status.update(f"[cyan]Fetching items from set... [dim](page {page}, {len(all_items)} items)[/]")
+            
+            # If we got fewer items than requested, we've reached the end
+            if len(page_items) < per_page:
+                break
+            page += 1
     return all_items
 
 
@@ -648,7 +625,7 @@ def process_item_set(
     # Fetch the Item Set metadata to get its human-readable title
     item_set = fetch_item_set(env, set_id)
     if not item_set:
-        print(f"- Skipping Item Set {set_id}: not found or inaccessible.")
+        console.print(f"[yellow]⚠[/] Skipping Item Set {set_id}: not found or inaccessible.")
         return 0, []
 
     # Extract and sanitize the set title for use in filenames
@@ -656,26 +633,25 @@ def process_item_set(
     safe_set_title = sanitize_filename(set_title)
 
     # Create progress messages with optional country prefix
-    prefix = f"[{country_label}] " if country_label else ""
-    print(f"{prefix}Listing items in Item Set {set_id} (\"{set_title}\")...")
+    prefix = f"[cyan]{country_label}[/] » " if country_label else ""
+    console.print(f"{prefix}Processing Item Set {set_id}: [bold]{set_title}[/]")
     
     # Fetch all items in this set
     items = fetch_items_in_set(env, set_id, per_page=100)
-    print(f"{prefix}Found {len(items)} items. Filtering bibo:Article and bibo:Issue…")
+    console.print(f"  [dim]Found {len(items)} items. Filtering for articles...[/]")
 
     # Filter for newspaper articles only
     articles: List[JSONObj] = []
-    for idx, it in enumerate(items, start=1):
+    for it in items:
         types = it.get("@type", [])
         if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
             articles.append(it)
-            # Show progress every 50 items to avoid flooding console
-            if idx % 50 == 0:
-                print(f"  Processed {idx}/{len(items)}…")
 
     if not articles:
-        print(f"{prefix}No bibo:Article items found in Item Set {set_id}.")
+        console.print(f"  [yellow]⚠[/] No bibo:Article items found in Item Set {set_id}.")
         return 0, []
+
+    console.print(f"  [green]✓[/] {len(articles)} articles found")
 
     # Prepare file naming and output organization
     header_title = f"Item Set: {set_title} (ID {set_id})"
@@ -701,11 +677,11 @@ def process_item_set(
         out_path = os.path.join(target_dir, f"{file_stub}_articles.{file_ext}")
         write_articles_to_file(articles, out_path, header_title)
         written_files.append(out_path)
-        print(f"{prefix}Wrote {total_articles} articles -> {os.path.basename(out_path)}")
+        console.print(f"  [green]✓[/] Wrote {total_articles} articles → [dim]{os.path.basename(out_path)}[/]")
     else:
         # Large collection: split into multiple files to stay within NotebookLM limits
         num_parts = (total_articles + max_items_per_file - 1) // max_items_per_file
-        print(f"{prefix}Total articles ({total_articles}) exceed {max_items_per_file}; splitting into {num_parts} parts…")
+        console.print(f"  [cyan]ℹ[/] Splitting {total_articles} articles into {num_parts} parts...")
         
         for part_num in range(1, num_parts + 1):
             start_idx = (part_num - 1) * max_items_per_file
@@ -714,7 +690,7 @@ def process_item_set(
             out_path = os.path.join(target_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
             write_articles_to_file(part_articles, out_path, header_title, part_num)
             written_files.append(out_path)
-            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(out_path)}")
+            console.print(f"    Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
     return total_articles, written_files
 
@@ -738,10 +714,10 @@ def process_subject_items(
     Returns:
         (article_count, [written_files])
     """
-    print(f"Looking up subject Item {subject_item_id}…")
+    console.print(f"[cyan]ℹ[/] Looking up subject Item {subject_item_id}...")
     subject, articles = fetch_articles_with_subject(env, subject_item_id)
     if not subject:
-        print(f"- Subject item {subject_item_id} not found or inaccessible.")
+        console.print(f"[red]✗[/] Subject item {subject_item_id} not found or inaccessible.")
         return 0, []
 
     subj_title = subject.get("o:title") or extract_first_value(subject.get("dcterms:title")) or f"item_{subject_item_id}"
@@ -750,7 +726,7 @@ def process_subject_items(
     file_stub = f"{safe_title}_subject_{subject_item_id}"
 
     if not articles:
-        print(f"No bibo:Article items reference subject {subject_item_id}.")
+        console.print(f"[yellow]⚠[/] No bibo:Article items reference subject {subject_item_id}.")
         return 0, []
 
     written: List[str] = []
@@ -761,10 +737,10 @@ def process_subject_items(
         out_path = os.path.join(out_dir, f"{file_stub}_articles.{file_ext}")
         write_articles_to_file(articles, out_path, header_title)
         written.append(out_path)
-        print(f"Wrote {total} articles -> {os.path.basename(out_path)}")
+        console.print(f"[green]✓[/] Wrote {total} articles → [dim]{os.path.basename(out_path)}[/]")
     else:
         num_parts = (total + max_items_per_file - 1) // max_items_per_file
-        print(f"Total articles ({total}) exceed {max_items_per_file}; splitting into {num_parts} parts…")
+        console.print(f"[cyan]ℹ[/] Splitting {total} articles into {num_parts} parts...")
         for part_num in range(1, num_parts + 1):
             start_idx = (part_num - 1) * max_items_per_file
             end_idx = min(start_idx + max_items_per_file, total)
@@ -772,7 +748,7 @@ def process_subject_items(
             out_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
             write_articles_to_file(part_articles, out_path, header_title, part_num)
             written.append(out_path)
-            print(f"  Part {part_num}: {len(part_articles)} articles -> {os.path.basename(out_path)}")
+            console.print(f"  Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
     return total, written
 
@@ -814,127 +790,152 @@ def main():
         python script.py subject:67890          # Export articles about subject 67890
         python script.py --subject 67890        # Alternative subject syntax
     """
-    print("\n=== Omeka -> Markdown Export (NotebookLM-ready) ===")
+    # Welcome banner
+    console.print(Panel(
+        "[bold]Export newspaper articles from Omeka S to NotebookLM-ready Markdown[/]\n"
+        "[dim]Optimized for Google NotebookLM ingestion with automatic file splitting[/]",
+        title="📰 Omeka → NotebookLM Exporter",
+        border_style="cyan"
+    ))
+    
     env = load_env()
 
     # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
-    # NotebookLM performs better with smaller, focused documents rather than huge files
     MAX_ITEMS_PER_FILE = 250
 
     # Set up output directory structure
-    # Creates "extracted_articles" folder next to this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(script_dir, "extracted_articles")
     os.makedirs(out_dir, exist_ok=True)
 
-    # Determine output file format (Markdown by default, can override with env var)
-    # Set NOTEBOOKLM_EXPORT_EXT=txt in .env to export as plain text instead
+    # Determine output file format
     file_ext = os.getenv("NOTEBOOKLM_EXPORT_EXT", "md").lower().lstrip(".")
     if file_ext not in ("md", "txt"):
-        print(f"Unrecognized NOTEBOOKLM_EXPORT_EXT='{file_ext}', defaulting to 'md'.")
+        console.print(f"[yellow]⚠[/] Unrecognized NOTEBOOKLM_EXPORT_EXT='{file_ext}', defaulting to 'md'.")
         file_ext = "md"
 
+    # Show configuration
+    config_table = Table(show_header=False, box=box.ROUNDED, title="⚙️ Configuration")
+    config_table.add_column("Setting", style="dim")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("Output directory", out_dir)
+    config_table.add_row("File format", f".{file_ext}")
+    config_table.add_row("Max articles/file", str(MAX_ITEMS_PER_FILE))
+    console.print(config_table)
+    console.print()
+
     # Parse command-line arguments for batch processing
-    # Supports several convenient formats for different use cases:
-    # - "all" or "--all"                     => whole collection export
-    # - numeric ID (e.g. "12345")            => single item set export  
-    # - "subject:<id>" | "s:<id>"            => subject-based export
-    # - "--subject <id>"                     => alternative subject syntax
     cli_arg = sys.argv[1].strip() if len(sys.argv) > 1 else None
     export_whole = False
     single_set_id: Optional[str] = None
     subject_item_id: Optional[str] = None
+    
     if cli_arg:
-        # Parse the command-line argument to determine export mode
         low = cli_arg.lower()
         if low in ("all", "--all"):
             export_whole = True
         elif low.startswith("subject:") or low.startswith("s:"):
-            # Extract ID from "subject:12345" or "s:12345" format
             maybe_id = cli_arg.split(":", 1)[1]
             if maybe_id.isdigit():
                 subject_item_id = maybe_id
         elif low == "--subject" and len(sys.argv) > 2 and sys.argv[2].strip().isdigit():
-            # Handle "--subject 12345" format (two separate arguments)
             subject_item_id = sys.argv[2].strip()
         elif cli_arg.isdigit():
-            # Simple numeric ID = item set export
             single_set_id = cli_arg
         else:
-            print(f"Unrecognized CLI arg '{cli_arg}'. Ignoring and switching to interactive mode…")
+            console.print(f"[yellow]⚠[/] Unrecognized CLI arg '{cli_arg}'. Switching to interactive mode...")
+            cli_arg = None
 
     # If no valid CLI args, prompt user for interactive mode selection
     if not cli_arg:
-        # Interactive mode: prompt user to choose export type
-        mode = input("Choose export mode: [1] Whole IWAC, [2] Item Set by ID, [3] Items with dcterms:subject Item ID: ").strip().lower()
-        if mode in ("1", "all", "a", "one"):
+        console.print("[bold]Choose export mode:[/]")
+        console.print("  [cyan]1[/] Whole IWAC collection (all countries)")
+        console.print("  [cyan]2[/] Single Item Set by ID")
+        console.print("  [cyan]3[/] Articles by subject Item ID (reverse lookup)")
+        mode = console.input("\n[bold]Enter choice (1/2/3):[/] ").strip().lower()
+        
+        if mode in ("1", "all", "a"):
             export_whole = True
         elif mode in ("3", "subject", "s"):
-            subject_item_id = input("Enter the subject Item ID: ").strip()
+            subject_item_id = console.input("[bold]Enter the subject Item ID:[/] ").strip()
             if not subject_item_id.isdigit():
-                print("Subject Item ID must be a number.")
+                console.print("[red]✗[/] Subject Item ID must be a number.")
                 sys.exit(1)
         else:
-            # Default to item set mode
-            single_set_id = input("Enter the Omeka Item Set ID to export: ").strip()
+            single_set_id = console.input("[bold]Enter the Omeka Item Set ID:[/] ").strip()
             if not single_set_id.isdigit():
-                print("Item Set ID must be a number.")
+                console.print("[red]✗[/] Item Set ID must be a number.")
                 sys.exit(1)
 
     # Execute the selected export mode
     if export_whole:
-        # Mode 1: Export entire IWAC collection organized by country
-        print("\n=== Whole IWAC Collection export ===")
+        console.rule("[bold cyan]Whole IWAC Collection Export[/]")
         grand_total = 0
         all_written: List[str] = []
         
-        # Process each country's Item Sets in the predefined order
         for country in ["Benin", "Burkina Faso", "Côte d'Ivoire", "Niger", "Togo"]:
             set_ids = COUNTRY_ITEM_SETS.get(country, [])
             if not set_ids:
-                print(f"[Skip] {country}: no Item Set IDs configured.")
+                console.print(f"[dim]Skip {country}: no Item Set IDs configured.[/]")
                 continue
-            print(f"\n-- {country} --")
             
-            # Process each Item Set for this country
+            console.rule(f"[bold]{country}[/]", style="dim")
+            
             for sid in set_ids:
                 if not isinstance(sid, str) or not sid.isdigit():
-                    print(f"- Skipping invalid Item Set ID '{sid}' for {country}.")
+                    console.print(f"[yellow]⚠[/] Skipping invalid Item Set ID '{sid}' for {country}.")
                     continue
                 count, files = process_item_set(env, sid, out_dir, MAX_ITEMS_PER_FILE, country_label=country, file_ext=file_ext)
                 grand_total += count
                 all_written.extend(files)
 
-        print("\n=== Summary ===")
-        print(f"Total articles exported: {grand_total}")
+        # Summary
+        console.print()
+        summary_table = Table(title="📊 Export Summary", box=box.ROUNDED)
+        summary_table.add_column("Metric", style="dim")
+        summary_table.add_column("Value", style="green bold")
+        summary_table.add_row("Total articles exported", str(grand_total))
+        summary_table.add_row("Files created", str(len(all_written)))
+        console.print(summary_table)
+        
         if all_written:
-            print("Files created:")
+            console.print("\n[bold]Files created:[/]")
             for p in all_written:
-                print(f"  {p}")
+                console.print(f"  [dim]{p}[/]")
         else:
-            print("No files were created. Ensure COUNTRY_ITEM_SETS is configured.")
+            console.print("[yellow]⚠[/] No files were created. Ensure COUNTRY_ITEM_SETS is configured.")
         return
 
     # Mode 3: Export articles that reference a specific subject authority
     if subject_item_id:
+        console.rule("[bold cyan]Subject-based Export[/]")
         count, files = process_subject_items(env, subject_item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
         if files:
-            print(f"\nDone. Exported {count} articles to:")
+            console.print(Panel(
+                f"[green]✓[/] Exported [bold]{count}[/] articles to {len(files)} file(s)",
+                title="✅ Export Complete",
+                border_style="green"
+            ))
             for p in files:
-                print(f"  {p}")
+                console.print(f"  [dim]{p}[/]")
         else:
-            print("No files were created for the specified subject.")
+            console.print("[yellow]⚠[/] No files were created for the specified subject.")
         return
 
     # Mode 2: Export a single Item Set by its ID
     assert single_set_id is not None
+    console.rule("[bold cyan]Single Item Set Export[/]")
     count, files = process_item_set(env, single_set_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
     if files:
-        print(f"\nDone. Exported {count} articles to:")
+        console.print(Panel(
+            f"[green]✓[/] Exported [bold]{count}[/] articles to {len(files)} file(s)",
+            title="✅ Export Complete",
+            border_style="green"
+        ))
         for p in files:
-            print(f"  {p}")
+            console.print(f"  [dim]{p}[/]")
     else:
-        print("No files were created for the specified Item Set.")
+        console.print("[yellow]⚠[/] No files were created for the specified Item Set.")
 
 
 if __name__ == "__main__":

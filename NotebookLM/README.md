@@ -17,7 +17,8 @@ NotebookLM allows researchers to have AI-assisted conversations with their sourc
 - **Automatic file splitting**: Large collections are split into multiple files (max 250 articles each) to respect NotebookLM's ~500k word limit
 - **Country-organized output**: Whole collection exports are organized into country subfolders
 - **Clean Markdown formatting**: Articles are formatted with clear headings, metadata, and separators
-- **Progress tracking**: Real-time progress updates for large exports
+- **Rich console output**: Professional terminal UI with progress bars, spinners, panels, and color-coded status indicators
+- **Real-time progress tracking**: Visual progress bars with ETA for long-running exports
 
 ## Files Structure
 
@@ -53,20 +54,20 @@ NOTEBOOKLM_EXPORT_EXT=md  # or "txt" for plain text
 ### Required Python Packages
 
 ```bash
-pip install requests python-dotenv
+pip install requests python-dotenv rich
 ```
 
 ## Usage
 
 ### Interactive Mode
 
-Run without arguments to get an interactive prompt:
+Run without arguments to get an interactive prompt with a styled menu:
 
 ```bash
 python omeka_items_to_md.py
 ```
 
-You'll be asked to choose:
+You'll see a welcome panel and be asked to choose:
 1. **Whole IWAC collection** - Export all predefined Item Sets organized by country
 2. **Single Item Set** - Export one Item Set by its numeric ID
 3. **Subject reverse lookup** - Export all articles referencing a specific subject/authority item
@@ -202,6 +203,7 @@ MAX_ITEMS_PER_FILE = 250  # Default: 250 articles per file
 - **Whitespace**: Content is normalized to clean up OCR artifacts and ensure consistent formatting
 - **Pagination**: The script automatically handles Omeka's paginated API responses
 - **Rate limiting**: Consider API rate limits when exporting large collections
+- **Console output**: Uses the `rich` library for professional terminal UI with colors, progress bars, and spinners
 
 ## Troubleshooting
 
