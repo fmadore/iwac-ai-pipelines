@@ -22,6 +22,7 @@ urllib3               # HTTP client library
 # =============================================================================
 python-dotenv         # Environment variable management
 tqdm                  # Progress bars
+rich                  # Beautiful console output with colors and formatting
 ratelimit             # Rate limiting for API calls
 tenacity              # Retry logic with exponential backoff
 pydub                 # Audio processing

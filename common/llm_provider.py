@@ -463,6 +463,9 @@ class GeminiGenerateContentClient(BaseLLMClient):
         effective_config = self._get_effective_config(config)
         gen_config_kwargs = self._build_generation_config(effective_config)
         
+        # Use system_instruction parameter for system prompts (modern API)
+        gen_config_kwargs["system_instruction"] = system_prompt
+        
         gen_config = None
         if genai_types is not None:
             try:
@@ -470,10 +473,9 @@ class GeminiGenerateContentClient(BaseLLMClient):
             except Exception:  # pragma: no cover - optional field
                 gen_config = None
         
-        prompt = f"{system_prompt}\n\n{user_prompt}\nReturn ONLY the answer requested.".strip()
         response = self._client.models.generate_content(
             model=self.option.model,
-            contents=prompt,
+            contents=user_prompt,
             config=gen_config,
         )
         text = getattr(response, "text", None)
@@ -489,8 +491,8 @@ class GeminiGenerateContentClient(BaseLLMClient):
     ) -> T:
         """Generate structured output using Gemini's native JSON schema support.
         
-        Uses response_mime_type='application/json' and response_json_schema to guarantee
-        valid JSON matching the provided Pydantic schema.
+        Uses response_mime_type='application/json' and response_schema with the Pydantic
+        class directly to guarantee valid JSON matching the provided schema.
         """
         if BaseModel is None:
             raise RuntimeError("pydantic package is required for structured outputs")
@@ -500,10 +502,10 @@ class GeminiGenerateContentClient(BaseLLMClient):
         effective_config = self._get_effective_config(config)
         gen_config_kwargs = self._build_generation_config(effective_config)
         
-        # Add structured output configuration
-        json_schema = response_schema.model_json_schema()
+        # Use system_instruction and pass Pydantic model directly to response_schema
+        gen_config_kwargs["system_instruction"] = system_prompt
         gen_config_kwargs["response_mime_type"] = "application/json"
-        gen_config_kwargs["response_schema"] = json_schema
+        gen_config_kwargs["response_schema"] = response_schema  # Pass Pydantic class directly
         
         LOGGER.debug(
             f"Gemini structured request with schema={response_schema.__name__}, "
@@ -515,10 +517,9 @@ class GeminiGenerateContentClient(BaseLLMClient):
         except Exception as exc:
             raise RuntimeError(f"Failed to configure Gemini structured output: {exc}")
         
-        prompt = f"{system_prompt}\n\n{user_prompt}".strip()
         response = self._client.models.generate_content(
             model=self.option.model,
-            contents=prompt,
+            contents=user_prompt,
             config=gen_config,
         )
         

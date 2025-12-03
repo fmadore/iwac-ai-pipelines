@@ -9,6 +9,10 @@ import logging
 from typing import Optional
 from dotenv import load_dotenv
 from tqdm import tqdm
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich import box
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -28,6 +32,7 @@ from common.llm_provider import (  # noqa: E402
 # ------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 load_dotenv()
+console = Console()
 
 # ------------------------------------------------------------------
 # Prompt Loading
@@ -93,37 +98,62 @@ def process_file(llm_client: BaseLLMClient, input_file_path: str, output_file_pa
     except Exception as e:
         logging.error(f"Unexpected error {input_file_path}: {e}")
 
-def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str):
-    """Process all text files in input directory."""
+def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str) -> tuple[int, int]:
+    """Process all text files in input directory. Returns (success_count, error_count)."""
     if not os.path.exists(input_dir):
-        logging.error(f"Input dir not found: {input_dir}")
-        return
+        console.print(f"[red]✗[/red] Input directory not found: {input_dir}")
+        return 0, 0
     os.makedirs(output_dir, exist_ok=True)
     txt_files = [f for f in os.listdir(input_dir) if f.endswith('.txt')]
     if not txt_files:
-        logging.warning("No .txt files to process.")
-        return
-    logging.info(f"Processing {len(txt_files)} files -> {output_dir}")
-    for fname in tqdm(txt_files, desc="Generating Summaries"):
-        process_file(
-            llm_client,
-            os.path.join(input_dir, fname),
-            os.path.join(output_dir, fname),
-        )
-    logging.info("Batch complete.")
+        console.print("[yellow]⚠[/yellow] No .txt files to process.")
+        return 0, 0
+    
+    console.print(f"\n[cyan]📁 Processing {len(txt_files)} files[/cyan]\n")
+    
+    success_count = 0
+    error_count = 0
+    
+    for fname in tqdm(txt_files, desc="Generating Summaries", 
+                      bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"):
+        input_path = os.path.join(input_dir, fname)
+        output_path = os.path.join(output_dir, fname)
+        try:
+            with open(input_path, 'r', encoding='utf-8') as infile:
+                original_text = infile.read()
+            if not original_text.strip():
+                tqdm.write(f"  [yellow]⚠[/yellow] Skipped (empty): {fname}")
+                continue
+            summary = generate_summary(llm_client, original_text)
+            if summary:
+                with open(output_path, 'w', encoding='utf-8') as out:
+                    out.write(summary)
+                success_count += 1
+            else:
+                tqdm.write(f"  [red]✗[/red] No summary: {fname}")
+                error_count += 1
+        except Exception as e:
+            tqdm.write(f"  [red]✗[/red] Error processing {fname}: {e}")
+            error_count += 1
+    
+    return success_count, error_count
 
 def main():
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         input_dir = os.path.join(script_dir, 'TXT')
         output_dir = os.path.join(script_dir, 'Summaries_FR_TXT')
-        logging.info("Starting summary generation pipeline")
-        logging.info(f"Input: {input_dir}")
-        logging.info(f"Output: {output_dir}")
         
-        # Get model selection (restricted to mini and flash)
-        model_option = get_model_option(None, allowed_keys=["gpt-5-mini", "gemini-flash"])
-        logging.info(f"Using AI model: {summary_from_option(model_option)}")
+        # Display header
+        console.print(Panel.fit(
+            "[bold blue]📝 French Summary Generation Pipeline[/bold blue]",
+            border_style="blue",
+            box=box.DOUBLE
+        ))
+        console.print()
+        
+        # Get model selection (restricted to cost-effective models)
+        model_option = get_model_option(None, allowed_keys=["gpt-5-mini", "gemini-flash", "ministral-14b"])
         
         # Configure for cost-effective summarization
         config = LLMConfig(
@@ -132,16 +162,53 @@ def main():
             thinking_budget=0,           # Gemini Flash: no thinking needed for summaries
             temperature=0.3              # Gemini: some creativity for natural summaries
         )
-        logging.info(f"Summary Config: reasoning_effort={config.reasoning_effort}, "
-                    f"text_verbosity={config.text_verbosity}, thinking_budget={config.thinking_budget}")
+        
+        # Display configuration table
+        config_table = Table(title="⚙️  Configuration", box=box.ROUNDED, show_header=False)
+        config_table.add_column("Setting", style="cyan")
+        config_table.add_column("Value", style="green")
+        config_table.add_row("AI Model", summary_from_option(model_option))
+        config_table.add_row("Input Directory", input_dir)
+        config_table.add_row("Output Directory", output_dir)
+        config_table.add_row("Reasoning Effort", config.reasoning_effort or "default")
+        config_table.add_row("Text Verbosity", config.text_verbosity or "default")
+        config_table.add_row("Thinking Budget", str(config.thinking_budget) if config.thinking_budget is not None else "default")
+        config_table.add_row("Temperature", str(config.temperature) if config.temperature else "default")
+        console.print(config_table)
         
         llm_client = build_llm_client(model_option, config=config)
-        process_txt_files(llm_client, input_dir, output_dir)
-        logging.info("Completed successfully")
+        success_count, error_count = process_txt_files(llm_client, input_dir, output_dir)
+        
+        # Display results
+        console.print()
+        if error_count == 0 and success_count > 0:
+            console.print(Panel.fit(
+                f"[bold green]✓ Completed successfully![/bold green]\n\n"
+                f"[green]📄 {success_count} files summarized[/green]",
+                border_style="green",
+                box=box.ROUNDED
+            ))
+        elif success_count > 0:
+            console.print(Panel.fit(
+                f"[bold yellow]⚠ Completed with warnings[/bold yellow]\n\n"
+                f"[green]✓ {success_count} files summarized[/green]\n"
+                f"[red]✗ {error_count} files failed[/red]",
+                border_style="yellow",
+                box=box.ROUNDED
+            ))
+        else:
+            console.print(Panel.fit(
+                f"[bold red]✗ No files processed[/bold red]",
+                border_style="red",
+                box=box.ROUNDED
+            ))
+            
     except (FileNotFoundError, ValueError) as err:
-        logging.error(err)
+        console.print(f"\n[red]✗ Error:[/red] {err}")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]⚠ Interrupted by user[/yellow]")
     except Exception as exc:
-        logging.error(f"Unexpected failure: {exc}")
+        console.print(f"\n[red]✗ Unexpected failure:[/red] {exc}")
 
 if __name__ == '__main__':
     main()
