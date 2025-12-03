@@ -13,9 +13,11 @@ This pipeline downloads and transcribes audio and video files using Google Gemin
 - **Video support**: MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, MPEG, MPG, 3GP (auto-converted to audio)
 - **Flexible prompts**: Full transcription, translation to English, or Hausa-specific segmentation
 - **Long audio handling**: Automatic splitting into 10-minute segments for better accuracy
+- **Resume/retry support**: Automatically detect and retry failed segments without reprocessing successful ones
 - **Speaker detection**: Labels speaker changes with timestamps
 - **Multilingual support**: Handles code-switching and multiple languages in one recording
 - **Interactive or CLI**: Choose settings interactively or pass arguments for batch processing
+- **Rich console output**: Professional CLI with progress bars, tables, and colored status indicators
 
 ## Prerequisites
 
@@ -36,7 +38,7 @@ This pipeline downloads and transcribes audio and video files using Google Gemin
 
 1. Install dependencies:
 ```bash
-pip install google-genai python-dotenv pydub requests tqdm
+pip install google-genai python-dotenv pydub requests rich
 ```
 
 2. Configure your API keys in the project root `.env` file:
@@ -107,6 +109,9 @@ python 02_AI_transcribe_audio.py --split
 
 # Custom segment length (default: 10 minutes)
 python 02_AI_transcribe_audio.py --split --segment-minutes 15
+
+# Resume mode: retry only failed segments
+python 02_AI_transcribe_audio.py --resume --split
 
 # Custom folders
 python 02_AI_transcribe_audio.py --audio-folder MyAudio --output-folder MyOutput
@@ -220,6 +225,50 @@ When splitting is enabled, each segment is labeled:
 
 Temporary segment files are automatically cleaned up after successful transcription.
 
+## Resume/Retry Failed Segments
+
+If a transcription fails mid-way (e.g., due to API errors), the script marks failed segments with `[Segment X] TRANSCRIPTION FAILED` in the output file. You can retry just the failed segments without reprocessing successful ones.
+
+### How It Works
+
+1. **Automatic detection**: When you run the script, it scans existing transcription files for failed segment markers
+2. **Segment reuse**: If temp segments exist from the previous run, they're reused without re-splitting the audio
+3. **Status display**: Shows a summary of complete files, files with failures, and new files
+4. **Selective retry**: Only re-transcribes the specific segments that failed
+5. **In-place updates**: Updates the transcription file directly, replacing `TRANSCRIPTION FAILED` with actual content
+
+### Usage
+
+```bash
+# Resume mode: only retry failed segments
+python 02_AI_transcribe_audio.py --resume --split
+
+# Normal mode with automatic retry prompt
+python 02_AI_transcribe_audio.py --split
+# (Script will ask if you want to retry files with failed segments)
+```
+
+### Status Indicators
+
+The script displays a status table showing:
+- ✓ **Complete**: Files already transcribed successfully
+- ⚠ **Has failures**: Files with `TRANSCRIPTION FAILED` markers (will prompt to retry)
+- ○ **New**: Files not yet transcribed
+
+## Console Output
+
+All scripts use the `rich` library for professional console output:
+
+- **Welcome panels**: Clear script identification and purpose
+- **Configuration tables**: Display current settings before processing
+- **Progress bars**: Visual progress with time elapsed for batch operations
+- **Status indicators**:
+  - ✓ Green checkmarks for success
+  - ✗ Red X for errors
+  - ⚠ Yellow warnings for issues
+  - 🎵/🎬 Media type indicators
+- **Summary tables**: Detailed results after processing
+
 ## Directory Structure
 
 ```
@@ -260,6 +309,13 @@ To create a new transcription mode:
 4. The script will automatically detect and offer it as an option
 
 ## Troubleshooting
+
+### Segment failed during transcription
+If a segment fails (e.g., API timeout, empty response), the script marks it as `[Segment X] TRANSCRIPTION FAILED` in the output. You can retry with:
+```bash
+python 02_AI_transcribe_audio.py --resume --split
+```
+This will only retry the failed segments, not the entire file.
 
 ### "GEMINI_API_KEY not found"
 - Ensure `.env` file exists in the project root with `GEMINI_API_KEY=your_key`

@@ -17,6 +17,14 @@ from shutil import which
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+# Initialize rich console
+console = Console()
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -179,16 +187,16 @@ class AudioTranscriber:
         self._ffmpeg_available = bool(ffmpeg_path and ffprobe_path)
 
         if not self._ffmpeg_available:
-            print("Warning: ffmpeg/ffprobe not fully available. Splitting may fail.")
+            console.print("[yellow]⚠[/] Warning: ffmpeg/ffprobe not fully available. Splitting may fail.")
             if not ffmpeg_path:
-                print("  - ffmpeg not found. Set FFMPEG_PATH in .env or install via 'winget install Gyan.FFmpeg'.")
+                console.print("  [dim]- ffmpeg not found. Set FFMPEG_PATH in .env or install via 'winget install Gyan.FFmpeg'.[/]")
             if not ffprobe_path:
-                print("  - ffprobe not found. Set FFPROBE_PATH in .env (usually same folder as ffmpeg).")
+                console.print("  [dim]- ffprobe not found. Set FFPROBE_PATH in .env (usually same folder as ffmpeg).[/]")
         else:
-            print(f"Detected ffmpeg: {ffmpeg_path}")
-            print(f"Detected ffprobe: {ffprobe_path}")
+            console.print(f"[green]✓[/] Detected ffmpeg: [cyan]{ffmpeg_path}[/]")
+            console.print(f"[green]✓[/] Detected ffprobe: [cyan]{ffprobe_path}[/]")
             if os.environ.get("FFMPEG_PATH") or os.environ.get("FFPROBE_PATH"):
-                print("(Using paths from environment variables)")
+                console.print("[dim](Using paths from environment variables)[/]")
         return self._ffmpeg_available
     
     def is_video_file(self, file_path):
@@ -226,7 +234,7 @@ class AudioTranscriber:
             Path: Path to the converted audio file, or None if conversion failed
         """
         if not self.ensure_ffmpeg():
-            print(f"Cannot convert video '{video_file_path.name}': ffmpeg not available")
+            console.print(f"[red]✗[/] Cannot convert video '[cyan]{video_file_path.name}[/]': ffmpeg not available")
             return None
         
         try:
@@ -241,7 +249,7 @@ class AudioTranscriber:
             # Get ffmpeg path
             ffmpeg_path = getattr(AudioSegment, 'converter', None) or which("ffmpeg") or "ffmpeg"
             
-            print(f"Converting video to audio: {video_file_path.name} -> {output_filename}")
+            console.print(f"[cyan]🎬[/] Converting video to audio: [bold]{video_file_path.name}[/] → [green]{output_filename}[/]")
             
             # Build ffmpeg command
             # -i: input file
@@ -280,22 +288,22 @@ class AudioTranscriber:
             )
             
             if result.returncode != 0:
-                print(f"Error converting video: {result.stderr}")
+                console.print(f"[red]✗[/] Error converting video: {result.stderr}")
                 return None
             
             if output_path.exists():
-                print(f"Video converted successfully: {output_path.name}")
+                console.print(f"[green]✓[/] Video converted successfully: [cyan]{output_path.name}[/]")
                 self._temp_audio_files.append(output_path)
                 return output_path
             else:
-                print(f"Conversion failed: output file not created")
+                console.print(f"[red]✗[/] Conversion failed: output file not created")
                 return None
                 
         except subprocess.TimeoutExpired:
-            print(f"Video conversion timed out for {video_file_path.name}")
+            console.print(f"[red]✗[/] Video conversion timed out for [cyan]{video_file_path.name}[/]")
             return None
         except Exception as e:
-            print(f"Error converting video {video_file_path.name}: {e}")
+            console.print(f"[red]✗[/] Error converting video [cyan]{video_file_path.name}[/]: {e}")
             return None
     
     def cleanup_converted_audio(self):
@@ -306,9 +314,9 @@ class AudioTranscriber:
             try:
                 if temp_file.exists():
                     temp_file.unlink()
-                    print(f"Cleaned up converted audio: {temp_file.name}")
+                    console.print(f"[dim]🧹 Cleaned up converted audio: {temp_file.name}[/]")
             except Exception as e:
-                print(f"Warning: Could not clean up {temp_file}: {e}")
+                console.print(f"[yellow]⚠[/] Warning: Could not clean up {temp_file}: {e}")
         
         self._temp_audio_files.clear()
         
@@ -334,7 +342,7 @@ class AudioTranscriber:
         # Resolve audio folder relative to script directory
         audio_path = SCRIPT_DIR / audio_folder
         if not audio_path.exists():
-            print(f"Audio folder '{audio_path}' not found!")
+            console.print(f"[red]✗[/] Audio folder '[cyan]{audio_path}[/]' not found!")
             return []
         
         media_files = []
@@ -388,7 +396,7 @@ class AudioTranscriber:
         Returns:
             str: Transcribed text or None if error
         """
-        print(f"Transcribing: {audio_file_path.name}")
+        console.print(f"[cyan]🎤[/] Transcribing: [bold]{audio_file_path.name}[/]")
         
         # Prepare audio data
         audio_bytes, mime_type = self.prepare_audio_for_api(audio_file_path)
@@ -420,7 +428,7 @@ class AudioTranscriber:
                 
                 # Handle case where response.text is None (e.g., content blocked, empty response)
                 if response.text is None:
-                    print(f"Warning: No transcription returned for {audio_file_path.name} (response was empty)")
+                    console.print(f"[yellow]⚠[/] Warning: No transcription returned for [cyan]{audio_file_path.name}[/] (response was empty)")
                     # Don't retry for empty responses - likely a content issue, not transient
                     return None
                 
@@ -431,11 +439,11 @@ class AudioTranscriber:
                 if attempt < max_retries - 1:
                     # Exponential backoff: 2^attempt seconds (2s, 4s, 8s...)
                     wait_time = 2 ** (attempt + 1)
-                    print(f"Error transcribing {audio_file_path.name}: {e}")
-                    print(f"Retrying in {wait_time} seconds... (attempt {attempt + 1}/{max_retries})")
+                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
+                    console.print(f"[yellow]⏳[/] Retrying in {wait_time} seconds... (attempt {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                 else:
-                    print(f"Error transcribing {audio_file_path.name} after {max_retries} attempts: {last_error}")
+                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
         
         return None
     
@@ -464,11 +472,11 @@ class AudioTranscriber:
                 f.write("=" * 50 + "\n\n")
                 f.write(transcription)
             
-            print(f"Transcription saved: {output_file_path}")
+            console.print(f"[green]✓[/] Transcription saved: [cyan]{output_file_path}[/]")
             return output_file_path
         
         except Exception as e:
-            print(f"Error saving transcription: {e}")
+            console.print(f"[red]✗[/] Error saving transcription: {e}")
             return None
     
     def split_audio_file(self, audio_file_path, segment_minutes=10, temp_root="temp_segments"):
@@ -483,14 +491,20 @@ class AudioTranscriber:
         Returns:
             list[Path]: List of segment file paths (or [original] if splitting failed)
         """
+        # First, check if segments already exist from a previous run
+        existing_segments = self.find_existing_segments(audio_file_path, temp_root)
+        if existing_segments:
+            console.print(f"[green]✓[/] Found [bold]{len(existing_segments)}[/] existing segment(s) for '[cyan]{audio_file_path.name}[/]'")
+            return existing_segments
+        
         if not AudioSegment:
-            print("pydub not installed; skipping splitting for", audio_file_path.name)
+            console.print(f"[yellow]⚠[/] pydub not installed; skipping splitting for [cyan]{audio_file_path.name}[/]")
             return [audio_file_path]
 
         try:
             # Ensure ffmpeg tools available
             if not self.ensure_ffmpeg():
-                print("ffmpeg not configured; skipping splitting for", audio_file_path.name)
+                console.print(f"[yellow]⚠[/] ffmpeg not configured; skipping splitting for [cyan]{audio_file_path.name}[/]")
                 return [audio_file_path]
 
             segment_ms = segment_minutes * 60 * 1000
@@ -527,11 +541,47 @@ class AudioTranscriber:
                 chunk.export(segment_path, format=export_format)
                 segments.append(segment_path)
 
-            print(f"Split '{audio_file_path.name}' into {len(segments)} segment(s) of up to {segment_minutes} minutes each.")
+            console.print(f"[green]✓[/] Split '[cyan]{audio_file_path.name}[/]' into [bold]{len(segments)}[/] segment(s) of up to {segment_minutes} minutes each.")
             return segments
         except Exception as e:
-            print(f"Error splitting {audio_file_path.name}: {e}. Proceeding without splitting.")
+            console.print(f"[red]✗[/] Error splitting [cyan]{audio_file_path.name}[/]: {e}. Proceeding without splitting.")
             return [audio_file_path]
+
+    def find_existing_segments(self, audio_file_path: Path, temp_root: str = "temp_segments") -> list:
+        """
+        Find existing segment files from a previous split operation.
+        
+        Args:
+            audio_file_path (Path): Path to the original audio file
+            temp_root (str): Root temp directory for segments
+            
+        Returns:
+            list[Path]: List of existing segment paths sorted by segment number, or empty list if none found
+        """
+        import re
+        
+        segment_dir = SCRIPT_DIR / temp_root / audio_file_path.stem
+        
+        if not segment_dir.exists() or not segment_dir.is_dir():
+            return []
+        
+        # Find all segment files matching the pattern segment_XX.ext
+        segment_pattern = re.compile(r'^segment_(\d+)\..+$')
+        segments = []
+        
+        for file_path in segment_dir.iterdir():
+            if file_path.is_file():
+                match = segment_pattern.match(file_path.name)
+                if match:
+                    segment_num = int(match.group(1))
+                    segments.append((segment_num, file_path))
+        
+        if not segments:
+            return []
+        
+        # Sort by segment number and return just the paths
+        segments.sort(key=lambda x: x[0])
+        return [path for _, path in segments]
 
     def cleanup_temp_segments(self, original_audio_file, segment_paths, temp_root="temp_segments"):
         """
@@ -551,14 +601,14 @@ class AudioTranscriber:
             for segment_path in segment_paths:
                 if segment_path.exists() and segment_path != original_audio_file:
                     segment_path.unlink()
-                    print(f"Cleaned up segment: {segment_path.name}")
+                    console.print(f"[dim]🧹 Cleaned up segment: {segment_path.name}[/]")
             
             # Remove the segment directory if it's empty
             segment_dir = SCRIPT_DIR / temp_root / original_audio_file.stem
             if segment_dir.exists() and segment_dir.is_dir():
                 try:
                     segment_dir.rmdir()  # Only removes if empty
-                    print(f"Cleaned up directory: {segment_dir}")
+                    console.print(f"[dim]🧹 Cleaned up directory: {segment_dir}[/]")
                 except OSError:
                     # Directory not empty, leave it
                     pass
@@ -573,9 +623,94 @@ class AudioTranscriber:
                     pass
                     
         except Exception as e:
-            print(f"Warning: Could not clean up temporary files: {e}")
+            console.print(f"[yellow]⚠[/] Warning: Could not clean up temporary files: {e}")
 
-    def transcribe_all_audio_files(self, audio_folder="Audio", output_folder="Transcriptions", custom_prompt=None, split_segments=False, segment_minutes=10):
+    def check_existing_transcription(self, original_file: Path, output_folder: str = "Transcriptions") -> tuple:
+        """
+        Check if a transcription file exists and identify any failed segments.
+        
+        Args:
+            original_file (Path): Path to the original audio/video file
+            output_folder (str): Output folder for transcriptions
+            
+        Returns:
+            tuple: (exists: bool, failed_segments: list[int], total_segments: int)
+                   - exists: True if transcription file exists
+                   - failed_segments: List of segment numbers that failed (1-indexed)
+                   - total_segments: Total number of segments in the file (0 if not segmented)
+        """
+        output_path = SCRIPT_DIR / output_folder
+        output_filename = original_file.stem + "_transcription.txt"
+        output_file_path = output_path / output_filename
+        
+        if not output_file_path.exists():
+            return False, [], 0
+        
+        try:
+            with open(output_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Check for failed segments
+            import re
+            failed_pattern = re.compile(r'\[Segment (\d+)\] TRANSCRIPTION FAILED')
+            failed_matches = failed_pattern.findall(content)
+            failed_segments = [int(m) for m in failed_matches]
+            
+            # Count total segments
+            segment_pattern = re.compile(r'\[Segment (\d+)\]')
+            all_segments = segment_pattern.findall(content)
+            total_segments = len(set(all_segments)) if all_segments else 0
+            
+            return True, failed_segments, total_segments
+            
+        except Exception as e:
+            console.print(f"[yellow]⚠[/] Warning: Could not read existing transcription: {e}")
+            return False, [], 0
+
+    def update_transcription_segment(self, original_file: Path, segment_num: int, 
+                                      new_content: str, output_folder: str = "Transcriptions") -> bool:
+        """
+        Update a specific failed segment in an existing transcription file.
+        
+        Args:
+            original_file (Path): Path to the original audio/video file
+            segment_num (int): The segment number to update (1-indexed)
+            new_content (str): The new transcription content for this segment
+            output_folder (str): Output folder for transcriptions
+            
+        Returns:
+            bool: True if update succeeded
+        """
+        output_path = SCRIPT_DIR / output_folder
+        output_filename = original_file.stem + "_transcription.txt"
+        output_file_path = output_path / output_filename
+        
+        try:
+            with open(output_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Replace the failed segment marker with actual content
+            import re
+            failed_marker = f"[Segment {segment_num}] TRANSCRIPTION FAILED"
+            new_segment_content = f"[Segment {segment_num}]\n{new_content}"
+            
+            if failed_marker in content:
+                content = content.replace(failed_marker, new_segment_content)
+                
+                with open(output_file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                console.print(f"[green]✓[/] Updated segment {segment_num} in transcription file")
+                return True
+            else:
+                console.print(f"[yellow]⚠[/] Could not find failed marker for segment {segment_num}")
+                return False
+                
+        except Exception as e:
+            console.print(f"[red]✗[/] Error updating transcription file: {e}")
+            return False
+
+    def transcribe_all_audio_files(self, audio_folder="Audio", output_folder="Transcriptions", custom_prompt=None, split_segments=False, segment_minutes=10, resume_mode=False):
         """
         Transcribe all audio and video files in the specified folder.
         Video files are automatically converted to audio before transcription.
@@ -586,39 +721,224 @@ class AudioTranscriber:
             custom_prompt (str, optional): Custom transcription prompt
             split_segments (bool): Whether to split audio into segments
             segment_minutes (int): Length of each segment in minutes
+            resume_mode (bool): If True, only retry failed segments in existing transcriptions
         """
         media_files = self.get_audio_files(audio_folder)
         
         if not media_files:
-            print("No supported audio or video files found in the Audio folder.")
-            print(f"Supported audio formats: {', '.join(self.supported_formats.keys())}")
-            print(f"Supported video formats: {', '.join(self.video_formats.keys())}")
+            console.print("[yellow]⚠[/] No supported audio or video files found in the Audio folder.")
+            console.print(f"[dim]Supported audio formats: {', '.join(self.supported_formats.keys())}[/]")
+            console.print(f"[dim]Supported video formats: {', '.join(self.video_formats.keys())}[/]")
             return
         
-        audio_count = sum(1 for _, is_video in media_files if not is_video)
-        video_count = sum(1 for _, is_video in media_files if is_video)
+        # Check for files needing processing
+        files_to_process = []
+        files_to_retry = []  # Files with failed segments
+        files_complete = []  # Files already fully transcribed
         
-        print(f"Found {len(media_files)} file(s) to transcribe:")
-        print(f"  - {audio_count} audio file(s)")
-        print(f"  - {video_count} video file(s) (will be converted to audio)")
-        print()
         for file_path, is_video in media_files:
-            file_type = "[VIDEO]" if is_video else "[AUDIO]"
-            print(f"  {file_type} {file_path.name}")
+            exists, failed_segments, total_segments = self.check_existing_transcription(file_path, output_folder)
+            
+            if not exists:
+                files_to_process.append((file_path, is_video, None))
+            elif failed_segments:
+                files_to_retry.append((file_path, is_video, failed_segments, total_segments))
+            else:
+                files_complete.append((file_path, is_video))
         
-        print("\nStarting transcription process...\n")
+        # Display status
+        audio_count = sum(1 for _, is_video, *_ in media_files if not is_video)
+        video_count = sum(1 for _, is_video, *_ in media_files if is_video)
+        
+        # Show summary of what needs to be done
+        if files_complete or files_to_retry:
+            status_table = Table(title="📋 Transcription Status", box=box.ROUNDED)
+            status_table.add_column("Status", style="dim")
+            status_table.add_column("Count", justify="right")
+            status_table.add_column("Details", style="dim")
+            
+            if files_complete:
+                status_table.add_row("[green]✓ Complete[/]", str(len(files_complete)), "Already transcribed")
+            if files_to_retry:
+                retry_details = ", ".join([f"{f.name} ({len(segs)} failed)" for f, _, segs, _ in files_to_retry])
+                status_table.add_row("[yellow]⚠ Has failures[/]", str(len(files_to_retry)), retry_details[:50] + "..." if len(retry_details) > 50 else retry_details)
+            if files_to_process:
+                status_table.add_row("[cyan]○ New[/]", str(len(files_to_process)), "Not yet transcribed")
+            
+            console.print(status_table)
+            console.print()
+        
+        # In resume mode, only process files with failed segments
+        if resume_mode:
+            if not files_to_retry:
+                console.print("[green]✓[/] No failed segments to retry. All transcriptions are complete!")
+                return
+            
+            console.print(f"[bold]Resume mode:[/] Retrying [cyan]{sum(len(segs) for _, _, segs, _ in files_to_retry)}[/] failed segment(s) in [cyan]{len(files_to_retry)}[/] file(s)")
+            console.print()
+            
+            # Process only files with failed segments
+            successful_retries = 0
+            failed_retries = 0
+            
+            try:
+                for original_file, is_video, failed_segments, total_segments in files_to_retry:
+                    console.rule(f"[dim]Retrying: {original_file.name}[/]", style="dim")
+                    console.print(f"[cyan]🔄[/] Failed segments to retry: {failed_segments}")
+                    
+                    # Convert video to audio if needed
+                    if is_video:
+                        audio_file = self.convert_video_to_audio(original_file)
+                        if not audio_file:
+                            console.print(f"[yellow]⚠[/] Skipping [cyan]{original_file.name}[/]: video conversion failed")
+                            failed_retries += len(failed_segments)
+                            continue
+                    else:
+                        audio_file = original_file
+                    
+                    # Split the audio to get segments
+                    segment_paths = self.split_audio_file(audio_file, segment_minutes=segment_minutes)
+                    
+                    if len(segment_paths) < max(failed_segments):
+                        console.print(f"[red]✗[/] Segment count mismatch. Expected at least {max(failed_segments)} segments, got {len(segment_paths)}")
+                        failed_retries += len(failed_segments)
+                        continue
+                    
+                    # Retry only the failed segments
+                    for seg_num in failed_segments:
+                        segment_path = segment_paths[seg_num - 1]  # Convert to 0-indexed
+                        console.print(f"[cyan]📍[/] Retrying segment {seg_num}/{total_segments}: [bold]{segment_path.name}[/]")
+                        
+                        seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
+                        
+                        if seg_transcription:
+                            if self.update_transcription_segment(original_file, seg_num, seg_transcription, output_folder):
+                                successful_retries += 1
+                            else:
+                                failed_retries += 1
+                        else:
+                            console.print(f"[red]✗[/] Segment {seg_num} still failed")
+                            failed_retries += 1
+                    
+                    # Clean up segments
+                    self.cleanup_temp_segments(audio_file, segment_paths)
+                    console.print()
+                    
+            finally:
+                self.cleanup_converted_audio()
+            
+            # Summary
+            console.print()
+            console.rule("[bold]Retry Summary", style="cyan")
+            
+            summary_table = Table(title="📊 Results", box=box.ROUNDED)
+            summary_table.add_column("Metric", style="dim")
+            summary_table.add_column("Value", style="green")
+            summary_table.add_row("Segments retried", str(successful_retries + failed_retries))
+            summary_table.add_row("Successful retries", f"[green]{successful_retries}[/]")
+            summary_table.add_row("Still failing", f"[red]{failed_retries}[/]" if failed_retries > 0 else "0")
+            console.print(summary_table)
+            
+            return
+        
+        # Normal mode: process new files and optionally retry failed ones
+        all_files_to_process = files_to_process.copy()
+        
+        # Ask about retrying failed segments if any exist
+        if files_to_retry:
+            retry_choice = console.input(f"\n[bold]Found {len(files_to_retry)} file(s) with failed segments. Retry them? (Y/n):[/] ").strip().lower()
+            if retry_choice != 'n':
+                for file_path, is_video, failed_segs, total_segs in files_to_retry:
+                    all_files_to_process.append((file_path, is_video, (failed_segs, total_segs)))
+        
+        if not all_files_to_process:
+            console.print("[green]✓[/] All files are already transcribed successfully!")
+            return
+        
+        # Display files table
+        files_table = Table(title="📁 Files to Transcribe", box=box.ROUNDED)
+        files_table.add_column("Type", style="cyan")
+        files_table.add_column("Filename", style="green")
+        files_table.add_column("Status", style="dim")
+        
+        for item in all_files_to_process:
+            file_path, is_video = item[0], item[1]
+            retry_info = item[2] if len(item) > 2 else None
+            file_type = "🎬 Video" if is_video else "🎵 Audio"
+            status = f"Retry {len(retry_info[0])} segment(s)" if retry_info else "New"
+            files_table.add_row(file_type, file_path.name, status)
+        
+        console.print(files_table)
+        
+        # Summary
+        console.print(f"\n[bold]Summary:[/] [cyan]{len(all_files_to_process)}[/] file(s) to process")
+        if video_count > 0:
+            console.print("[dim](Video files will be converted to audio)[/]")
+        
+        console.print()
+        console.rule("[bold]Starting Transcription Process", style="cyan")
+        console.print()
         
         successful_transcriptions = 0
         failed_transcriptions = 0
         
         try:
-            for original_file, is_video in media_files:
+            for item in all_files_to_process:
+                original_file, is_video = item[0], item[1]
+                retry_info = item[2] if len(item) > 2 else None
+                
                 try:
+                    console.rule(f"[dim]{original_file.name}[/]", style="dim")
+                    
+                    # Handle retry mode for this file
+                    if retry_info:
+                        failed_segments, total_segments = retry_info
+                        console.print(f"[cyan]🔄[/] Retrying {len(failed_segments)} failed segment(s): {failed_segments}")
+                        
+                        # Convert video to audio if needed
+                        if is_video:
+                            audio_file = self.convert_video_to_audio(original_file)
+                            if not audio_file:
+                                console.print(f"[yellow]⚠[/] Skipping [cyan]{original_file.name}[/]: video conversion failed")
+                                failed_transcriptions += 1
+                                continue
+                        else:
+                            audio_file = original_file
+                        
+                        # Split to get segments
+                        segment_paths = self.split_audio_file(audio_file, segment_minutes=segment_minutes)
+                        
+                        all_retries_successful = True
+                        for seg_num in failed_segments:
+                            if seg_num > len(segment_paths):
+                                console.print(f"[red]✗[/] Segment {seg_num} out of range")
+                                all_retries_successful = False
+                                continue
+                            
+                            segment_path = segment_paths[seg_num - 1]
+                            console.print(f"[cyan]📍[/] Retrying segment {seg_num}/{total_segments}: [bold]{segment_path.name}[/]")
+                            
+                            seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
+                            
+                            if seg_transcription:
+                                self.update_transcription_segment(original_file, seg_num, seg_transcription, output_folder)
+                            else:
+                                all_retries_successful = False
+                        
+                        self.cleanup_temp_segments(audio_file, segment_paths)
+                        
+                        if all_retries_successful:
+                            successful_transcriptions += 1
+                        else:
+                            failed_transcriptions += 1
+                        continue
+                    
+                    # Normal processing for new files
                     # Convert video to audio if needed
                     if is_video:
                         audio_file = self.convert_video_to_audio(original_file)
                         if not audio_file:
-                            print(f"Skipping {original_file.name}: video conversion failed")
+                            console.print(f"[yellow]⚠[/] Skipping [cyan]{original_file.name}[/]: video conversion failed")
                             failed_transcriptions += 1
                             continue
                     else:
@@ -631,7 +951,7 @@ class AudioTranscriber:
                         all_segments_successful = True
                         
                         for idx, segment_path in enumerate(segment_paths, start=1):
-                            print(f"Processing segment {idx}/{len(segment_paths)}: {segment_path.name}")
+                            console.print(f"[cyan]📍[/] Processing segment {idx}/{len(segment_paths)}: [bold]{segment_path.name}[/]")
                             seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
                             if seg_transcription:
                                 header = f"[Segment {idx}]" if len(segment_paths) > 1 else ""
@@ -660,25 +980,30 @@ class AudioTranscriber:
                         failed_transcriptions += 1
 
                 except Exception as e:
-                    print(f"Unexpected error processing {original_file.name}: {e}")
+                    console.print(f"[red]✗[/] Unexpected error processing [cyan]{original_file.name}[/]: {e}")
                     failed_transcriptions += 1
 
-                print()  # Add spacing between files
+                console.print()  # Add spacing between files
         
         finally:
             # Clean up converted audio files
             self.cleanup_converted_audio()
         
         # Summary
-        print("=" * 50)
-        print("TRANSCRIPTION SUMMARY")
-        print("=" * 50)
-        print(f"Total files processed: {len(media_files)}")
-        print(f"Successful transcriptions: {successful_transcriptions}")
-        print(f"Failed transcriptions: {failed_transcriptions}")
+        console.print()
+        console.rule("[bold]Transcription Summary", style="cyan")
+        
+        summary_table = Table(title="📊 Results", box=box.ROUNDED)
+        summary_table.add_column("Metric", style="dim")
+        summary_table.add_column("Value", style="green")
+        summary_table.add_row("Total files processed", str(len(media_files)))
+        summary_table.add_row("Successful transcriptions", f"[green]{successful_transcriptions}[/]")
+        summary_table.add_row("Failed transcriptions", f"[red]{failed_transcriptions}[/]" if failed_transcriptions > 0 else "0")
+        summary_table.add_row("Output folder", output_folder)
+        console.print(summary_table)
         
         if successful_transcriptions > 0:
-            print(f"\nTranscriptions saved in the '{output_folder}' folder.")
+            console.print(f"\n[green]✓[/] Transcriptions saved in the '[cyan]{output_folder}[/]' folder.")
     
     def get_available_prompts(self, prompts_folder="prompts"):
         """
@@ -693,7 +1018,7 @@ class AudioTranscriber:
         # Resolve prompts folder relative to script directory
         prompts_path = SCRIPT_DIR / prompts_folder
         if not prompts_path.exists():
-            print(f"Warning: Prompts folder '{prompts_path}' not found.")
+            console.print(f"[yellow]⚠[/] Warning: Prompts folder '[cyan]{prompts_path}[/]' not found.")
             return []
         
         prompt_files = []
@@ -724,19 +1049,19 @@ class AudioTranscriber:
         Args:
             available_prompts (list): List of available prompts
         """
-        print("\n" + "=" * 50)
-        print("PROMPT SELECTION")
-        print("=" * 50)
-        print("Available transcription prompts:")
-        print()
+        console.print()
+        prompts_table = Table(title="📝 Available Transcription Prompts", box=box.ROUNDED)
+        prompts_table.add_column("#", style="cyan", justify="right")
+        prompts_table.add_column("Description", style="green")
         
         for number, description, _ in available_prompts:
             if number > 0:
-                print(f"{number}. {description}")
+                prompts_table.add_row(str(number), description)
             else:
-                print(f"   {description}")
+                prompts_table.add_row("-", description)
         
-        print()
+        console.print(prompts_table)
+        console.print()
     
     def load_prompt_content(self, prompt_file_path):
         """
@@ -770,7 +1095,7 @@ class AudioTranscriber:
                 return content.strip()
                 
         except Exception as e:
-            print(f"Error loading prompt from '{prompt_file_path}': {e}")
+            console.print(f"[red]✗[/] Error loading prompt from '[cyan]{prompt_file_path}[/]': {e}")
             return self.default_prompt
     
     def select_prompt(self, prompts_folder="prompts"):
@@ -786,7 +1111,7 @@ class AudioTranscriber:
         available_prompts = self.get_available_prompts(prompts_folder)
         
         if not available_prompts:
-            print("No prompt files found. Using default prompt.")
+            console.print("[yellow]⚠[/] No prompt files found. Using default prompt.")
             return self.default_prompt, False
         
         # Display menu
@@ -796,15 +1121,15 @@ class AudioTranscriber:
         numbered_prompts = [(num, desc, path) for num, desc, path in available_prompts if num > 0]
         
         if not numbered_prompts:
-            print("No numbered prompts found. Using default prompt.")
+            console.print("[yellow]⚠[/] No numbered prompts found. Using default prompt.")
             return self.default_prompt, False
         
         while True:
             try:
-                choice = input(f"Select a prompt (1-{len(numbered_prompts)}) or press Enter for default: ").strip()
+                choice = console.input(f"[bold]Select a prompt (1-{len(numbered_prompts)}) or press Enter for default:[/] ").strip()
                 
                 if not choice:
-                    print("Using default prompt.")
+                    console.print("[dim]Using default prompt.[/]")
                     return self.default_prompt, False
                 
                 choice_num = int(choice)
@@ -818,19 +1143,19 @@ class AudioTranscriber:
                 
                 if selected_prompt:
                     prompt_num, description, prompt_path = selected_prompt
-                    print(f"Selected: {description}")
+                    console.print(f"[green]✓[/] Selected: [cyan]{description}[/]")
                     # Auto-enable splitting for prompt #1 (full audio transcription)
                     auto_split = (prompt_num == 1)
                     if auto_split:
-                        print("  → Audio splitting automatically enabled for detailed transcription")
+                        console.print("  [dim]→ Audio splitting automatically enabled for detailed transcription[/]")
                     return self.load_prompt_content(prompt_path), auto_split
                 else:
-                    print(f"Invalid choice. Please select a number between 1 and {len(numbered_prompts)}.")
+                    console.print(f"[red]✗[/] Invalid choice. Please select a number between 1 and {len(numbered_prompts)}.")
                     
             except ValueError:
-                print("Invalid input. Please enter a number.")
+                console.print("[red]✗[/] Invalid input. Please enter a number.")
             except KeyboardInterrupt:
-                print("\nUsing default prompt.")
+                console.print("\n[dim]Using default prompt.[/]")
                 return self.default_prompt, False
 
 def parse_args():
@@ -868,6 +1193,11 @@ def parse_args():
         default=10,
         help="Segment length in minutes when splitting (default: 10)"
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume mode: only retry failed segments in existing transcriptions"
+    )
     return parser.parse_args()
 
 
@@ -875,10 +1205,15 @@ def select_model_interactive():
     """
     Interactively select a model if not provided via CLI.
     """
-    print("\nAvailable models:")
-    print("1. gemini-3-pro-preview (Higher quality, slower)")
-    print("2. gemini-2.5-flash (Faster, good quality)")
-    model_choice = input("\nSelect a model (1 or 2) or press Enter for default (gemini-3-pro-preview): ").strip()
+    models_table = Table(title="🤖 Available Models", box=box.ROUNDED)
+    models_table.add_column("#", style="cyan", justify="right")
+    models_table.add_column("Model", style="green")
+    models_table.add_column("Description", style="dim")
+    models_table.add_row("1", "gemini-3-pro-preview", "Higher quality, slower")
+    models_table.add_row("2", "gemini-2.5-flash", "Faster, good quality")
+    console.print(models_table)
+    
+    model_choice = console.input("\n[bold]Select a model (1 or 2) or press Enter for default (gemini-3-pro-preview):[/] ").strip()
     
     if model_choice == '2':
         return 'gemini-2.5-flash'
@@ -891,17 +1226,21 @@ def main():
     """
     args = parse_args()
     
-    print("Audio Transcription using Google Gemini")
-    print("=" * 50)
+    # Display welcome banner
+    console.print(Panel(
+        "Transcribe audio and video files using Google Gemini AI",
+        title="🎤 Audio Transcription using Google Gemini",
+        border_style="cyan"
+    ))
     
     try:
         # Select model via CLI or interactive
         if args.model:
             selected_model = args.model
-            print(f"\nUsing model: {selected_model}")
+            console.print(f"\n[green]✓[/] Using model: [cyan]{selected_model}[/]")
         else:
             selected_model = select_model_interactive()
-            print(f"Selected: {selected_model}")
+            console.print(f"[green]✓[/] Selected: [cyan]{selected_model}[/]")
         
         # Initialize transcriber (prompt chosen interactively)
         transcriber = AudioTranscriber(model=selected_model)
@@ -911,40 +1250,56 @@ def main():
             # CLI flag takes precedence
             split_segments = True
             if not AudioSegment:
-                print("Warning: Audio splitting requires 'pydub'. Install via 'pip install pydub' and ensure ffmpeg is available. Proceeding without splitting.")
+                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub'. Install via 'pip install pydub' and ensure ffmpeg is available. Proceeding without splitting.")
                 split_segments = False
         elif transcriber.auto_split:
             # Auto-split is enabled for this prompt
             split_segments = True
             if not AudioSegment:
-                print("Warning: Audio splitting requires 'pydub'. Install via 'pip install pydub' and ensure ffmpeg is available. Proceeding without splitting.")
+                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub'. Install via 'pip install pydub' and ensure ffmpeg is available. Proceeding without splitting.")
                 split_segments = False
         else:
             # Ask user if they want to split audio into 10-minute segments
-            split_choice = input("\nSplit audio into 10-minute segments for improved accuracy? (y/N): ").strip().lower()
+            split_choice = console.input("\n[bold]Split audio into 10-minute segments for improved accuracy? (y/N):[/] ").strip().lower()
             split_segments = split_choice in {"y", "yes"}
             if split_segments and not AudioSegment:
-                print("You chose to split audio, but 'pydub' is not installed. Install via 'pip install pydub' and ensure ffmpeg is available on PATH. Proceeding without splitting.")
+                console.print("[yellow]⚠[/] You chose to split audio, but 'pydub' is not installed. Install via 'pip install pydub' and ensure ffmpeg is available on PATH. Proceeding without splitting.")
                 split_segments = False
+
+        # Display configuration
+        console.print()
+        config_table = Table(title="⚙️ Configuration", box=box.ROUNDED)
+        config_table.add_column("Setting", style="dim")
+        config_table.add_column("Value", style="green")
+        config_table.add_row("Model", selected_model)
+        config_table.add_row("Audio Folder", args.audio_folder)
+        config_table.add_row("Output Folder", args.output_folder)
+        config_table.add_row("Split Segments", "Yes" if split_segments else "No")
+        if split_segments:
+            config_table.add_row("Segment Length", f"{args.segment_minutes} minutes")
+        config_table.add_row("Resume Mode", "[cyan]Yes (retry failed only)[/]" if args.resume else "No")
+        console.print(config_table)
+        console.print()
 
         # Transcribe all audio files (optionally split into segments)
         transcriber.transcribe_all_audio_files(
             audio_folder=args.audio_folder,
             output_folder=args.output_folder,
             split_segments=split_segments,
-            segment_minutes=args.segment_minutes
+            segment_minutes=args.segment_minutes,
+            resume_mode=args.resume
         )
         
     except ValueError as e:
-        print(f"Configuration Error: {e}")
-        print("\nTo use this script, you need to set your Gemini API key:")
-        print("1. Get your API key from: https://aistudio.google.com/app/api-keys")
-        print("2. Edit the .env file in this directory")
-        print("3. Replace 'your-api-key-here' with your actual API key")
-        print("4. Save the file and run this script again")
+        console.print(f"\n[red]✗ Configuration Error:[/] {e}")
+        console.print("\n[bold]To use this script, you need to set your Gemini API key:[/]")
+        console.print("  1. Get your API key from: [link=https://aistudio.google.com/app/api-keys]https://aistudio.google.com/app/api-keys[/link]")
+        console.print("  2. Edit the .env file in this directory")
+        console.print("  3. Replace 'your-api-key-here' with your actual API key")
+        console.print("  4. Save the file and run this script again")
         
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        console.print(f"\n[red]✗ Unexpected error:[/] {e}")
 
 
 if __name__ == "__main__":

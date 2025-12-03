@@ -30,7 +30,14 @@ from dataclasses import dataclass
 
 import requests
 from dotenv import load_dotenv
-from tqdm import tqdm
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+# Initialize rich console
+console = Console()
 
 # Script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -330,30 +337,40 @@ def load_config() -> OmekaConfig:
 
 def print_summary(results: Dict[str, str]) -> None:
     """Print a summary of the update results."""
-    print("\n" + "=" * 60)
-    print("UPDATE SUMMARY")
-    print("=" * 60)
+    console.print()
+    console.rule("[bold]Update Summary", style="cyan")
     
     success_count = sum(1 for status in results.values() if status == 'success')
     not_found_count = sum(1 for status in results.values() if status == 'not_found')
     failed_count = sum(1 for status in results.values() if status == 'failed')
     
-    print(f"Total identifiers processed: {len(results)}")
-    print(f"  - Successfully updated: {success_count}")
-    print(f"  - Item not found: {not_found_count}")
-    print(f"  - Failed to update: {failed_count}")
+    # Create summary table
+    summary_table = Table(title="📊 Results", box=box.ROUNDED)
+    summary_table.add_column("Status", style="dim")
+    summary_table.add_column("Count", justify="right")
+    summary_table.add_row("Total identifiers processed", str(len(results)))
+    summary_table.add_row("[green]Successfully updated[/]", f"[green]{success_count}[/]")
+    summary_table.add_row("[yellow]Item not found[/]", f"[yellow]{not_found_count}[/]")
+    summary_table.add_row("[red]Failed to update[/]", f"[red]{failed_count}[/]")
+    console.print(summary_table)
     
     if not_found_count > 0:
-        print("\nIdentifiers not found in Omeka:")
+        console.print()
+        not_found_table = Table(title="[yellow]⚠ Identifiers Not Found in Omeka[/]", box=box.ROUNDED)
+        not_found_table.add_column("Identifier", style="yellow")
         for identifier, status in results.items():
             if status == 'not_found':
-                print(f"  - {identifier}")
+                not_found_table.add_row(identifier)
+        console.print(not_found_table)
     
     if failed_count > 0:
-        print("\nFailed updates:")
+        console.print()
+        failed_table = Table(title="[red]✗ Failed Updates[/]", box=box.ROUNDED)
+        failed_table.add_column("Identifier", style="red")
         for identifier, status in results.items():
             if status == 'failed':
-                print(f"  - {identifier}")
+                failed_table.add_row(identifier)
+        console.print(failed_table)
 
 
 def main():
@@ -362,9 +379,12 @@ def main():
     setup_logging(SCRIPT_DIR / 'log')
     transcriptions_folder = SCRIPT_DIR / 'Transcriptions'
     
-    print("\n" + "=" * 60)
-    print("OMEKA S TRANSCRIPTION UPDATER")
-    print("=" * 60)
+    # Display welcome banner
+    console.print(Panel(
+        "Process transcription files and update Omeka S items with transcribed content",
+        title="📝 Omeka S Transcription Updater",
+        border_style="cyan"
+    ))
     
     try:
         # Load configuration
@@ -373,70 +393,96 @@ def main():
         processor = TranscriptionProcessor(transcriptions_folder)
         
         # Get grouped transcription files
-        groups = processor.get_transcription_groups()
+        with console.status("[cyan]Scanning transcription files...[/]"):
+            groups = processor.get_transcription_groups()
         
         if not groups:
-            print(f"\nNo transcription files found in: {transcriptions_folder}")
+            console.print(f"\n[yellow]⚠[/] No transcription files found in: [cyan]{transcriptions_folder}[/]")
             return
         
-        print(f"\nFound {len(groups)} unique identifier(s) to process:")
+        # Display files table
+        files_table = Table(title="📁 Identifiers to Process", box=box.ROUNDED)
+        files_table.add_column("Identifier", style="cyan")
+        files_table.add_column("Segments", justify="right", style="green")
+        
         for identifier, files in groups.items():
             file_count = len(files)
-            if file_count > 1:
-                print(f"  - {identifier} ({file_count} segments)")
-            else:
-                print(f"  - {identifier}")
+            segment_info = f"{file_count} segment(s)" if file_count > 1 else "1 file"
+            files_table.add_row(identifier, segment_info)
+        
+        console.print(files_table)
+        console.print(f"\n[bold]Total:[/] [cyan]{len(groups)}[/] unique identifier(s)")
         
         # Confirm before proceeding
-        print("\nThis will update the bibo:content property for matching Omeka S items.")
-        confirm = input("Continue? (y/n): ").strip().lower()
+        console.print("\n[dim]This will update the bibo:content property for matching Omeka S items.[/]")
+        confirm = console.input("[bold]Continue? (y/n):[/] ").strip().lower()
         if confirm != 'y':
-            print("Operation cancelled.")
+            console.print("[yellow]⚠[/] Operation cancelled.")
             return
         
-        print("\nProcessing transcriptions...")
+        console.print()
+        console.rule("[bold]Processing Transcriptions", style="cyan")
+        console.print()
+        
         results = {}
         
-        for identifier, files in tqdm(groups.items(), desc="Updating items"):
-            logging.info(f"Processing identifier: {identifier}")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task("[cyan]Updating items...", total=len(groups))
             
-            # Search for the item in Omeka
-            item = client.search_item_by_identifier(identifier)
-            
-            if not item:
-                logging.warning(f"No item found with identifier: {identifier}")
-                results[identifier] = 'not_found'
-                continue
-            
-            item_id = item.get('o:id')
-            logging.info(f"Found item {item_id} for identifier {identifier}")
-            
-            # Read and join transcription content
-            content = processor.read_and_join_transcriptions(files)
-            
-            if not content:
-                logging.warning(f"No content found for identifier: {identifier}")
-                results[identifier] = 'failed'
-                continue
-            
-            # Update the item
-            if client.update_item_content(item_id, content):
-                results[identifier] = 'success'
-            else:
-                results[identifier] = 'failed'
+            for identifier, files in groups.items():
+                logging.info(f"Processing identifier: {identifier}")
+                
+                # Search for the item in Omeka
+                item = client.search_item_by_identifier(identifier)
+                
+                if not item:
+                    logging.warning(f"No item found with identifier: {identifier}")
+                    results[identifier] = 'not_found'
+                    progress.update(task, advance=1)
+                    continue
+                
+                item_id = item.get('o:id')
+                logging.info(f"Found item {item_id} for identifier {identifier}")
+                
+                # Read and join transcription content
+                content = processor.read_and_join_transcriptions(files)
+                
+                if not content:
+                    logging.warning(f"No content found for identifier: {identifier}")
+                    results[identifier] = 'failed'
+                    progress.update(task, advance=1)
+                    continue
+                
+                # Update the item
+                if client.update_item_content(item_id, content):
+                    results[identifier] = 'success'
+                else:
+                    results[identifier] = 'failed'
+                
+                progress.update(task, advance=1)
         
         # Print summary
         print_summary(results)
+        
+        success_count = sum(1 for status in results.values() if status == 'success')
+        console.print(f"\n[green]✓[/] Transcription update process completed. [cyan]{success_count}[/] item(s) updated.")
         logging.info("Transcription update process completed")
         
     except ValueError as e:
-        print(f"\nConfiguration Error: {e}")
+        console.print(f"\n[red]✗ Configuration Error:[/] {e}")
         logging.error(f"Configuration error: {e}")
     except KeyboardInterrupt:
-        print("\n\nOperation cancelled by user.")
+        console.print("\n\n[yellow]⚠[/] Operation cancelled by user.")
         logging.info("Operation cancelled by user")
     except Exception as e:
-        print(f"\nUnexpected error: {e}")
+        console.print(f"\n[red]✗ Unexpected error:[/] {e}")
         logging.exception(f"Unexpected error: {e}")
 
 
