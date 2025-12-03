@@ -37,10 +37,10 @@ from dotenv import load_dotenv
 from PyPDF2 import PdfReader, PdfWriter
 import io
 
-# Import shared LLM provider
+# Import shared LLM provider for model selection (but use genai.Client directly for multimodal)
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.llm_provider import get_model_option, build_llm_client, summary_from_option, LLMConfig
+from common.llm_provider import get_model_option, summary_from_option, LLMConfig
 
 # Import Gemini types for PDF processing
 try:
@@ -86,8 +86,13 @@ class GeminiPDFProcessor:
             api_key (str): Google Gemini API key for authentication
             model_option: ModelOption from llm_provider
             llm_config (LLMConfig): LLM configuration for generation parameters
+        
+        Note: This script uses genai.Client() directly instead of the shared llm_provider
+        because it requires multimodal capabilities (PDF uploads, inline processing) that
+        the text-only wrapper doesn't expose.
         """
-        self.client = build_llm_client(model_option)
+        # Use genai.Client directly for multimodal PDF processing capabilities
+        self.client = genai.Client(api_key=api_key)
         self.model_option = model_option
         self.model_name = model_option.model
         self.llm_config = llm_config
