@@ -4,9 +4,9 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 
 ## Core expectation: shared LLM provider
 
-- **For text-only pipelines, route AI calls through `common/llm_provider.py`.** Import `build_llm_client`, `get_model_option`, `LLMConfig`, and `summary_from_option`; never instantiate `openai.OpenAI()` or `google.genai.Client()` directly in text-processing scripts.
+- **For text-only pipelines, route AI calls through `common/llm_provider.py`.** Import `build_llm_client`, `get_model_option`, `LLMConfig`, and `summary_from_option`; never instantiate `openai.OpenAI()`, `google.genai.Client()`, or `mistralai.Mistral()` directly in text-processing scripts.
 - Let `get_model_option()` drive model selection (interactive prompt or `--model` flag). Use `allowed_keys` parameter to restrict choices per pipeline.
-- Registry keys: `gpt-5-mini`, `gpt-5.1`, `gemini-flash`, `gemini-pro`. Common aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`.
+- Registry keys: `gpt-5-mini`, `gpt-5.1`, `gemini-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `mistral` → `mistral-large`, `ministral` → `ministral-14b`.
 - When logging or naming output files, reuse `summary_from_option(model_option)` and `model_option.key` so runs clearly identify the provider.
 
 ## Exception: Multimodal pipelines (audio, vision, HTR)
@@ -21,13 +21,14 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 - Pipelines should expose a `--model` option with `choices=[...]` to limit available models for that specific use case.
 - Use `LLMConfig` to specify reasoning effort, verbosity, thinking budget, and temperature appropriate for the task.
 - Remove standalone `--temperature` flags; configure via `LLMConfig` instead.
-- Per-script config loaders should validate Omeka/API env vars only. Let `common/llm_provider.py` raise errors about missing `OPENAI_API_KEY` / `GEMINI_API_KEY`.
+- Per-script config loaders should validate Omeka/API env vars only. Let `common/llm_provider.py` raise errors about missing `OPENAI_API_KEY` / `GEMINI_API_KEY` / `MISTRAL_API_KEY`.
 
 ## LLM Configuration best practices
 
 - **Create task-specific configs**: Use `LLMConfig()` to define parameters suited to your pipeline's needs.
 - **OpenAI parameters**: `reasoning_effort` ("low"/"medium"/"high"), `text_verbosity` ("low"/"medium"/"high").
 - **Gemini parameters**: `temperature` (0.0-1.0), `thinking_budget` (0=off for Flash, None=default, >0=custom).
+- **Mistral parameters**: `temperature` (0.0-1.0) - straightforward configuration.
 - **Cost-conscious defaults**: Use "medium" reasoning and moderate thinking budgets (e.g., 500) unless high quality is critical.
 - **Log your config**: Always log the effective configuration for reproducibility.
 
@@ -38,6 +39,25 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 - When writing per-model artifacts, embed `model_option.key.replace('-', '_')` in the filename (e.g., `_processed_openai.csv`).
 - Per-request config overrides: Pass `config=LLMConfig(...)` to `generate()` for one-off adjustments.
 
+## Structured outputs (JSON schema enforcement)
+
+- **Use `generate_structured()` for data extraction tasks** (NER, classification, form filling) where you need a specific JSON structure.
+- Define output schemas as Pydantic `BaseModel` classes with `Field(description=...)` annotations.
+- OpenAI, Gemini, and Mistral APIs all support native structured outputs that guarantee valid JSON matching your schema.
+- Use `generate()` for free-form text outputs (summaries, translations, creative writing).
+- Example:
+  ```python
+  from pydantic import BaseModel, Field
+  from typing import List
+  
+  class NERResult(BaseModel):
+      persons: List[str] = Field(description="Person names")
+      locations: List[str] = Field(description="Place names")
+  
+  result = llm_client.generate_structured(system_prompt, user_prompt, NERResult)
+  print(result.persons)  # Typed access, no JSON parsing needed
+  ```
+
 ## Adding or updating models
 
 1. Modify `MODEL_REGISTRY` and `MODEL_ALIASES` inside `common/llm_provider.py`.
@@ -47,7 +67,7 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 
 ## Anti-patterns (do not do this)
 
-- Re-implementing OpenAI/Gemini client setup inside text-only scripts (use `common/llm_provider.py`).
+- Re-implementing OpenAI/Gemini/Mistral client setup inside text-only scripts (use `common/llm_provider.py`).
 - Hard-coding model names outside `common/llm_provider.py` (besides documentation, command examples, or multimodal scripts).
 - Bypassing `summary_from_option` when logging model choice (for text pipelines).
 - Calling `llm_client.generate` without guarding against empty content.

@@ -3,7 +3,8 @@
 # =============================================================================
 google-genai          # Google Gemini API
 openai                # OpenAI GPT API
-mistralai             # Mistral AI API (OCR and chat models)
+mistralai             # Mistral AI API (Large 3, OCR models)
+pydantic              # Data validation and structured outputs
 
 # =============================================================================
 # PDF Processing
