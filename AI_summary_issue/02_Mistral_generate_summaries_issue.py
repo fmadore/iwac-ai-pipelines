@@ -5,25 +5,34 @@ from an Islamic magazine using Mistral's native PDF understanding with OCR.
 
 Supported models:
 - Mistral OCR (Step 1: page-by-page extraction specialized for documents)
-- Mistral Small (Step 2: cost-effective text consolidation)
+- Mistral Small (Step 2: cost-effective text consolidation with structured outputs)
 
-Step 1: Page-by-page extraction with annotations
+Step 1: Page-by-page extraction with OCR
 - Uploads PDF once to Mistral
-- Analyzes each page individually with Pixtral Large
-- Uses annotations to identify article boundaries and structure
+- Analyzes each page individually with Mistral OCR
+- Uses structured outputs (Pydantic models) for guaranteed JSON schema compliance
 - Extracts exact titles and generates brief summaries
 - Detects continuation indicators
 
 Step 2: Magazine-level consolidation
 - Merges articles fragmented across multiple pages
-- Eliminates duplicates with Mistral Large
+- Uses structured outputs for consistent article index format
 - Produces a global summary per article
 - Lists all associated pages
 
+Output formats:
+- JSON files for programmatic access (step1_consolidated.json, final_index.json)
+- Markdown files for human readability (step1_consolidated.md, final_index.md)
+
 Robustness mechanisms:
 - Automatic retry on error (max 3 attempts)
-- Progressive result saving
+- Progressive result saving with JSON caching
 - Resumption possible from already processed files
+
+API Best Practices:
+- Uses client.chat.parse() with Pydantic response_format for structured outputs
+- Uses Mistral OCR for document processing
+- Uses Mistral Small for cost-effective consolidation
 
 Usage:
     python 02_Mistral_generate_summaries_issue.py
@@ -44,7 +53,16 @@ import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from dotenv import load_dotenv
-from tqdm import tqdm
+from pydantic import BaseModel, Field
+
+# Rich console for beautiful output
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+console = Console()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -55,6 +73,36 @@ try:
     from mistralai import Mistral
 except ImportError:
     raise RuntimeError("mistralai package is required. Install with: pip install mistralai")
+
+# ------------------------------------------------------------------
+# Pydantic Models for Structured Outputs
+# ------------------------------------------------------------------
+
+class PageArticle(BaseModel):
+    """An article found on a single page."""
+    titre: str = Field(description="Titre exact de l'article tel qu'imprimé sur la page")
+    auteurs: Optional[List[str]] = Field(default=None, description="Liste des auteurs de l'article (ex: ['Jean Dupont', 'La Rédaction']). Null si non mentionné.")
+    continuation: Optional[str] = Field(default=None, description="Indication de continuation: 'suite page X' ou null si aucune")
+    resume: str = Field(description="Résumé bref de 2-3 phrases du contenu visible sur cette page")
+
+class PageExtraction(BaseModel):
+    """Extraction result for a single PDF page."""
+    page_number: int = Field(description="Numéro de la page analysée")
+    is_cover: bool = Field(default=False, description="True si c'est une page de couverture")
+    has_articles: bool = Field(default=True, description="True si des articles sont présents")
+    articles: List[PageArticle] = Field(default_factory=list, description="Liste des articles trouvés sur cette page")
+    other_content: Optional[str] = Field(default=None, description="Description des autres contenus non-articles (publicités, annonces, etc.)")
+
+class ConsolidatedArticle(BaseModel):
+    """A consolidated article after merging fragmented pages."""
+    titre: str = Field(description="Titre exact complet de l'article")
+    auteurs: Optional[List[str]] = Field(default=None, description="Liste des auteurs de l'article. Null si non mentionné.")
+    pages: str = Field(description="Numéros de pages, ex: '1-3' ou '1, 3, 5'")
+    resume: str = Field(description="Résumé global consolidé de 4-6 phrases")
+
+class MagazineIndex(BaseModel):
+    """Final consolidated index of all articles in the magazine."""
+    articles: List[ConsolidatedArticle] = Field(description="Liste des articles consolidés du magazine")
 
 # ------------------------------------------------------------------
 # Configuration
@@ -88,14 +136,16 @@ def load_extraction_prompt() -> str:
         raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}")
 
 def load_consolidation_prompt() -> str:
-    """Load the prompt for step 2 (consolidation)."""
+    """Load the prompt for step 2 (consolidation).
+    
+    Note: With structured outputs, the prompt focuses on instructions
+    while the schema defines the output format.
+    """
     script_dir = Path(__file__).parent
     prompt_file = script_dir / 'consolidation_prompt_issue.md'
     try:
         with open(prompt_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        if '{extracted_content}' not in content:
-            logging.warning("Consolidation prompt template missing '{extracted_content}' placeholder.")
         return content
     except FileNotFoundError:
         raise FileNotFoundError(f"Consolidation prompt template not found: {prompt_file}")
@@ -200,22 +250,21 @@ def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
 
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def generate_page_extraction_mistral(client: Mistral, signed_url: str, page_num: int,
-                                    prompt: str) -> Optional[str]:
+                                    prompt: str) -> Optional[PageExtraction]:
     """
-    Generate page extraction with Mistral OCR API using document understanding.
+    Generate structured page extraction with Mistral OCR API.
     
     Args:
         client: Mistral client
         signed_url: Signed URL for the uploaded PDF
         page_num: Page number to analyze (1-indexed for display, 0-indexed for API)
-        prompt: Extraction prompt (used in post-processing)
+        prompt: Extraction prompt (used as system instruction)
         
     Returns:
-        Generated extraction text or None
+        PageExtraction object or None
     """
     try:
         # Call Mistral OCR API with signed URL and page number (0-indexed)
-        # The OCR API returns raw OCR text, we'll need to process it
         response = client.ocr.process(
             model=MISTRAL_OCR,
             pages=[page_num - 1],  # API uses 0-indexed pages
@@ -241,82 +290,136 @@ def generate_page_extraction_mistral(client: Mistral, signed_url: str, page_num:
                 logging.info(f"  - Extracted {len(page_text)} chars from markdown")
             else:
                 logging.error(f"  - No markdown attribute or empty content")
-                logging.error(f"  - Available: {[attr for attr in dir(page_data) if not attr.startswith('_')]}")
         
         if not page_text:
             raise Exception("No text extracted from OCR")
         
         logging.info(f"Page {page_num}: Extracted {len(page_text)} characters via OCR")
         
-        # Now use chat completion to analyze the OCR text with our prompt
-        page_prompt = f"{prompt}\n\nPage Content:\n{page_text}"
-        
-        chat_response = client.chat.complete(
-            model=MISTRAL_SMALL,  # Use Small model for analysis
+        # Now use chat.parse() with structured output to analyze the OCR text
+        chat_response = client.chat.parse(
+            model=MISTRAL_SMALL,
             messages=[
                 {
+                    "role": "system",
+                    "content": prompt
+                },
+                {
                     "role": "user",
-                    "content": page_prompt
+                    "content": f"Analysez le contenu de la page {page_num}:\n\n{page_text}"
                 }
-            ]
+            ],
+            response_format=PageExtraction,
+            temperature=0.2
         )
         
         if not chat_response.choices:
             raise Exception("No choices in chat response")
         
-        text_content = chat_response.choices[0].message.content.strip()
-        if not text_content:
-            raise Exception("Empty text response from Mistral")
+        # Get the parsed structured response
+        parsed = chat_response.choices[0].message.parsed
+        if parsed is None:
+            raise Exception("No parsed response from Mistral")
         
-        return text_content
+        # Ensure page number is set correctly
+        parsed.page_number = page_num
+        return parsed
         
     except Exception as e:
         logging.error(f"Generation error for page {page_num}: {e}")
         raise
 
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
-def generate_consolidation_mistral(client: Mistral, prompt: str) -> Optional[str]:
+def generate_consolidation_mistral(client: Mistral, system_prompt: str, 
+                                   extracted_json: str) -> Optional[MagazineIndex]:
     """
-    Generate consolidation with Mistral Small (text-only, cost-effective).
+    Generate structured consolidation with Mistral Small using chat.parse().
     
     Args:
         client: Mistral client
-        prompt: Full consolidation prompt with extracted content
+        system_prompt: System prompt for consolidation
+        extracted_json: JSON string of extracted page data
         
     Returns:
-        Generated consolidation text or None
+        MagazineIndex object or None
     """
     try:
-        response = client.chat.complete(
+        response = client.chat.parse(
             model=MISTRAL_SMALL,
             messages=[
                 {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
                     "role": "user",
-                    "content": prompt
+                    "content": f"Consolidez les articles extraits ci-dessous:\n\n{extracted_json}"
                 }
-            ]
+            ],
+            response_format=MagazineIndex,
+            temperature=0.3
         )
         
         if not response.choices:
             raise Exception("No choices in Mistral response")
         
-        text_content = response.choices[0].message.content.strip()
-        if not text_content:
-            raise Exception("Empty text response from Mistral")
+        parsed = response.choices[0].message.parsed
+        if parsed is None:
+            raise Exception("No parsed response from Mistral")
         
-        return text_content
+        return parsed
         
     except Exception as e:
         logging.error(f"Consolidation generation error: {e}")
         raise
 
+def format_extraction_to_markdown(extraction: PageExtraction) -> str:
+    """Convert a PageExtraction to markdown format for intermediate files."""
+    lines = [f"## Page : {extraction.page_number}\n"]
+    
+    if extraction.is_cover:
+        lines.append("Page de couverture du magazine.\n")
+        return "\n".join(lines)
+    
+    if not extraction.has_articles:
+        lines.append("Aucun article identifié sur cette page.\n")
+        if extraction.other_content:
+            lines.append(f"\n### Autres contenus\n{extraction.other_content}\n")
+        return "\n".join(lines)
+    
+    for i, article in enumerate(extraction.articles, 1):
+        lines.append(f"\n### Article {i}")
+        lines.append(f"- Titre : {article.titre}")
+        if article.auteurs:
+            lines.append(f"- Auteur(s) : {', '.join(article.auteurs)}")
+        lines.append(f"- Résumé :\n  {article.resume}")
+    
+    if extraction.other_content:
+        lines.append(f"\n### Autres contenus\n{extraction.other_content}")
+    
+    return "\n".join(lines)
+
+def format_index_to_markdown(index: MagazineIndex) -> str:
+    """Convert a MagazineIndex to the final markdown format."""
+    lines = ["# Index des articles du magazine\n"]
+    
+    for article in index.articles:
+        lines.append(f"\n## {article.titre}")
+        if article.auteurs:
+            lines.append(f"- Auteur(s) : {', '.join(article.auteurs)}")
+        lines.append(f"- Pages : {article.pages}")
+        lines.append(f"- Résumé :")
+        lines.append(f"  {article.resume}")
+    
+    return "\n".join(lines)
+
 # ------------------------------------------------------------------
 # Pipeline Functions
 # ------------------------------------------------------------------
 def step1_extract_pages(client: Mistral, signed_url: str, total_pages: int,
-                        extraction_prompt: str, output_dir: Path, magazine_id: str) -> Path:
+                        extraction_prompt: str, output_dir: Path, magazine_id: str) -> Tuple[Path, List[PageExtraction]]:
     """
-    Step 1: Page-by-page extraction with Mistral OCR.
+    Step 1: Page-by-page extraction with Mistral OCR and structured outputs.
     Progressive saving to allow resumption in case of interruption.
     
     Args:
@@ -328,119 +431,187 @@ def step1_extract_pages(client: Mistral, signed_url: str, total_pages: int,
         magazine_id: Magazine identifier
         
     Returns:
-        Path to the step 1 consolidated file
+        Tuple of (consolidated JSON file path, list of PageExtraction objects)
     """
     step1_dir = output_dir / "step1_page_extractions"
     step1_dir.mkdir(parents=True, exist_ok=True)
     
-    all_extractions = []
+    all_extractions: List[PageExtraction] = []
+    all_markdown: List[str] = []
     
-    logging.info(f"Step 1: Processing {total_pages} pages with Mistral OCR...")
+    console.print(f"\n[bold cyan]Step 1:[/] Processing {total_pages} pages with [green]Mistral OCR[/]")
+    console.print("[dim]Using structured outputs (Pydantic schema)[/]")
+    logging.info(f"Step 1: Processing {total_pages} pages with Mistral OCR (structured output)...")
     
-    for page_num in tqdm(range(1, total_pages + 1), desc="Extracting articles per page"):
-        page_file = step1_dir / f"page_{page_num:03d}.md"
+    success_count = 0
+    cached_count = 0
+    error_count = 0
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False
+    ) as progress:
+        task = progress.add_task("[cyan]Extracting articles...", total=total_pages)
         
-        # Check if page has already been processed
-        if page_file.exists():
-            logging.info(f"Page {page_num} already processed, loading from cache...")
-            with open(page_file, 'r', encoding='utf-8') as f:
-                extraction = f.read()
-            all_extractions.append(f"\n{extraction}\n")
-            continue
-        
-        # Generate extraction with automatic retry using Mistral
-        try:
-            extraction = generate_page_extraction_mistral(
-                client, signed_url, page_num, extraction_prompt
-            )
+        for page_num in range(1, total_pages + 1):
+            page_json_file = step1_dir / f"page_{page_num:03d}.json"
+            page_md_file = step1_dir / f"page_{page_num:03d}.md"
             
-            if extraction:
-                # Add page number at the beginning of the AI response
-                extraction_with_page = f"## Page : {page_num}\n\n{extraction}"
-                all_extractions.append(f"\n{extraction_with_page}\n")
+            # Check if page has already been processed (JSON cache)
+            if page_json_file.exists():
+                logging.info(f"Page {page_num} already processed, loading from cache...")
+                try:
+                    with open(page_json_file, 'r', encoding='utf-8') as f:
+                        extraction = PageExtraction.model_validate_json(f.read())
+                    all_extractions.append(extraction)
+                    all_markdown.append(format_extraction_to_markdown(extraction))
+                    cached_count += 1
+                    progress.update(task, advance=1, description=f"[dim]Page {page_num}/{total_pages} (cached)[/]")
+                    continue
+                except Exception as e:
+                    logging.warning(f"Failed to load cached page {page_num}, re-processing: {e}")
+            
+            progress.update(task, description=f"[cyan]Page {page_num}/{total_pages}[/]")
+            
+            # Generate structured extraction with automatic retry using Mistral
+            try:
+                extraction = generate_page_extraction_mistral(
+                    client, signed_url, page_num, extraction_prompt
+                )
                 
-                # Save the individual extraction immediately
-                with open(page_file, 'w', encoding='utf-8') as f:
-                    f.write(extraction_with_page)
-                logging.info(f"✓ Page {page_num} processed and saved")
-            else:
-                logging.error(f"✗ No extraction generated for page {page_num}")
-                # Create a placeholder to avoid blocking the pipeline
-                placeholder = f"## Page : {page_num}\n\nError processing this page.\n"
-                all_extractions.append(f"\n{placeholder}\n")
-                with open(page_file, 'w', encoding='utf-8') as f:
-                    f.write(placeholder)
-        except Exception as e:
-            logging.error(f"✗ Failed to process page {page_num} after retries: {e}")
-            placeholder = f"## Page : {page_num}\n\nError: {str(e)}\n"
-            all_extractions.append(f"\n{placeholder}\n")
-            with open(page_file, 'w', encoding='utf-8') as f:
-                f.write(placeholder)
+                if extraction:
+                    all_extractions.append(extraction)
+                    markdown = format_extraction_to_markdown(extraction)
+                    all_markdown.append(markdown)
+                    
+                    # Save both JSON and markdown for debugging/resumption
+                    with open(page_json_file, 'w', encoding='utf-8') as f:
+                        f.write(extraction.model_dump_json(indent=2))
+                    with open(page_md_file, 'w', encoding='utf-8') as f:
+                        f.write(markdown)
+                    
+                    logging.info(f"Page {page_num} processed and saved")
+                    success_count += 1
+                else:
+                    logging.error(f"No extraction generated for page {page_num}")
+                    placeholder = PageExtraction(
+                        page_number=page_num,
+                        has_articles=False,
+                        other_content="Error processing this page."
+                    )
+                    all_extractions.append(placeholder)
+                    all_markdown.append(format_extraction_to_markdown(placeholder))
+                    error_count += 1
+                    
+            except Exception as e:
+                logging.error(f"Failed to process page {page_num} after retries: {e}")
+                placeholder = PageExtraction(
+                    page_number=page_num,
+                    has_articles=False,
+                    other_content=f"Error: {str(e)}"
+                )
+                all_extractions.append(placeholder)
+                all_markdown.append(format_extraction_to_markdown(placeholder))
+                error_count += 1
+            
+            progress.update(task, advance=1)
     
-    # Consolidate all extractions into a single file
-    consolidated_file = output_dir / f"{magazine_id}_step1_consolidated.md"
-    with open(consolidated_file, 'w', encoding='utf-8') as f:
+    # Display step 1 summary
+    step1_summary = Table(box=box.SIMPLE, show_header=False)
+    step1_summary.add_column("Status", style="bold")
+    step1_summary.add_column("Count", justify="right")
+    step1_summary.add_row("[green]✓ Processed[/]", str(success_count))
+    if cached_count > 0:
+        step1_summary.add_row("[dim]↺ Cached[/]", str(cached_count))
+    if error_count > 0:
+        step1_summary.add_row("[red]✗ Errors[/]", str(error_count))
+    console.print(step1_summary)
+    
+    # Save consolidated JSON (for step 2)
+    consolidated_json_file = output_dir / f"{magazine_id}_step1_consolidated.json"
+    with open(consolidated_json_file, 'w', encoding='utf-8') as f:
+        json.dump([e.model_dump() for e in all_extractions], f, ensure_ascii=False, indent=2)
+    
+    # Save consolidated markdown (for human review)
+    consolidated_md_file = output_dir / f"{magazine_id}_step1_consolidated.md"
+    with open(consolidated_md_file, 'w', encoding='utf-8') as f:
         f.write(f"# Page-by-page extraction - Magazine {magazine_id}\n\n")
-        f.write('\n---\n'.join(all_extractions))
+        f.write('\n---\n'.join(all_markdown))
     
-    logging.info(f"Step 1 complete. Consolidated file: {consolidated_file}")
+    console.print(f"[green]✓[/] Step 1 complete → [dim]{consolidated_json_file.name}[/]")
+    logging.info(f"Step 1 complete. Consolidated files: {consolidated_json_file}, {consolidated_md_file}")
     
-    # Delete individual files to save space
-    logging.info("Cleaning up individual page files...")
-    for page_file in step1_dir.glob('page_*.md'):
-        page_file.unlink()
-    
-    # Optional: remove directory if empty
+    # Cleanup individual files
+    for f in step1_dir.glob('page_*.*'):
+        f.unlink()
     try:
         step1_dir.rmdir()
-        logging.info(f"Removed empty directory: {step1_dir}")
     except OSError:
         pass
     
-    return consolidated_file
+    return consolidated_json_file, all_extractions
 
-def step2_consolidate(client: Mistral, step1_file: Path, output_dir: Path,
-                     magazine_id: str) -> Path:
+def step2_consolidate(client: Mistral, step1_file: Path, extractions: List[PageExtraction],
+                     output_dir: Path, magazine_id: str) -> Path:
     """
-    Step 2: Magazine-level consolidation with Mistral Small.
+    Step 2: Magazine-level consolidation with Mistral Small and structured outputs.
     
     Args:
         client: Mistral client
-        step1_file: Step 1 consolidated file
+        step1_file: Step 1 consolidated JSON file
+        extractions: List of PageExtraction objects from step 1
         output_dir: Output directory
         magazine_id: Magazine identifier
         
     Returns:
         Path to the final consolidated file
     """
-    logging.info("Step 2: Consolidating articles at magazine level with Mistral Small...")
+    console.print(f"\n[bold cyan]Step 2:[/] Consolidating articles with [green]Mistral Small[/]")
+    console.print("[dim]Using structured outputs (Pydantic schema)[/]")
+    logging.info("Step 2: Consolidating articles at magazine level with Mistral Small (structured output)...")
     
-    # Read the step 1 consolidated file
-    with open(step1_file, 'r', encoding='utf-8') as f:
-        extracted_content = f.read()
+    # Prepare extracted content as JSON for the model
+    extracted_json = json.dumps([e.model_dump() for e in extractions], ensure_ascii=False, indent=2)
     
-    # Load the consolidation prompt
+    # Load the consolidation prompt as system instruction
     consolidation_prompt = load_consolidation_prompt()
-    full_prompt = consolidation_prompt.replace('{extracted_content}', extracted_content)
+    # Remove the {extracted_content} placeholder - we'll pass JSON directly
+    system_prompt = consolidation_prompt.split('{extracted_content}')[0].strip()
+    # Add instruction about JSON input/output
+    system_prompt += "\n\nL'entrée est fournie au format JSON structuré. Consolidez les articles et retournez le résultat au format JSON selon le schéma fourni."
     
     # Generate consolidation with automatic retry
     try:
-        consolidated = generate_consolidation_mistral(client, full_prompt)
+        with console.status("[cyan]Generating article index...", spinner="dots"):
+            index = generate_consolidation_mistral(client, system_prompt, extracted_json)
         
-        if not consolidated:
+        if not index:
+            console.print("[red]✗[/] Failed to generate consolidated output")
             logging.error("Failed to generate consolidated output")
             raise RuntimeError("Step 2 consolidation failed - no output generated")
         
-        # Save the final result
-        final_file = output_dir / f"{magazine_id}_final_index.md"
-        with open(final_file, 'w', encoding='utf-8') as f:
-            f.write(consolidated)
+        # Save the final result as JSON
+        final_json_file = output_dir / f"{magazine_id}_final_index.json"
+        with open(final_json_file, 'w', encoding='utf-8') as f:
+            f.write(index.model_dump_json(indent=2))
         
-        logging.info(f"✓ Step 2 complete. Final index: {final_file}")
-        return final_file
+        # Save the final result as markdown (for human readability)
+        final_md_file = output_dir / f"{magazine_id}_final_index.md"
+        with open(final_md_file, 'w', encoding='utf-8') as f:
+            f.write(format_index_to_markdown(index))
+        
+        console.print(f"[green]✓[/] Step 2 complete → [dim]{final_md_file.name}[/]")
+        logging.info(f"Step 2 complete. Final index: {final_md_file}")
+        return final_md_file
         
     except Exception as e:
-        logging.error(f"✗ Step 2 failed after retries: {e}")
+        console.print(f"[red]✗[/] Step 2 failed: {e}")
+        logging.error(f"Step 2 failed after retries: {e}")
         raise
 
 # ------------------------------------------------------------------
@@ -495,13 +666,13 @@ def process_magazine(pdf_path: Path, output_dir: Path, magazine_id: str = None):
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Step 1: Page-by-page extraction (Mistral OCR)
-        step1_file = step1_extract_pages(
+        step1_file, extractions = step1_extract_pages(
             client, signed_url, total_pages, extraction_prompt, output_dir, magazine_id
         )
         
         # Step 2: Consolidation (Mistral Small)
         final_file = step2_consolidate(
-            client, step1_file, output_dir, magazine_id
+            client, step1_file, extractions, output_dir, magazine_id
         )
         
         # Cleanup: delete uploaded file from Mistral cloud
