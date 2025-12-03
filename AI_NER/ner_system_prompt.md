@@ -65,15 +65,7 @@ Identifier et extraire les entités nommées du texte fourni, réparties en quat
     - Social : tribalisme, division, unité, tradition, modernité, environnement
 - Exemples :
     - "Politique de division" → "division"
-    - "débat sur la laïcité dans l’éducation" → "laïcité, éducation"
+    - "débat sur la laïcité dans l'éducation" → "laïcité, éducation"
     - "questions du mariage précoce et des droits des femmes" → "mariage, femmes"
     - "Principes Intangibles de la République" → "démocratie"
  - Note : ne pas classer comme sujets les noms propres de mosquées (ex. « Mosquée Centrale de Cotonou »). Seul le terme générique « mosquée » peut figurer en sujet si le texte traite du thème de façon générale.
-
-## Format de sortie attendu
-
-Retourner un objet JSON structuré avec les quatre listes d'entités.
-
-## Texte à analyser
-
-{text_content}
