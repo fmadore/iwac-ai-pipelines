@@ -106,28 +106,15 @@ class GeminiPDFProcessor:
         - Lower temperature for more consistent output
         - High top_p and top_k for reliable text recognition
         - Sufficient output tokens for long documents
-        - Model-appropriate thinking budget from LLMConfig
+        - Model-appropriate thinking configuration:
+          - Gemini 3 Pro: uses thinking_level ("low" or "high")
+          - Gemini 2.5 Flash: uses thinking_budget (0 to disable, or positive value)
         
         Returns:
             types.GenerateContentConfig: Configured generation config
         """
-        # Use configured thinking budget or model default
-        thinking_budget = self.llm_config.thinking_budget
-        if thinking_budget is None:
-            thinking_budget = self.model_option.default_thinking_budget
-        
-        # Handle Pro model requirements
-        is_pro_model = "pro" in self.model_name.lower()
-        if is_pro_model and thinking_budget == 0:
-            print(f"⚠️  Pro model cannot disable thinking - using model default")
-            thinking_budget = None  # Let model use its default
-        
-        # Log thinking configuration
-        if thinking_budget is not None:
-            if thinking_budget == 0:
-                print(f"🧠 Disabling thinking mode for {self.model_name}")
-            else:
-                print(f"🧠 Using thinking budget {thinking_budget} for {self.model_name}")
+        # Check if this is a Gemini 3 model (uses thinking_level instead of thinking_budget)
+        is_gemini_3 = "gemini-3" in self.model_name.lower()
         
         # Use latest SDK string-based safety settings (per Context7 docs)
         config_kwargs = {
@@ -156,9 +143,24 @@ class GeminiPDFProcessor:
             ]
         }
         
-        # Add thinking config if budget specified
-        if thinking_budget is not None:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+        # Configure thinking based on model type
+        if is_gemini_3:
+            # Gemini 3 Pro uses thinking_level ("low" or "high"), cannot be disabled
+            thinking_level = self.llm_config.thinking_level or self.model_option.default_thinking_level or "low"
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
+            print(f"🧠 Using thinking_level='{thinking_level}' for {self.model_name}")
+        else:
+            # Gemini 2.5 series uses thinking_budget
+            thinking_budget = self.llm_config.thinking_budget
+            if thinking_budget is None:
+                thinking_budget = self.model_option.default_thinking_budget
+            
+            if thinking_budget is not None:
+                if thinking_budget == 0:
+                    print(f"🧠 Disabling thinking mode for {self.model_name}")
+                else:
+                    print(f"🧠 Using thinking_budget={thinking_budget} for {self.model_name}")
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
         
         return types.GenerateContentConfig(**config_kwargs)
     
@@ -642,13 +644,24 @@ def main():
     model_option = get_model_option(None, allowed_keys=["gemini-flash", "gemini-pro"])
     print(f"✅ Using model: {summary_from_option(model_option)}")
     
-    # Configure LLM for OCR task
+    # Configure LLM for OCR task based on model type
     # OCR benefits from low temperature and minimal thinking for speed
-    llm_config = LLMConfig(
-        temperature=0.1,  # Low temperature for consistent OCR
-        thinking_budget=0 if "flash" in model_option.key else None  # Disable for Flash, default for Pro
-    )
-    print(f"📋 Config: temperature={llm_config.temperature}, thinking_budget={llm_config.thinking_budget}")
+    is_gemini_3 = "gemini-3" in model_option.model.lower()
+    
+    if is_gemini_3:
+        # Gemini 3 Pro uses thinking_level ("low" or "high"), cannot be disabled
+        llm_config = LLMConfig(
+            temperature=0.1,  # Low temperature for consistent OCR
+            thinking_level="low"  # Use low thinking for faster OCR
+        )
+        print(f"📋 Config: temperature={llm_config.temperature}, thinking_level={llm_config.thinking_level}")
+    else:
+        # Gemini 2.5 Flash uses thinking_budget (0 to disable)
+        llm_config = LLMConfig(
+            temperature=0.1,  # Low temperature for consistent OCR
+            thinking_budget=0  # Disable thinking for Flash
+        )
+        print(f"📋 Config: temperature={llm_config.temperature}, thinking_budget={llm_config.thinking_budget}")
     
     # Set up directory paths
     script_dir = Path(__file__).parent
