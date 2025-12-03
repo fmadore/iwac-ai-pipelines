@@ -9,7 +9,7 @@ This pipeline downloads and transcribes audio and video files using Google Gemin
 ## Features
 
 - **Omeka S integration**: Download audio/video from item sets or individual items
-- **Multiple audio formats**: MP3, WAV, M4A, FLAC, OGG, WebM, MP4, AAC, WMA
+- **Multiple audio formats**: MP3, WAV, M4A, FLAC, OGG, WebM, MP4, AAC
 - **Video support**: MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, MPEG, MPG, 3GP (auto-converted to audio)
 - **Flexible prompts**: Full transcription, translation to English, or Hausa-specific segmentation
 - **Long audio handling**: Automatic splitting into 10-minute segments for better accuracy
@@ -279,7 +279,8 @@ pip install pydub
 - Verify the video format is supported (mp4, mkv, avi, mov, wmv, flv, webm, m4v, mpeg, mpg, 3gp)
 
 ### Audio file not detected
-- Check file extension is supported (mp3, wav, m4a, flac, ogg, webm, mp4, aac)
+- Check file extension is supported for transcription: mp3, wav, m4a, flac, ogg, webm, mp4, aac
+- Note: WMA files are supported for download but must be converted before transcription
 - Ensure file is in the `Audio/` folder (relative to the script)
 
 ### Transcription quality issues
@@ -295,13 +296,16 @@ pip install pydub
 
 ## API Costs
 
-Gemini API pricing varies. As of late 2024:
-- **Gemini 2.5 Flash**: ~$0.075 per 1M input tokens (audio)
-- **Gemini 3.0 Pro**: ~$1.25 per 1M input tokens (audio)
+Gemini API pricing (per 1M tokens, paid tier):
 
-A typical 1-hour interview might cost $0.10-0.50 with Flash or $1-5 with Pro.
+| Model | Audio Input | Output |
+|-------|-------------|--------|
+| `gemini-2.5-flash` | $1.00 | $2.50 |
+| `gemini-3-pro-preview` | $2.00-$4.00 | $12.00-$18.00 |
 
-Check [Google AI Studio](https://aistudio.google.com/) for current pricing.
+A typical 1-hour interview might cost $0.50-2.00 with Flash or $5-15 with Pro.
+
+Check the [Gemini API pricing page](https://ai.google.dev/gemini-api/docs/pricing) for current rates.
 
 ## Technical Notes
 
