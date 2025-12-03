@@ -37,21 +37,24 @@ The NER module operates as a three-stage pipeline:
 - Mistral: Uses temperature 0.2 for consistent results with native structured output
 
 ### Script 2: Authority Reconciliation (`02_NER_reconciliation_Omeka.py`)
+- **Rich console output** with panels, tables, and progress bars for professional UX
 - Multi-stage reconciliation process (spatial → combined subject+topic)
 - Authority dictionary building from multiple item sets
 - Ambiguous term detection & export (values mapping to >1 authority ID are NOT auto-linked)
 - Unreconciled entity tracking and export
 - Conservative fuzzy suggestion engine (token overlap + similarity thresholds)
 - Configurable tuning constants to control strictness & volume of suggestions
-- Comprehensive matching statistics
+- Comprehensive matching statistics with formatted tables
 - Iterative update preserves original CSV columns
 
 ### Script 3: Database Update (`03_Omeka_update.py`)
+- **Rich console output** with panels, tables, and progress bars for professional UX
 - Safe item updating with duplicate prevention
 - Preserves existing metadata and relationships
 - Processes reconciled CSV output from script 2
-- Comprehensive error handling and logging
+- Comprehensive error handling with detailed statistics
 - Updates both spatial coverage (dcterms:spatial) and subjects (dcterms:subject)
+- Summary table showing items modified, links added, and errors
 
 ## NER System Prompt
 
@@ -231,12 +234,21 @@ Any value that resolves to **multiple authority IDs** (same normalized forms) is
 ### Authority Item Sets (for Script 2)
 The reconciliation script expects specific Omeka S item sets:
 - **Spatial authorities**: Item set 268 (spatial coverage terms)
-- **Subject authorities**: Item sets 854, 2, 266 (subject/topic terms) — combined during processing with topic set(s)
+- **Subject authorities**: Item sets 854, 2, 266 (subject/topic terms) — combined during processing with topic item set 1
+
+## Console Output
+
+All three scripts use the `rich` library for professional console output including:
+- Welcome panels with script information
+- Configuration tables showing settings and file paths
+- Progress bars with time elapsed and completion stats
+- Color-coded status indicators (✓ success, ✗ error, ⚠ warning)
+- Summary tables with processing statistics
 
 ## Notes
 
 - Unified extraction simplifies maintenance (legacy `01_NER_AI_Gemini.py` and `01_NER_AI_ChatGPT.py` can be removed)
-- Comprehensive logging, retries, and rate limiting remain
+- All scripts use `rich` for consistent, professional console output
 - Batch processing & async improve throughput
 - French language support throughout
 - Designed specifically for Islamic studies collections in West Africa
