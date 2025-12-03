@@ -129,6 +129,7 @@ class GeminiPDFProcessor:
             else:
                 print(f"🧠 Using thinking budget {thinking_budget} for {self.model_name}")
         
+        # Use latest SDK string-based safety settings (per Context7 docs)
         config_kwargs = {
             "temperature": self.llm_config.temperature or 0.1,
             "top_p": 0.95,
@@ -137,20 +138,20 @@ class GeminiPDFProcessor:
             "response_mime_type": "text/plain",
             "safety_settings": [
                 types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                    category='HARM_CATEGORY_HARASSMENT',
+                    threshold='BLOCK_NONE'
                 ),
                 types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                    category='HARM_CATEGORY_HATE_SPEECH',
+                    threshold='BLOCK_NONE'
                 ),
                 types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                    category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                    threshold='BLOCK_NONE'
                 ),
                 types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
+                    category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                    threshold='BLOCK_NONE'
                 )
             ]
         }
@@ -331,12 +332,24 @@ class GeminiPDFProcessor:
             try:
                 print(f"  └─ ⬆️  Uploading page {page_num} to Gemini...")
                 
-                # Upload page bytes using BytesIO
-                page_io = io.BytesIO(page_bytes)
-                pdf_file = self.client.files.upload(
-                    file=page_io,
-                    config=dict(mime_type='application/pdf')
-                )
+                # Save page bytes to a temporary file for upload (SDK requires file path)
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                    tmp_file.write(page_bytes)
+                    tmp_path = tmp_file.name
+                
+                try:
+                    # Upload using file path with UploadFileConfig (per Context7 docs)
+                    pdf_file = self.client.files.upload(
+                        file=tmp_path,
+                        config=types.UploadFileConfig(
+                            mime_type='application/pdf',
+                            display_name=f'page_{page_num}.pdf'
+                        )
+                    )
+                finally:
+                    # Clean up temp file
+                    os.unlink(tmp_path)
                 
                 if not pdf_file or not pdf_file.name:
                     raise Exception("Failed to upload page to Gemini")
@@ -345,14 +358,17 @@ class GeminiPDFProcessor:
                 processing_attempts = 0
                 max_processing_time = 60
                 
+                # Poll file state using string comparison (per Context7 docs: FileState enum)
                 while processing_attempts < max_processing_time:
                     file = self.client.files.get(name=pdf_file.name)
-                    if file.state.name == "ACTIVE":
+                    # Check state - can be string or enum, handle both
+                    state = file.state if isinstance(file.state, str) else getattr(file.state, 'name', str(file.state))
+                    if state == 'ACTIVE':
                         break
-                    elif file.state.name == "FAILED":
-                        raise Exception(f"File processing failed: {file.state.name}")
-                    elif file.state.name not in ["PROCESSING"]:
-                        raise Exception(f"Unexpected file state: {file.state.name}")
+                    elif state == 'FAILED':
+                        raise Exception(f"File processing failed: {state}")
+                    elif state not in ['PROCESSING', 'STATE_UNSPECIFIED']:
+                        raise Exception(f"Unexpected file state: {state}")
                     
                     processing_attempts += 1
                     time.sleep(1)
