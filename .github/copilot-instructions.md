@@ -34,12 +34,90 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 - **Cost-conscious defaults**: Use "medium" reasoning and moderate thinking budgets (e.g., 500) unless high quality is critical.
 - **Log your config**: Always log the effective configuration for reproducibility.
 
+## Gemini API best practices (multimodal scripts)
+
+When using `google.genai.Client()` directly in multimodal scripts:
+
+- **Use `system_instruction` in `GenerateContentConfig`**: Pass system prompts via the `system_instruction` parameter, not concatenated with user content.
+  ```python
+  from google.genai import types
+  
+  config = types.GenerateContentConfig(
+      system_instruction=system_prompt,  # Modern pattern
+      temperature=0.2,
+      max_output_tokens=8192,
+  )
+  response = client.models.generate_content(
+      model=model_name,
+      contents=[pdf_part, user_prompt],  # Only user content here
+      config=config
+  )
+  ```
+- **Thinking configuration by model**:
+  - Gemini 3 Pro: Use `thinking_level` ("low" or "high") - cannot be disabled
+  - Gemini 2.5 Flash/Pro: Use `thinking_budget` (0=disabled, >0=token budget)
+  ```python
+  # Gemini 3 Pro
+  config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+  
+  # Gemini 2.5 Flash (disable thinking)
+  config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+  ```
+- **PDF processing**: Use `types.Part.from_bytes()` for inline PDF processing.
+- **Structured outputs**: Pass Pydantic `BaseModel` classes directly to `response_schema` parameter.
+
 ## Prompt + output handling
 
 - Keep prompt templates in the pipeline directory (e.g., `ner_system_prompt.md`, `summary_prompt.md`). Load them once and feed into `llm_client.generate(system_prompt, user_prompt)`.
 - Before invoking the model, short-circuit empty or whitespace-only inputs.
 - When writing per-model artifacts, embed `model_option.key.replace('-', '_')` in the filename (e.g., `_processed_openai.csv`).
 - Per-request config overrides: Pass `config=LLMConfig(...)` to `generate()` for one-off adjustments.
+
+## Console output with rich
+
+Use the `rich` library for professional console output in all pipelines:
+
+```python
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+console = Console()
+```
+
+- **Welcome banners**: Use `Panel()` with title and border styling for script introductions.
+- **Configuration display**: Use `Table()` to show model selection, file lists, and settings.
+- **Progress tracking**: Use `Progress()` with appropriate columns for long-running operations.
+- **Status indicators**: Use colored text for success (`[green]✓[/]`), errors (`[red]✗[/]`), and info (`[cyan]...[/]`).
+- **Section dividers**: Use `console.rule()` for clean visual separation.
+- **Spinners**: Use `console.status()` for indeterminate operations.
+
+Example pattern:
+```python
+# Welcome panel
+console.print(Panel("Pipeline description", title="🚀 Pipeline Started", border_style="cyan"))
+
+# Configuration table
+model_table = Table(title="🤖 Model Configuration", box=box.ROUNDED)
+model_table.add_column("Setting", style="dim")
+model_table.add_column("Value", style="green")
+model_table.add_row("Model", model_name)
+console.print(model_table)
+
+# Progress bar
+with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), 
+              BarColumn(), TaskProgressColumn(), TimeElapsedColumn(), console=console) as progress:
+    task = progress.add_task("Processing...", total=len(items))
+    for item in items:
+        # process item
+        progress.update(task, advance=1)
+
+# Summary
+console.print(f"[green]✓[/] Completed: {success_count} items")
+console.print(f"[red]✗[/] Failed: {error_count} items")
+```
 
 ## Structured outputs (JSON schema enforcement)
 
@@ -82,15 +160,19 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 - [ ] Logs `summary_from_option(model_option)` and config parameters before processing.
 - [ ] Loads prompts from sibling `.md` files.
 - [ ] Skips empty text before requesting an LLM.
+- [ ] Uses `rich` library for console output (panels, tables, progress bars).
 
 ## Checklist for new multimodal scripts (audio/vision/HTR/OCR)
 
 - [ ] Uses appropriate provider client directly:
   - Gemini: `google.genai.Client()` with `GEMINI_API_KEY`
   - Mistral OCR: `mistralai.Mistral()` with `MISTRAL_API_KEY` and `client.ocr.process()`
+- [ ] **Gemini API**: Uses `system_instruction` in `GenerateContentConfig` (not concatenated prompts).
+- [ ] **Gemini API**: Uses correct thinking config (`thinking_level` for Gemini 3, `thinking_budget` for 2.5).
 - [ ] Offers model selection where applicable (e.g., Gemini Flash vs Pro).
 - [ ] Loads prompts from sibling `.md` files (if the API supports system prompts).
 - [ ] Handles API errors with appropriate retry logic.
 - [ ] Logs the selected model before processing.
+- [ ] Uses `rich` library for console output (panels, tables, progress bars).
 
 Following these rules keeps every pipeline aligned; when APIs change, a single edit to `common/llm_provider.py` fixes text pipelines across the repo.
