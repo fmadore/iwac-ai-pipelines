@@ -7,7 +7,8 @@ This guide explains how to use the enhanced `llm_provider.py` to configure AI mo
 The `LLMConfig` class allows individual scripts to customize AI behavior without modifying the shared provider code. You can now configure:
 
 - **OpenAI**: `reasoning_effort` and `text_verbosity`
-- **Gemini**: `temperature`, `thinking_mode`, and `thinking_budget`
+- **Gemini 3 Pro**: `temperature` and `thinking_level` ("low" or "high")
+- **Gemini 2.5 Flash**: `temperature` and `thinking_budget` (0 to disable, or custom value)
 
 ## Quick Start
 
@@ -33,6 +34,59 @@ response = llm_client.generate(
 )
 ```
 
+## Structured Outputs
+
+The provider now supports **native structured outputs** for both OpenAI and Gemini APIs. This guarantees valid JSON responses matching your schema - no manual JSON parsing needed!
+
+### Using Structured Outputs
+
+```python
+from pydantic import BaseModel, Field
+from typing import List
+from common.llm_provider import build_llm_client, get_model_option
+
+# Define your output schema with Pydantic
+class NERResult(BaseModel):
+    persons: List[str] = Field(description="List of person names")
+    organizations: List[str] = Field(description="List of organization names")
+    locations: List[str] = Field(description="List of place names")
+    subjects: List[str] = Field(description="List of topic keywords")
+
+# Build client
+model_option = get_model_option("openai")
+llm_client = build_llm_client(model_option)
+
+# Generate with guaranteed structure
+result = llm_client.generate_structured(
+    system_prompt="Extract named entities from the text.",
+    user_prompt="Paris is the capital of France. Emmanuel Macron is the president.",
+    response_schema=NERResult
+)
+
+# Access typed results directly - no parsing needed!
+print(result.persons)       # ['Emmanuel Macron']
+print(result.locations)     # ['Paris', 'France']
+```
+
+### Benefits of Structured Outputs
+
+1. **Guaranteed valid JSON**: The API enforces your schema at generation time
+2. **No parsing errors**: Eliminates regex extraction and `json.loads()` failures
+3. **Type safety**: Pydantic validates and types your data automatically
+4. **Better prompts**: Schema descriptions guide the model's output
+5. **Cleaner code**: Remove boilerplate JSON extraction and error handling
+
+### When to Use Structured vs. Text Output
+
+| Use Case | Method | Why |
+|----------|--------|-----|
+| NER extraction | `generate_structured()` | Need consistent JSON structure |
+| Data extraction | `generate_structured()` | Parsing specific fields |
+| Classification | `generate_structured()` | Enum values, confidence scores |
+| Summaries | `generate()` | Free-form text output |
+| Translation | `generate()` | Just need the translated text |
+| Creative writing | `generate()` | Open-ended generation |
+
 ## Configuration Parameters
 
 ### OpenAI Parameters
@@ -46,15 +100,45 @@ response = llm_client.generate(
 
 ### Gemini Parameters
 
+Gemini models have different thinking configurations based on the model series:
+
+#### Gemini 3 Pro (uses `thinking_level`)
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
-| `thinking_mode` | `bool` | `False` (Flash)<br>`True` (Pro) | Enable extended thinking |
-| `thinking_budget` | `int` or `None` | `None` | `0` = disabled (Flash only)<br>`None` = model default<br>`>0` = custom budget |
+| `thinking_level` | `str` | `"low"` | `"low"` = minimal reasoning<br>`"high"` = extended reasoning |
 
-**Important**: 
-- **Gemini Pro** cannot disable thinking (has minimum budget requirement)
-- **Gemini Flash** can set `thinking_budget=0` for faster responses
+**Important**: Gemini 3 Pro cannot disable thinking. Use `"low"` for faster responses.
+
+#### Gemini 2.5 Flash (uses `thinking_budget`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
+| `thinking_mode` | `bool` | `False` | Enable extended thinking |
+| `thinking_budget` | `int` or `None` | `None` | `0` = disabled<br>`None` = model default<br>`1-24576` = custom budget |
+
+**Important**: Gemini 2.5 Flash can fully disable thinking with `thinking_budget=0` for maximum speed.
+
+#### Model Comparison
+
+| Model | Thinking Parameter | Can Disable? | Default |
+|-------|-------------------|--------------|--------|
+| Gemini 3 Pro | `thinking_level` | ❌ No | `"low"` |
+| Gemini 2.5 Flash | `thinking_budget` | ✅ Yes (set to 0) | `None` (model default) |
+
+### Mistral Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
+
+**Available Mistral Models**:
+- **`mistral-large`**: Mistral Large 3 — flagship 41B active params MoE model
+- **`ministral-14b`**: Ministral 3 14B — fast, cost-effective ($0.2/M tokens)
+
+**Note**: Both Mistral models support native structured outputs via `client.chat.parse()`.
 
 ## Recommended Configurations by Use Case
 
@@ -74,10 +158,19 @@ config = LLMConfig(
 Fast processing with minimal thinking needed.
 
 ```python
+# For Gemini 3 Pro (cannot disable thinking)
 config = LLMConfig(
     reasoning_effort="low",        # OpenAI: quick processing
     text_verbosity="low",          # OpenAI: concise output
-    thinking_budget=0,             # Gemini Flash: disable thinking for speed
+    thinking_level="low",          # Gemini 3 Pro: minimal reasoning
+    temperature=0.1                # Gemini: very consistent
+)
+
+# For Gemini 2.5 Flash (can fully disable thinking)
+config = LLMConfig(
+    reasoning_effort="low",        # OpenAI: quick processing
+    text_verbosity="low",          # OpenAI: concise output
+    thinking_budget=0,             # Gemini 2.5 Flash: disable thinking for speed
     temperature=0.1                # Gemini: very consistent
 )
 ```
@@ -207,10 +300,12 @@ if __name__ == "__main__":
 ## Best Practices
 
 1. **Choose the right effort level**: Don't use `high` reasoning for simple tasks
-2. **Disable thinking for speed**: Use `thinking_budget=0` (Flash only) for fast, simple tasks
+2. **Match thinking to model series**:
+   - Gemini 3 Pro: Use `thinking_level="low"` for fast tasks, `"high"` for complex analysis
+   - Gemini 2.5 Flash: Use `thinking_budget=0` to disable, or custom values for specific needs
 3. **Use low temperature for consistency**: OCR, classification, extraction benefit from `temperature=0.0-0.2`
 4. **Use higher temperature for creativity**: Summaries and generation can use `temperature=0.3-0.7`
-5. **Respect model constraints**: Remember Pro cannot disable thinking
+5. **Respect model constraints**: Gemini 3 Pro cannot disable thinking; use `thinking_level="low"` instead
 6. **Log your config**: Always log the configuration used for reproducibility
 
 ## Adding New Models
@@ -218,14 +313,19 @@ if __name__ == "__main__":
 To add a new model to the registry:
 
 1. Update `MODEL_REGISTRY` in `llm_provider.py`
-2. Set appropriate defaults for `default_thinking_mode` and `default_thinking_budget`
+2. Set appropriate defaults:
+   - For Gemini 3 series: use `default_thinking_level` (`"low"` or `"high"`)
+   - For Gemini 2.5 series: use `default_thinking_mode` and `default_thinking_budget`
 3. Add aliases if needed in `MODEL_ALIASES`
 4. Update this README with model-specific guidance
 
 ## Troubleshooting
 
-**Q: Why is Gemini Pro ignoring `thinking_budget=0`?**  
-A: Pro requires thinking and has a minimum budget. The provider will warn you and use the model's default.
+**Q: Why is Gemini 3 Pro ignoring my `thinking_budget` setting?**  
+A: Gemini 3 Pro uses `thinking_level` ("low" or "high"), not `thinking_budget`. The provider auto-detects the model series and uses the correct parameter.
+
+**Q: How do I disable thinking for Gemini?**  
+A: Only Gemini 2.5 Flash supports disabling thinking with `thinking_budget=0`. Gemini 3 Pro always has thinking enabled—use `thinking_level="low"` for minimal reasoning.
 
 **Q: Why isn't OpenAI using my `temperature` setting?**  
 A: OpenAI's Responses API uses fixed configuration. Use `reasoning_effort` and `text_verbosity` instead.
