@@ -1,36 +1,42 @@
 # AI OCR Extraction Pipeline
 
-This pipeline provides a complete workflow for downloading PDFs from an Omeka S digital collection and performing high-precision OCR (Optical Character Recognition) using Google's Gemini AI with native PDF processing.
+This pipeline provides a complete workflow for downloading PDFs from an Omeka S digital collection and performing high-precision OCR (Optical Character Recognition) using AI-powered document processing.
 
-The pipeline uses Gemini's document understanding capabilities to process PDFs directly, page-by-page, producing research-grade, archival-quality text that can be synced back into Omeka S.
+The pipeline supports two AI providers:
+- **Google Gemini** – Uses multimodal capabilities with custom prompts for guided extraction
+- **Mistral Document AI** – Uses dedicated OCR endpoint optimized for raw text extraction
+
+Both produce research-grade, archival-quality text that can be synced back into Omeka S.
 
 ## Overview
 
-The pipeline consists of three main scripts:
+The pipeline consists of four main scripts:
 
 1. **`01_omeka_pdf_downloader.py`** – Downloads PDF files from Omeka S collections
-2. **`02_gemini_ocr_processor.py`** – AI-powered page-by-page PDF OCR using Gemini
-3. **`03_omeka_content_updater.py`** – Updates Omeka S items with extracted text content
+2. **`02_gemini_ocr_processor.py`** – AI-powered page-by-page PDF OCR using Gemini (with system prompts)
+3. **`02_mistral_ocr_processor.py`** – OCR using Mistral's dedicated Document AI endpoint
+4. **`03_omeka_content_updater.py`** – Updates Omeka S items with extracted text content
 
 ## Features
 
 - **Native PDF Processing** – Direct page-by-page PDF processing without image conversion
+- **Multi-provider support** – Choose between Gemini or Mistral for OCR
 - **Multi-threaded PDF downloading** with progress tracking
 - **High-precision OCR** for French printed documents
 - **Robust error handling** with comprehensive logging
 - **Academic-grade text extraction** with proper formatting & French typography
 - **Automatic database updates** preserving existing metadata
-- **Configurable AI models** (Gemini 2.5 Flash or Gemini 3.0 Pro)
-- **Intelligent copyright handling** with automatic RECITATION error recovery
+- **Configurable AI models** (Gemini Flash/Pro or Mistral OCR)
+- **Intelligent copyright handling** with automatic RECITATION error recovery (Gemini)
 - **Fair use compliance** with academic research-focused prompts
-- **Cost-effective processing** (~$0.54 per 450-page document with Flash, ~€5 with Pro)
 
 ## Prerequisites
 
 ### Software Requirements
 
 - Python 3.8+
-- Google Gemini API access
+- Google Gemini API access (for Gemini OCR)
+- Mistral API access (for Mistral OCR)
 
 ### Python Dependencies
 
@@ -42,36 +48,80 @@ pip install -r requirements.txt
 
 Required packages:
 - `requests` - HTTP requests for API calls
-- `google-genai` - Google Gemini API client
+- `google-genai` - Google Gemini API client (for Gemini OCR)
+- `mistralai` - Mistral AI client (for Mistral OCR)
 - `PyPDF2` - PDF page extraction
 - `python-dotenv` - Environment variable management
 - `tqdm` - Progress bars
 - `pathlib` - Modern path handling
 
+## Provider Comparison
+
+### Gemini (02_gemini_ocr_processor.py)
+- **Approach**: Multimodal model with custom system prompts
+- **Customization**: Full control via `ocr_system_prompt.md`
+- **Best for**: Documents needing guided extraction rules (French typography, layout handling)
+- **Processing**: Page-by-page for precise control
+- **Copyright handling**: Has RECITATION detection, requires fallback strategies
+
+### Mistral Document AI (02_mistral_ocr_processor.py)
+- **Approach**: Dedicated OCR endpoint (`mistral-ocr-latest`)
+- **Customization**: No system prompts – pure OCR extraction
+- **Best for**: Fast, accurate raw text extraction without custom rules
+- **Processing**: Whole document or page-by-page (user choice)
+- **Output format**: Markdown with preserved structure
+
 ## Model Selection Considerations
 
-The OCR script offers two Gemini model options:
+### Gemini Models
 
-### Gemini 2.5 Flash (Recommended)
+#### Gemini 2.5 Flash (Recommended for Speed)
 - **Faster processing** and lower cost
 - **Good accuracy** for most documents
+- **Thinking**: Can be disabled with `thinking_budget=0` for faster OCR
 - **More conservative** copyright detection (higher RECITATION rate)
 - **Best for**: Modern documents, clear PDFs, non-copyrighted content
 - **Cost**: ~$0.54 per 450-page document
 - **Fallback handling**: Automatic alternative prompts for RECITATION errors
 
-### Gemini 3.0 Pro  
+#### Gemini 3.0 Pro (Recommended for Quality)
 - **Higher accuracy** and more sophisticated reasoning
 - **Slower processing** and higher cost
+- **Thinking**: Uses `thinking_level` parameter ("low" or "high"), cannot be disabled
 - **Less restrictive** copyright detection (lower RECITATION rate)
 - **Best for**: Complex layouts, poor quality scans, historical copyrighted material
 - **Cost**: ~$4.49 per 450-page document
-- **Thinking mode**: Uses enhanced reasoning for difficult documents
+- **Default OCR config**: `thinking_level="low"` for faster processing
+
+### Mistral Document AI
+
+#### mistral-ocr-latest
+- **Dedicated OCR model** optimized specifically for document extraction
+- **Markdown output** with preserved structure (headers, tables, lists)
+- **No copyright blocking** – extracts text as-is
+- **Fast processing** – can process entire PDFs at once
+- **Simpler API** – no system prompts needed
+- **Best for**: Fast batch processing, raw text extraction, documents not needing custom rules
 
 ### Recommendation
-- **Start with Flash** for speed and cost efficiency (20% cheaper)
-- **Switch to Pro** if experiencing frequent RECITATION errors or need maximum accuracy
-- **Use Pro** for challenging historical documents with complex layouts
+- **Start with Gemini Flash** for fastest OCR with custom extraction rules (French typography, layout handling)
+- **Use Mistral** for raw text extraction without customization needs
+- **Switch to Gemini Pro** if experiencing frequent RECITATION errors or need maximum accuracy
+- **Use Gemini Pro** for challenging historical documents with complex layouts
+
+### Thinking Configuration (Gemini)
+
+The pipeline automatically configures thinking based on model type:
+
+| Model | Parameter | Default for OCR | Notes |
+|-------|-----------|-----------------|-------|
+| Gemini 2.5 Flash | `thinking_budget` | `0` (disabled) | Can be 0-24576 |
+| Gemini 3.0 Pro | `thinking_level` | `"low"` | Can be "low" or "high", cannot disable |
+
+For OCR tasks, **low thinking** is optimal because:
+- OCR is straightforward text extraction, not complex reasoning
+- Lower thinking = faster processing
+- Low temperature + low thinking = consistent results
 
 ## Configuration
 
@@ -83,8 +133,11 @@ OMEKA_BASE_URL=https://your-omeka-instance.com
 OMEKA_KEY_IDENTITY=your_api_key_identity
 OMEKA_KEY_CREDENTIAL=your_api_key_credential
 
-# Google Gemini API Configuration
+# Google Gemini API Configuration (for Gemini OCR)
 GEMINI_API_KEY=your_gemini_api_key
+
+# Mistral API Configuration (for Mistral OCR)
+MISTRAL_API_KEY=your_mistral_api_key
 ```
 
 ## Usage
@@ -102,6 +155,10 @@ python 01_omeka_pdf_downloader.py
 
 ### Step 2: Perform OCR
 
+Choose one of the following OCR scripts:
+
+#### Option A: Gemini OCR (with custom prompts)
+
 ```bash
 python 02_gemini_ocr_processor.py
 ```
@@ -109,14 +166,30 @@ python 02_gemini_ocr_processor.py
 - Select Gemini model (2.5 Flash or 3.0 Pro)
 - Processes PDFs page-by-page directly (no image conversion)
 - Uses `ocr_system_prompt.md` for extraction rules
+- Configures optimal thinking for OCR:
+  - **Flash**: `thinking_budget=0` (disabled for speed)
+  - **Pro**: `thinking_level="low"` (minimal reasoning for consistency)
 - Saves extracted text to `OCR_Results/` directory
 - Creates detailed page-by-page progress tracking
 - Logs to `log/ocr_gemini_pdf.log`
 
+#### Option B: Mistral OCR (dedicated Document AI)
+
+```bash
+python 02_mistral_ocr_processor.py
+```
+
+- Uses Mistral's specialized `mistral-ocr-latest` model
+- Choose processing mode: whole document or page-by-page
+- No system prompts – pure OCR extraction
+- Outputs Markdown with preserved structure
+- Saves extracted text to `OCR_Results/` directory
+- Logs to `log/ocr_mistral.log`
+
 #### Processing Details
-- Each page is extracted as a single-page PDF
-- Processes one page at a time for better control
-- Automatic fallback from inline to file upload for large pages
+- Each page is extracted as a single-page PDF (Gemini page-by-page mode)
+- Mistral can process entire PDFs at once for faster throughput
+- Automatic fallback from inline to file upload for large files
 - Page markers added between pages in output
 - Failed pages are logged with error messages
 
@@ -135,15 +208,17 @@ python 03_omeka_content_updater.py
 ```
 AI_ocr_extraction/
 ├── 01_omeka_pdf_downloader.py   # PDF download script
-├── 02_gemini_ocr_processor.py   # OCR processing script (page-by-page PDF)
+├── 02_gemini_ocr_processor.py   # OCR processing script (Gemini, page-by-page with prompts)
+├── 02_mistral_ocr_processor.py  # OCR processing script (Mistral Document AI)
 ├── 03_omeka_content_updater.py  # Database update script
-├── ocr_system_prompt.md         # OCR system prompt configuration
+├── ocr_system_prompt.md         # OCR system prompt configuration (Gemini only)
 ├── README.md                    # This documentation
 ├── PDF/                         # Downloaded PDF files
 ├── OCR_Results/                 # Extracted text files
 └── log/
     ├── pdf_download.log         # Download activity log
-    └── ocr_gemini_pdf.log       # OCR processing log
+    ├── ocr_gemini_pdf.log       # Gemini OCR processing log
+    └── ocr_mistral.log          # Mistral OCR processing log
 ```
 
 ## OCR System Prompt
@@ -201,11 +276,11 @@ When a page hits RECITATION, the system tries three escalating strategies:
 3. **Technical Analysis**: Frames as technical OCR analysis for digitization
 
 #### Safety Settings Configuration
-The pipeline configures Gemini with permissive safety settings for legitimate OCR tasks:
-- Harassment: `BLOCK_NONE`
-- Hate Speech: `BLOCK_NONE` 
-- Sexually Explicit: `BLOCK_NONE`
-- Dangerous Content: `BLOCK_NONE`
+The pipeline configures Gemini with permissive safety settings for legitimate OCR tasks using string-based values (per latest Google GenAI SDK):
+- `HARM_CATEGORY_HARASSMENT`: `BLOCK_NONE`
+- `HARM_CATEGORY_HATE_SPEECH`: `BLOCK_NONE` 
+- `HARM_CATEGORY_SEXUALLY_EXPLICIT`: `BLOCK_NONE`
+- `HARM_CATEGORY_DANGEROUS_CONTENT`: `BLOCK_NONE`
 
 #### Processing Flow
 1. **First attempt**: Uses full detailed system prompt
