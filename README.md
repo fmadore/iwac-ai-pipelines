@@ -67,7 +67,7 @@ Extracts text from PDF scans using **Gemini's vision capabilities** or **Mistral
 Creates concise French summaries for each document using **Gemini, OpenAI, or Mistral**. RAG-friendly output enables quick assessment of relevance without reading full texts.
 
 ### 📰 Magazine Article Extraction (`AI_summary_issue/`)
-Identifies and indexes individual articles within digitized magazine issues using **Gemini** or **Mistral**. Two-step pipeline: page-by-page extraction followed by cross-page consolidation. Crucial for periodicals where each issue contains dozens of separate pieces.
+Identifies and indexes individual articles within digitized magazine issues using **Gemini** (recommended) or Mistral. Two-step pipeline: page-by-page extraction followed by cross-page consolidation. Crucial for periodicals where each issue contains dozens of separate pieces.
 
 ### 🧩 NotebookLM Exporter (`NotebookLM/`)
 Exports collection data for use with Google's NotebookLM, enabling AI-powered research conversations with the archive. Supports whole collection, single item set, or subject-based exports with automatic file splitting.

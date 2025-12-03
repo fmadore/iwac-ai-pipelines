@@ -469,29 +469,32 @@ If AI returns no content:
 
 ## Choosing Between Gemini and Mistral
 
+> **⚠️ Recommendation**: For this pipeline, **Gemini produces significantly better results** than Mistral. The extraction quality, article detection accuracy, and summary coherence are noticeably superior with Gemini. Use Mistral only for experimentation or if Gemini is unavailable.
+
 ### Use Gemini when:
-- ✅ You want the most reliable general-purpose solution
+- ✅ You want the best extraction quality (recommended)
+- ✅ You need accurate article detection and title extraction
 - ✅ You prefer individual page processing for better error isolation
-- ✅ You need excellent multilingual support
-- ✅ Cost-efficiency is important (Flash model for consolidation)
+- ✅ You need excellent multilingual support (French/Arabic)
 
 ### Use Mistral when:
-- ✅ You want specialized OCR model for document processing
-- ✅ You need cost-effective consolidation (Small model)
-- ✅ You prefer a single upload workflow
-- ✅ You want to experiment with Mistral's document capabilities
+- ⚠️ Gemini is unavailable or you've hit API limits
+- ⚠️ You want to experiment with Mistral's OCR capabilities
+- ⚠️ You prefer a single upload workflow
 
 ### Performance Comparison
 
 | Feature | Gemini | Mistral |
 |---------|--------|---------|
+| **Output Quality** | ⭐⭐⭐ Excellent | ⭐ Lower quality |
+| **Article Detection** | Very accurate | Less reliable |
+| **Title Extraction** | Precise | Sometimes incomplete |
+| **Author Detection** | Good | Inconsistent |
 | **Upload** | Per-page extraction | Single upload with signed URL |
 | **Page Processing** | Individual PDFs | OCR by page number |
 | **Text Format** | Native PDF | Markdown from OCR |
 | **Structured Outputs** | `response_schema` | `client.chat.parse()` |
 | **Models** | Pro + Flash | OCR + Small |
-| **Speed** | Fast (Flash consolidation) | Fast (OCR + Small) |
-| **Cost** | Lower (Flash tier) | Lower (Small tier) |
 
 Both implementations share the same Pydantic models, prompts, and output format, making it easy to switch between them or compare results.
 
