@@ -24,7 +24,7 @@ Analysez le document consolidé fourni et :
 
 3. **Fusionnez les occurrences** en un seul enregistrement par article :
    - Conservez le titre exact complet de l'article (incluant les termes arabes s'ils sont présents)
-   - **Conservez les auteurs** mentionnés dans les extractions (fusionnez sans doublons si plusieurs pages mentionnent le même auteur)
+   - **Consolidez les auteurs** : Fusionnez les mentions d'auteurs provenant de différentes pages en évitant les doublons. Attention : un même auteur peut être mentionné différemment sur plusieurs pages (ex: "Ismael Tiendrébéogo" et "Imam Ismaël Tiendrébéogo" sont la même personne → gardez la forme la plus complète). Comparez les noms et ne gardez qu'une seule entrée par personne.
    - **Corrigez les erreurs OCR** dans les titres : supprimez les espaces multiples inutiles (ex: "nouvell e" → "nouvelle"), corrigez les caractères mal reconnus (ex: "arm0es" → "armées", "est-t -H" → "est-il", "PRE SSE" → "PRESSE")
    - Agrégez toutes les pages (ex: 1–3 ou 1, 3, 5)
    - Produisez un résumé global (4-6 phrases) en fusionnant les résumés partiels
