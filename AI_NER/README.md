@@ -1,6 +1,6 @@
 # AI Named Entity Recognition (NER) Module
 
-This module provides a complete Named Entity Recognition pipeline for Omeka S Collections. A **single unified script** (`01_NER_AI.py`) supports **Google Gemini 2.5 Flash** and **OpenAI GPT-5.1 mini**. You can select the model interactively or via the `--model` flag. The pipeline is optimized with **medium reasoning effort** and **moderate thinking budgets** for cost-effective, accurate metadata extraction. The pipeline consists of three sequential stages that extract, reconcile, and update named entities in the IWAC (Islam West Africa Collection) database.
+This module provides a complete Named Entity Recognition pipeline for Omeka S Collections. A **single unified script** (`01_NER_AI.py`) supports **Google Gemini 2.5 Flash**, **OpenAI GPT-5 mini**, **Mistral Large 3**, and **Ministral 3 14B**. You can select the model interactively or via the `--model` flag. The pipeline is optimized with **medium reasoning effort** and **moderate thinking budgets** for cost-effective, accurate metadata extraction. The pipeline consists of three sequential stages that extract, reconcile, and update named entities in the IWAC (Islam West Africa Collection) database.
 
 ## Pipeline Overview
 
@@ -13,7 +13,7 @@ The NER module operates as a three-stage pipeline:
 ## Files
 
 ### Core Scripts
-- `01_NER_AI.py` - **Entity Extraction (Gemini Flash or OpenAI mini)**: Unified script that extracts named entities (persons, organizations, locations, subjects) from Omeka S collection items. Choose provider interactively or via `--model gemini-flash|openai`. Uses medium reasoning effort and 500 thinking budget for cost-effective accuracy.
+- `01_NER_AI.py` - **Entity Extraction (Gemini, OpenAI, or Mistral)**: Unified script that extracts named entities (persons, organizations, locations, subjects) from Omeka S collection items. Choose provider interactively or via `--model gpt-5-mini|gemini-flash|mistral-large|ministral-14b`. Uses medium reasoning effort and 500 thinking budget for cost-effective accuracy.
 - `02_NER_reconciliation_Omeka.py` - **Authority Reconciliation**: Matches AI-extracted entities against existing Omeka S authority records (spatial coverage, subjects)
 - `03_Omeka_update.py` - **Database Update**: Updates Omeka S items with reconciled entity links, preserving existing data and avoiding duplicates
 
@@ -23,16 +23,18 @@ The NER module operates as a three-stage pipeline:
 ## Features
 
 ### Script 1: Unified Entity Extraction `01_NER_AI.py`
-- Supports Google Gemini 2.5 Flash and OpenAI GPT-5.1 mini
+- Supports Google Gemini 2.5 Flash, OpenAI GPT-5 mini, Mistral Large 3, and Ministral 3 14B
 - Cost-optimized configuration: medium reasoning effort, moderate thinking budget (500)
+- Native structured outputs for guaranteed valid JSON responses
 - Asynchronous and synchronous modes
 - Configurable batch size & concurrency
 - Rate limiting, retries (tenacity), and progress statistics
 - Single shared French prompt (`ner_system_prompt.md`) for consistent extraction rules
 - Spatial coverage filtering (removes collection-wide spatial term from per-item results)
-- Produces provider-specific output filename suffix (e.g., `_processed_openai.csv`, `_processed_gemini_flash.csv`)
+- Produces provider-specific output filename suffix (e.g., `_processed_gpt_5_mini.csv`, `_processed_gemini_flash.csv`, `_processed_mistral_large.csv`)
 - OpenAI: Uses Responses API with medium reasoning effort and medium verbosity
 - Gemini: Uses 500 thinking budget and 0.2 temperature for consistent results
+- Mistral: Uses temperature 0.2 for consistent results with native structured output
 
 ### Script 2: Authority Reconciliation (`02_NER_reconciliation_Omeka.py`)
 - Multi-stage reconciliation process (spatial → combined subject+topic)
@@ -95,7 +97,7 @@ To modify the NER extraction behavior:
 
 You now select the provider inside the unified script:
 
-Interactive (script will prompt - only shows Flash and mini):
+Interactive (script will prompt with all available models):
 ```bash
 python 01_NER_AI.py --item-set-id 123
 ```
@@ -103,30 +105,35 @@ python 01_NER_AI.py --item-set-id 123
 Explicit model flag:
 ```bash
 python 01_NER_AI.py --item-set-id 123 --model gemini-flash --async --batch-size 20
-python 01_NER_AI.py --item-set-id 123 --model openai --async --batch-size 20
+python 01_NER_AI.py --item-set-id 123 --model gpt-5-mini --async --batch-size 20
+python 01_NER_AI.py --item-set-id 123 --model mistral-large
+python 01_NER_AI.py --item-set-id 123 --model ministral-14b
 ```
 
 Model comparison:
 
-| Aspect | Gemini Flash | OpenAI mini |
-|--------|--------------|-------------|
-| Model name | `gemini-2.5-flash` | `gpt-5.1-mini` |
-| Env var | `GEMINI_API_KEY` | `OPENAI_API_KEY` |
-| Dependency | `google-genai` | `openai` |
-| Configuration | thinking_budget=500, temp=0.2 | reasoning_effort="medium", verbosity="medium" |
-| Output suffix | `_processed_gemini_flash.csv` | `_processed_openai.csv` |
-| Prompt | Shared `ner_system_prompt.md` | Shared `ner_system_prompt.md` |
+| Aspect | Gemini Flash | OpenAI mini | Mistral Large | Ministral 14B |
+|--------|--------------|-------------|---------------|---------------|
+| Model name | `gemini-2.5-flash` | `gpt-5-mini` | `mistral-large-2512` | `ministral-14b-2512` |
+| Env var | `GEMINI_API_KEY` | `OPENAI_API_KEY` | `MISTRAL_API_KEY` | `MISTRAL_API_KEY` |
+| Dependency | `google-genai` | `openai` | `mistralai` | `mistralai` |
+| Configuration | thinking_budget=500, temp=0.2 | reasoning="medium", verbosity="medium" | temp=0.2 | temp=0.2 |
+| Output suffix | `_processed_gemini_flash.csv` | `_processed_gpt_5_mini.csv` | `_processed_mistral_large.csv` | `_processed_ministral_14b.csv` |
+| Cost | Low | Low | Medium | Low ($0.2/M tokens) |
+| Prompt | Shared `ner_system_prompt.md` | Shared `ner_system_prompt.md` | Shared `ner_system_prompt.md` | Shared `ner_system_prompt.md` |
 
 ### Complete Pipeline Execution
 
 1. **Run Entity Extraction (unified)**:
    ```bash
-   # interactive model choice (shows only Flash and mini)
+   # interactive model choice (shows all available models)
    python 01_NER_AI.py --item-set-id 123
 
    # or specify model explicitly
    python 01_NER_AI.py --item-set-id 123 --model gemini-flash --async --batch-size 20
-   python 01_NER_AI.py --item-set-id 123 --model openai --async --batch-size 20
+   python 01_NER_AI.py --item-set-id 123 --model gpt-5-mini --async --batch-size 20
+   python 01_NER_AI.py --item-set-id 123 --model mistral-large
+   python 01_NER_AI.py --item-set-id 123 --model ministral-14b
    ```
    Output filename pattern: `item_set_<ID>_processed_<model_key>.csv`
 
@@ -215,6 +222,7 @@ Any value that resolves to **multiple authority IDs** (same normalized forms) is
    - `OMEKA_KEY_CREDENTIAL` - Omeka S API key credential
    - `GEMINI_API_KEY` (if selecting Gemini)
    - `OPENAI_API_KEY` (if selecting OpenAI)
+   - `MISTRAL_API_KEY` (if selecting Mistral Large or Ministral 14B)
 
 ### Required Files
 - `ner_system_prompt.md` - Shared by both extraction scripts
