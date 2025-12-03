@@ -112,6 +112,27 @@ python 02_AI_transcribe_audio.py --split --segment-minutes 15
 python 02_AI_transcribe_audio.py --audio-folder MyAudio --output-folder MyOutput
 ```
 
+### 3. Omeka S Transcription Updater (`03_omeka_transcription_updater.py`)
+
+Updates Omeka S items with transcription content by matching files to items using `dcterms:identifier`.
+
+```bash
+python 03_omeka_transcription_updater.py
+```
+
+**Features:**
+- Matches transcription files to Omeka items via `dcterms:identifier`
+- Automatically joins multiple segments (e.g., `iwac-video-0000001-1_transcription.txt`, `iwac-video-0000001-2_transcription.txt`) in order
+- Updates the `bibo:content` property while preserving all other metadata
+- Shows confirmation before making changes
+- Detailed logging and summary
+
+**File naming conventions:**
+- Single file: `{identifier}_transcription.txt`
+- Multiple segments: `{identifier}-{segment}_transcription.txt`
+
+The script will automatically detect segment numbers and join them in numerical order with clear part separators.
+
 ## Workflow
 
 ### Complete Pipeline (Omeka S to Transcription)
@@ -126,6 +147,10 @@ python 02_AI_transcribe_audio.py --audio-folder MyAudio --output-folder MyOutput
    python 02_AI_transcribe_audio.py
    ```
 4. Find transcriptions in the `Transcriptions/` folder
+5. Update Omeka S items with the transcriptions:
+   ```bash
+   python 03_omeka_transcription_updater.py
+   ```
 
 ### Local Files Only
 
@@ -199,18 +224,19 @@ Temporary segment files are automatically cleaned up after successful transcript
 
 ```
 AI_audio_summary/
-├── 01_omeka_media_downloader.py  # Download media from Omeka S
-├── 02_AI_transcribe_audio.py     # Main transcription script
-├── README.md                     # This file
-├── prompts/                      # Transcription prompt templates
+├── 01_omeka_media_downloader.py      # Download media from Omeka S
+├── 02_AI_transcribe_audio.py         # Main transcription script
+├── 03_omeka_transcription_updater.py # Update Omeka items with transcriptions
+├── README.md                         # This file
+├── prompts/                          # Transcription prompt templates
 │   ├── 1_full_audio_transcription.md
 │   ├── 2_full_audio_translation.md
 │   └── 3_hausa_prompt.md
-├── Audio/                        # Input: Place audio/video files here
-├── Transcriptions/               # Output: Transcriptions saved here
-├── log/                          # Download logs
-├── temp_segments/                # Temporary: Split audio segments (auto-cleaned)
-└── temp_converted_audio/         # Temporary: Converted video audio (auto-cleaned)
+├── Audio/                            # Input: Place audio/video files here
+├── Transcriptions/                   # Output: Transcriptions saved here
+├── log/                              # Download and update logs
+├── temp_segments/                    # Temporary: Split audio segments (auto-cleaned)
+└── temp_converted_audio/             # Temporary: Converted video audio (auto-cleaned)
 ```
 
 ## Output Format

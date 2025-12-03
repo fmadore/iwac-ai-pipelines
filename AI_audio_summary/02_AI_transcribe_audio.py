@@ -10,6 +10,7 @@ import mimetypes
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from shutil import which
 
@@ -375,13 +376,14 @@ class AudioTranscriber:
             print(f"Error reading audio file {audio_file_path}: {e}")
             return None, None
     
-    def transcribe_audio(self, audio_file_path, custom_prompt=None):
+    def transcribe_audio(self, audio_file_path, custom_prompt=None, max_retries=3):
         """
-        Transcribe a single audio file using Gemini 3.0 Pro.
+        Transcribe a single audio file using Gemini 3.0 Pro with retry mechanism.
         
         Args:
             audio_file_path (Path): Path to the audio file
             custom_prompt (str, optional): Custom transcription prompt
+            max_retries (int): Maximum number of retry attempts (default: 3)
             
         Returns:
             str: Transcribed text or None if error
@@ -393,31 +395,49 @@ class AudioTranscriber:
         if not audio_bytes or not mime_type:
             return None
         
-        try:
-            # Create audio part for the API
-            audio_part = types.Part.from_bytes(
-                data=audio_bytes,
-                mime_type=mime_type
-            )
-            
-            # Use custom prompt or default
-            prompt = custom_prompt or self.transcription_prompt
-            
-            # Generate transcription using the selected model
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=[prompt, audio_part],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,  # Low temperature for more consistent transcription
-                    max_output_tokens=65536,
-                )
-            )
-            
-            return response.text.strip()
+        # Create audio part for the API (do this once, outside retry loop)
+        audio_part = types.Part.from_bytes(
+            data=audio_bytes,
+            mime_type=mime_type
+        )
         
-        except Exception as e:
-            print(f"Error transcribing {audio_file_path.name}: {e}")
-            return None
+        # Use custom prompt or default
+        prompt = custom_prompt or self.transcription_prompt
+        
+        # Retry loop with exponential backoff
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                # Generate transcription using the selected model
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=[prompt, audio_part],
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,  # Low temperature for more consistent transcription
+                        max_output_tokens=65536,
+                    )
+                )
+                
+                # Handle case where response.text is None (e.g., content blocked, empty response)
+                if response.text is None:
+                    print(f"Warning: No transcription returned for {audio_file_path.name} (response was empty)")
+                    # Don't retry for empty responses - likely a content issue, not transient
+                    return None
+                
+                return response.text.strip()
+            
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    # Exponential backoff: 2^attempt seconds (2s, 4s, 8s...)
+                    wait_time = 2 ** (attempt + 1)
+                    print(f"Error transcribing {audio_file_path.name}: {e}")
+                    print(f"Retrying in {wait_time} seconds... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Error transcribing {audio_file_path.name} after {max_retries} attempts: {last_error}")
+        
+        return None
     
     def save_transcription(self, transcription, audio_file_path, output_folder="Transcriptions"):
         """
