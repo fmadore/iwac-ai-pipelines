@@ -9,12 +9,14 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 - Registry keys: `gpt-5-mini`, `gpt-5.1`, `gemini-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `mistral` → `mistral-large`, `ministral` → `ministral-14b`.
 - When logging or naming output files, reuse `summary_from_option(model_option)` and `model_option.key` so runs clearly identify the provider.
 
-## Exception: Multimodal pipelines (audio, vision, HTR)
+## Exception: Multimodal pipelines (audio, vision, HTR, OCR)
 
 - **Audio transcription (`AI_audio_summary/`)** and **HTR (`AI_htr_extraction/`)** use `google.genai.Client()` directly because they require multimodal features (audio bytes, PDF uploads) not supported by the shared text-only wrapper.
-- These scripts handle their own model selection (`gemini-3-pro-preview`, `gemini-2.5-flash`) and API configuration.
-- When adding new multimodal pipelines, it's acceptable to use Gemini's client directly for file uploads, vision, or audio processing.
-- Still load prompts from `.md` files and follow other conventions where applicable.
+- **Gemini OCR (`AI_ocr_extraction/02_gemini_ocr_processor.py`)** uses `google.genai.Client()` for native PDF processing with custom system prompts.
+- **Mistral OCR (`AI_ocr_extraction/02_mistral_ocr_processor.py`)** uses `mistralai.Mistral()` directly because it requires the dedicated `client.ocr.process()` endpoint (not the chat API). This is a specialized Document AI service with its own model (`mistral-ocr-latest`).
+- These scripts handle their own model selection and API configuration.
+- When adding new multimodal pipelines, it's acceptable to use provider clients directly for file uploads, vision, audio, or dedicated OCR endpoints.
+- Still load prompts from `.md` files where applicable and follow other conventions.
 
 ## CLI + configuration conventions
 
@@ -81,11 +83,13 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 - [ ] Loads prompts from sibling `.md` files.
 - [ ] Skips empty text before requesting an LLM.
 
-## Checklist for new multimodal scripts (audio/vision/HTR)
+## Checklist for new multimodal scripts (audio/vision/HTR/OCR)
 
-- [ ] Uses `google.genai.Client()` directly with `GEMINI_API_KEY` from environment.
-- [ ] Offers model selection between `gemini-2.5-flash` and `gemini-3-pro-preview`.
-- [ ] Loads prompts from sibling `.md` files in the pipeline directory.
+- [ ] Uses appropriate provider client directly:
+  - Gemini: `google.genai.Client()` with `GEMINI_API_KEY`
+  - Mistral OCR: `mistralai.Mistral()` with `MISTRAL_API_KEY` and `client.ocr.process()`
+- [ ] Offers model selection where applicable (e.g., Gemini Flash vs Pro).
+- [ ] Loads prompts from sibling `.md` files (if the API supports system prompts).
 - [ ] Handles API errors with appropriate retry logic.
 - [ ] Logs the selected model before processing.
 
