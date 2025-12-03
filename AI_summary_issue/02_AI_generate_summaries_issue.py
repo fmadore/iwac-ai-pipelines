@@ -4,11 +4,13 @@ This script implements a two-step pipeline to extract and consolidate articles
 from an Islamic magazine using Gemini's native PDF understanding.
 
 Supported models:
-- Gemini: Pro (step 1) + Flash (step 2)
+- Gemini 3 Pro (step 1) - High-quality extraction with thinking_level
+- Gemini 2.5 Flash (step 2) - Fast consolidation with thinking_budget
 
 Step 1: Page-by-page extraction (high-performance model)
-- Uploads PDF once to Gemini's File API
-- Analyzes each page individually with native PDF understanding
+- Extracts individual pages using PyPDF2
+- Sends each page to Gemini using Part.from_bytes (native PDF understanding)
+- Uses system_instruction for the extraction prompt (modern API pattern)
 - Identifies articles present on the page
 - Extracts exact titles and generates brief summaries
 - Detects continuation indicators
@@ -20,15 +22,15 @@ Step 2: Magazine-level consolidation (fast model)
 - Lists all associated pages
 
 Robustness mechanisms:
-- Automatic retry on error (max 3 attempts)
+- Automatic retry on error with exponential backoff (max 3 attempts)
 - Progressive result saving
 - Resumption possible from already processed files
 
-Advantages of native PDF processing:
-- No PyPDF2 dependency needed
-- Better document structure understanding
-- Processes images, diagrams, and tables natively
-- Simpler pipeline with fewer conversions
+API Best Practices:
+- Uses system_instruction in GenerateContentConfig for prompts
+- Uses ThinkingConfig with thinking_level for Gemini 3 Pro
+- Uses ThinkingConfig with thinking_budget for Gemini 2.5 Flash
+- Passes PDF bytes via Part.from_bytes for native processing
 
 Usage:
     python 02_AI_generate_summaries_issue.py
@@ -213,7 +215,7 @@ def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
 
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: bytes, 
-                        page_num: int, prompt: str, config) -> Optional[str]:
+                        page_num: int, config: types.GenerateContentConfig) -> Optional[str]:
     """
     Generate a response with Gemini for a single PDF page with automatic retry.
     
@@ -222,8 +224,7 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
         model_name: Model name to use
         page_bytes: Single PDF page as bytes
         page_num: Page number (for logging)
-        prompt: Prompt template to use
-        config: Generation config
+        config: Generation config (includes system_instruction)
         
     Returns:
         Generated response or None
@@ -235,11 +236,11 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
             mime_type='application/pdf'
         )
         
-        # Generate content with single page PDF and prompt
-        # Following Google's best practice: put document first, then prompt
+        # Generate content with single page PDF
+        # System instruction is in the config, contents is just the PDF
         response = client.models.generate_content(
             model=model_name,
-            contents=[pdf_part, prompt],
+            contents=[pdf_part, f"Analyze page {page_num} of this PDF document."],
             config=config
         )
         
@@ -265,15 +266,15 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
 
 @retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
 def generate_consolidation_with_gemini(client: genai.Client, model_name: str,
-                                      prompt: str, config) -> Optional[str]:
+                                      user_content: str, config: types.GenerateContentConfig) -> Optional[str]:
     """
     Generate consolidation response with Gemini with automatic retry.
     
     Args:
         client: Gemini client
         model_name: Model name to use
-        prompt: Full prompt with extracted content
-        config: Generation config
+        user_content: The extracted content to consolidate
+        config: Generation config (includes system_instruction)
         
     Returns:
         Generated response or None
@@ -281,7 +282,7 @@ def generate_consolidation_with_gemini(client: genai.Client, model_name: str,
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=[prompt],
+            contents=user_content,
             config=config
         )
         
@@ -321,7 +322,7 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
         llm_config: LLM configuration
         pdf_path: Path to the PDF file
         total_pages: Total number of pages in the PDF
-        extraction_prompt: Prompt template for extraction
+        extraction_prompt: System prompt for extraction
         output_dir: Output directory
         magazine_id: Magazine identifier
         
@@ -334,12 +335,9 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
     all_extractions = []
     model_name = summary_from_option(model_option)
     
-    # Setup generation config
-    thinking_budget = llm_config.thinking_budget
-    if thinking_budget is None:
-        thinking_budget = model_option.default_thinking_budget
-    
+    # Setup generation config with system_instruction (modern API pattern)
     config_kwargs = {
+        "system_instruction": extraction_prompt,  # Use system_instruction for the prompt
         "temperature": llm_config.temperature or 0.2,
         "top_p": 0.95,
         "top_k": 40,
@@ -347,8 +345,21 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
         "response_mime_type": "text/plain",
     }
     
-    if thinking_budget is not None:
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+    # Handle thinking config based on model type
+    is_gemini_3 = "gemini-3" in model_option.model.lower()
+    if is_gemini_3:
+        # Gemini 3 Pro uses thinking_level ("low" or "high")
+        thinking_level = llm_config.thinking_level or model_option.default_thinking_level or "low"
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
+        logging.info(f"Using Gemini 3 with thinking_level={thinking_level}")
+    else:
+        # Gemini 2.5 series uses thinking_budget
+        thinking_budget = llm_config.thinking_budget
+        if thinking_budget is None:
+            thinking_budget = model_option.default_thinking_budget
+        if thinking_budget is not None:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+            logging.info(f"Using Gemini 2.5 with thinking_budget={thinking_budget}")
     
     gen_config = types.GenerateContentConfig(**config_kwargs)
     
@@ -372,8 +383,7 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
             
             # Generate extraction with automatic retry using Gemini
             extraction = generate_with_gemini(
-                client, model_option.model, page_bytes, page_num,
-                extraction_prompt, gen_config
+                client, model_option.model, page_bytes, page_num, gen_config
             )
             
             if extraction:
@@ -446,16 +456,15 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
     with open(step1_file, 'r', encoding='utf-8') as f:
         extracted_content = f.read()
     
-    # Load the consolidation prompt
+    # Load the consolidation prompt as system instruction
     consolidation_prompt = load_consolidation_prompt()
-    full_prompt = consolidation_prompt.replace('{extracted_content}', extracted_content)
+    # Remove the {extracted_content} placeholder from the system prompt
+    # The extracted content will be passed as user content
+    system_prompt = consolidation_prompt.split('{extracted_content}')[0].strip()
     
-    # Setup generation config
-    thinking_budget = llm_config.thinking_budget
-    if thinking_budget is None:
-        thinking_budget = model_option.default_thinking_budget
-    
+    # Setup generation config with system_instruction (modern API pattern)
     config_kwargs = {
+        "system_instruction": system_prompt,
         "temperature": llm_config.temperature or 0.3,
         "top_p": 0.95,
         "top_k": 40,
@@ -463,15 +472,26 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
         "response_mime_type": "text/plain",
     }
     
-    if thinking_budget is not None:
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+    # Handle thinking config based on model type
+    is_gemini_3 = "gemini-3" in model_option.model.lower()
+    if is_gemini_3:
+        # Gemini 3 Pro uses thinking_level ("low" or "high")
+        thinking_level = llm_config.thinking_level or model_option.default_thinking_level or "low"
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
+    else:
+        # Gemini 2.5 series uses thinking_budget
+        thinking_budget = llm_config.thinking_budget
+        if thinking_budget is None:
+            thinking_budget = model_option.default_thinking_budget
+        if thinking_budget is not None:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
     
     gen_config = types.GenerateContentConfig(**config_kwargs)
     
     # Generate consolidation with automatic retry
     try:
         consolidated = generate_consolidation_with_gemini(
-            client, model_option.model, full_prompt, gen_config
+            client, model_option.model, extracted_content, gen_config
         )
         
         if not consolidated:
@@ -528,14 +548,21 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     # Initialize Gemini client
     client = genai.Client(api_key=api_key)
     
-    # Configure for each step
-    # Step 1: High-performance model with thinking enabled for detailed extraction
-    config_step1 = LLMConfig(
-        thinking_budget=500,
-        temperature=0.2
-    )
+    # Configure for each step based on model type
+    # Step 1: Gemini 3 Pro uses thinking_level, Gemini 2.5 uses thinking_budget
+    is_step1_gemini_3 = "gemini-3" in model_step1.model.lower()
+    if is_step1_gemini_3:
+        config_step1 = LLMConfig(
+            thinking_level="low",  # Use low thinking for faster processing
+            temperature=0.2
+        )
+    else:
+        config_step1 = LLMConfig(
+            thinking_budget=500,  # Gemini 2.5 uses thinking_budget
+            temperature=0.2
+        )
     
-    # Step 2: Fast model with thinking disabled for simple consolidation
+    # Step 2: Gemini 2.5 Flash with thinking disabled for simple consolidation
     config_step2 = LLMConfig(
         thinking_budget=0,
         temperature=0.3
