@@ -1,9 +1,10 @@
-# AI Summary Pipeline (Gemini or OpenAI)
+# AI Summary Pipeline (Gemini, OpenAI, or Mistral)
 
-This pipeline automatically generates French summaries of text content from an Omeka S database using either:
+This pipeline automatically generates French summaries of text content from an Omeka S database using:
 
-1. Google Gemini (gemini-2.5-flash by default), or
-2. OpenAI Responses API (gpt-5.1-mini by default with optional gpt-5.1)
+1. **Google Gemini** (gemini-2.5-flash) - Fast and cost-effective
+2. **OpenAI** (gpt-5-mini) - Cost-optimized with reasoning capabilities
+3. **Mistral** (ministral-14b) - Fast and affordable ($0.2/M tokens)
 
 The user selects the provider interactively at runtime. The workflow extracts full text, generates concise French summaries (RAG-friendly), then updates Omeka S with the results.
 
@@ -40,13 +41,16 @@ OMEKA_BASE_URL=https://your-omeka-instance.com/api
 OMEKA_KEY_IDENTITY=your_api_key_identity
 OMEKA_KEY_CREDENTIAL=your_api_key_credential
 
-# OpenAI API (optional if you choose OpenAI)
+# OpenAI API (required if selecting OpenAI models)
 OPENAI_API_KEY=your_openai_api_key
 
-# Google Gemini API (one of these)
+# Google Gemini API (required if selecting Gemini models)
 GEMINI_API_KEY=your_gemini_api_key
-# OR Google Application Default Credentials
+# OR use Application Default Credentials
 GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
+
+# Mistral API (required if selecting Mistral models)
+MISTRAL_API_KEY=your_mistral_api_key
 ```
 
 ### Required Python Packages
@@ -58,9 +62,11 @@ pip install -r requirements.txt
 Required packages:
 - `requests` - For API communication
 - `tqdm` - For progress bars
+- `rich` - For beautiful console output
 - `python-dotenv` - For environment variables
 - `google-genai` - For Gemini AI integration
 - `openai` - For OpenAI Responses API integration
+- `mistralai` - For Mistral AI integration
 
 ## Step-by-Step Usage
 
@@ -86,17 +92,25 @@ python 01_extract_omeka_content.py
 python 02_AI_generate_summaries.py
 ```
 
-You will be prompted with the available models (OpenAI gpt-5.1-mini default, OpenAI gpt-5.1, Gemini 2.5 Flash / 3.0 Pro). Select the desired option and the script will:
+You will be prompted with the available cost-effective models:
+- **GPT-5 mini** (OpenAI) - Fast with reasoning capabilities
+- **Gemini 2.5 Flash** (Google) - Fast and cost-effective
+- **Ministral 14B** (Mistral) - Affordable at $0.2/M tokens
 
-* Reads all `.txt` files from `TXT/`
-* Loads the shared prompt template `summary_prompt.md`
-* Calls the chosen provider's API
-* Writes summaries to `Summaries_FR_TXT/`
-* Shows progress with a `tqdm` bar and logs errors
+Select the desired option and the script will:
+
+* Display a styled configuration panel with all settings
+* Read all `.txt` files from `TXT/`
+* Load the shared prompt template `summary_prompt.md`
+* Call the chosen provider's API
+* Write summaries to `Summaries_FR_TXT/`
+* Show progress with styled progress bars
+* Display a final results panel with success/error counts
 
 Provider-specific requirements:
 * OpenAI: `OPENAI_API_KEY`
 * Gemini: `GEMINI_API_KEY` OR `GOOGLE_APPLICATION_CREDENTIALS`
+* Mistral: `MISTRAL_API_KEY`
 
 Output: One summary file per input (`{item_id}.txt`) in `Summaries_FR_TXT/`.
 
@@ -142,10 +156,11 @@ All scripts include comprehensive error handling and logging:
 
 | Provider | Primary Auth | Alternative | Notes |
 |----------|--------------|-------------|-------|
-| OpenAI   | `OPENAI_API_KEY` | — | Required if selecting option 1 |
+| OpenAI   | `OPENAI_API_KEY` | — | Required for GPT-5 mini |
 | Gemini   | `GOOGLE_APPLICATION_CREDENTIALS` (ADC) | `GEMINI_API_KEY` | Script attempts ADC first, then API key |
+| Mistral  | `MISTRAL_API_KEY` | — | Required for Ministral 14B |
 
-If both OpenAI and Gemini credentials are present you can switch freely per run.
+If credentials for multiple providers are present, you can switch freely per run.
 
 ## Troubleshooting
 
@@ -158,6 +173,7 @@ If both OpenAI and Gemini credentials are present you can switch freely per run.
 2. **AI provider authentication failures:**
    - OpenAI: confirm `OPENAI_API_KEY` value and account quota
    - Gemini: verify ADC path or `GEMINI_API_KEY` and quota
+   - Mistral: verify `MISTRAL_API_KEY` value and account quota
 
 3. **Omeka S connection issues:**
    - Verify your Omeka S base URL and API credentials
@@ -185,12 +201,15 @@ Edit `summary_prompt.md` to change:
 
 ### Changing the AI Model
 
-Edit `02_AI_generate_summaries.py` to change any hardcoded defaults if needed:
+The script uses the shared `common/llm_provider.py` module for model selection. Available cost-effective models for summaries:
 
-```python
-GEMINI_MODEL = "gemini-2.5-flash"   # Change to another available Gemini model
-OPENAI_MODEL = "gpt-5.1-mini"       # Switch to "gpt-5.1" if you prefer the flagship model
-```
+| Key | Provider | Model | Description |
+|-----|----------|-------|-------------|
+| `gpt-5-mini` | OpenAI | gpt-5-mini | Cost-optimized with reasoning |
+| `gemini-flash` | Google | gemini-2.5-flash | Fast and cost-effective |
+| `ministral-14b` | Mistral | ministral-14b-2512 | Affordable ($0.2/M tokens) |
+
+To add more models or change defaults, edit `common/llm_provider.py` and update the `allowed_keys` in the script.
 
 ### Adjusting Omeka S Properties
 
