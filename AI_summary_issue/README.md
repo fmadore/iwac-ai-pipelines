@@ -8,12 +8,13 @@ A two-step AI-powered pipeline for extracting and consolidating articles from di
 Uses Google Gemini's native PDF understanding with individual page extraction.
 
 **Models:**
-- Gemini 3.0 Pro (Step 1: page-by-page extraction)
-- Gemini 2.5 Flash (Step 2: consolidation)
+- Gemini 3.0 Pro (Step 1: page-by-page extraction with thinking_level)
+- Gemini 2.5 Flash (Step 2: consolidation with thinking_budget)
 
 **Features:**
 - ✅ Native PDF processing - Each page extracted and sent individually
-- ✅ No image conversion needed
+- ✅ Modern API patterns - Uses `system_instruction` in GenerateContentConfig
+- ✅ Rich console output - Beautiful progress bars, tables, and status indicators
 - ✅ Excellent document understanding
 
 ### 2. **Mistral Version** - `02_Mistral_generate_summaries_issue.py`
@@ -45,8 +46,10 @@ This pipeline processes PDF magazines to extract and consolidate articles using 
 
 ### Gemini Version
 - ✅ **Native PDF processing** - Each page extracted and sent individually to Gemini
-- ✅ **No image conversion needed** - Leverages Gemini's native PDF understanding
+- ✅ **Modern API patterns** - Uses `system_instruction` parameter (not concatenated prompts)
+- ✅ **Rich console UI** - Color-coded progress bars, tables, panels, and status indicators
 - ✅ **PyPDF2 page extraction** - Individual pages sent as separate PDFs
+- ✅ **Smart thinking config** - Uses `thinking_level` for Gemini 3, `thinking_budget` for 2.5
 
 ### Mistral Version
 - ✅ **Document OCR specialization** - Mistral OCR model extracts markdown text
@@ -100,7 +103,7 @@ Required packages:
 - `mistralai` - Mistral AI API client (for Mistral version)
 - `PyPDF2` - PDF page extraction and metadata
 - `python-dotenv` - Environment variable management
-- `tqdm` - Progress bars
+- `rich` - Beautiful console output with colors and formatting
 - `requests` - HTTP requests (for Omeka downloader)
 
 2. **Configure environment variables:**
@@ -270,18 +273,37 @@ This prevents pipeline blocking while flagging problematic pages.
 
 ## Configuration
 
-Edit `02_AI_generate_summaries_issue.py` to adjust:
+The Gemini version uses `common/llm_provider.py` for model selection. Models are configured automatically:
 
 ```python
-# AI Models
-GEMINI_MODEL_STEP1 = "gemini-3-pro-preview"      # Extraction (more accurate)
-GEMINI_MODEL_STEP2 = "gemini-2.5-flash"    # Consolidation (faster)
+# Model selection (automatic via llm_provider)
+model_step1 = get_model_option("gemini-pro")   # Gemini 3 Pro for extraction
+model_step2 = get_model_option("gemini-flash") # Gemini 2.5 Flash for consolidation
+
+# LLM Configuration
+config_step1 = LLMConfig(
+    thinking_level="low",  # Gemini 3 Pro uses thinking_level
+    temperature=0.2
+)
+config_step2 = LLMConfig(
+    thinking_budget=0,     # Gemini 2.5 Flash uses thinking_budget (0=disabled)
+    temperature=0.3
+)
 
 # Retry Settings
 MAX_RETRIES = 3          # Number of retry attempts
 RETRY_DELAY = 2          # Initial delay in seconds
 RETRY_BACKOFF = 2        # Delay multiplier for exponential backoff
 ```
+
+### Console Output
+
+The Gemini version features rich console output:
+- 🎨 **Color-coded status** - Green for success, red for errors, cyan for info
+- 📊 **Progress bars** - Real-time progress with elapsed time
+- 📋 **Tables** - Clean display of model configuration and file lists
+- 🔲 **Panels** - Highlighted sections for important information
+- ✓/✗ **Status indicators** - Clear success/failure markers
 
 ## Architecture Decisions
 
@@ -299,14 +321,20 @@ Page numbers are injected by the script (not AI) for reliability:
 - ✅ **Easier consolidation** - page numbers are trustworthy
 
 ### Why Two Different Models?
-- **Gemini 3.0 Pro (Step 1)**: Higher accuracy for initial extraction with thinking enabled
-- **Gemini 2.5 Flash (Step 2)**: Faster consolidation with thinking disabled
+- **Gemini 3.0 Pro (Step 1)**: Higher accuracy for initial extraction with `thinking_level` enabled
+- **Gemini 2.5 Flash (Step 2)**: Faster consolidation with `thinking_budget=0` (disabled)
 
-### Why Gemini Only?
-- **Native PDF processing** - Gemini can read PDFs directly without OCR
-- **Vision capabilities** - Handles images, diagrams, and complex layouts
-- **Better document understanding** - Maintains context of visual structure
-- **No OpenAI support** - ChatGPT lacks native PDF understanding
+### Why `system_instruction` Pattern?
+The modern Google Gen AI SDK uses `system_instruction` in `GenerateContentConfig`:
+- ✅ **Cleaner separation** - System guidance separate from user content
+- ✅ **Better behavior** - Model consistently follows system instructions
+- ✅ **API compliance** - Follows Google's recommended patterns
+
+### Why Rich Console Output?
+- ✅ **Better visibility** - Progress bars show real-time status
+- ✅ **Professional appearance** - Color-coded, formatted output
+- ✅ **Error clarity** - Clear distinction between success and failures
+- ✅ **Summary tables** - Easy to review processing results
 
 ### Why Separate Prompt Files?
 - **Modularity** - Easy to modify extraction vs consolidation logic
