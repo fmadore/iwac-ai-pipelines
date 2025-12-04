@@ -1,143 +1,120 @@
 """
-This script uses Google's Gemini models to correct and improve OCR text output.
+OCR Text Correction Pipeline using LLM Provider
+
+This script uses the shared LLM provider to correct and improve OCR text output.
 It processes text files containing raw OCR output, applies AI-powered corrections,
 and saves the improved versions while handling large texts through chunking.
+
+Supports multiple models via --model flag:
+- gemini-flash (default): Gemini 2.5 Flash - fast, cost-effective
+- gemini-pro: Gemini 3 Pro - highest quality
+- gpt-5-mini: OpenAI GPT-5 mini - cost-optimized
+- mistral-large: Mistral Large 3 - multimodal MoE
 """
 
+import argparse
 import os
-from google import genai
-from google.genai import types
-from tqdm import tqdm
+import sys
+from pathlib import Path
+
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.table import Table
+from rich import box
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from common.llm_provider import (
+    LLMConfig,
+    build_llm_client,
+    get_model_option,
+    summary_from_option,
+)
 
 # Load environment variables from .env file
 load_dotenv()
 
-def get_api_key():
-    """
-    Retrieve the Gemini API key from environment variables.
-    
-    Returns:
-        str: The Gemini API key
-        
-    Raises:
-        ValueError: If the API key is not found in environment variables
-    """
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        raise ValueError("API key not found. Please set the GEMINI_API_KEY environment variable.")
-    return api_key
+# Initialize Rich console
+console = Console()
 
-def initialize_client(api_key):
-    """
-    Initialize the Gemini client with the provided API key.
-    
-    Args:
-        api_key (str): Gemini API key
-        
-    Returns:
-        genai.Client: Initialized Gemini client
-    """
-    return genai.Client(api_key=api_key)
+# Allowed models for this pipeline
+ALLOWED_MODELS = ["gemini-flash", "gemini-pro", "gpt-5-mini", "gpt-5.1", "mistral-large", "ministral-14b"]
 
-def get_generation_config():
-    """
-    Configure generation parameters for optimal OCR correction performance.
-    
-    Returns:
-        types.GenerateContentConfig: Configured generation config
-    """
-    return types.GenerateContentConfig(
-        temperature=0.2,
-        top_p=0.95,
-        top_k=40,
-        max_output_tokens=65535,
-        response_mime_type="text/plain",
-        thinking_config=types.ThinkingConfig(thinking_budget=-1),
-    )
 
-def get_system_instruction():
+def get_system_instruction() -> str:
     """
-    Get the specialized system instructions for OCR text correction from markdown file.
+    Load the OCR correction system prompt from markdown file.
     
     Returns:
-        str: Detailed system instruction for OCR correction
+        str: System instruction for OCR correction
     """
-    # Get the directory of the current script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    prompt_file = os.path.join(script_dir, 'ocr_correction_prompt.md')
+    script_dir = Path(__file__).resolve().parent
+    prompt_file = script_dir / "ocr_correction_prompt.md"
     
     try:
-        with open(prompt_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Extract the instruction text by removing the markdown header
-        # Split by lines and filter out markdown formatting
-        lines = content.split('\n')
-        instruction_lines = []
-        for line in lines:
-            # Skip markdown headers and empty lines at the beginning
-            if line.strip() and not line.startswith('#'):
-                instruction_lines.append(line)
-        
-        return '\n'.join(instruction_lines).strip()
-    
+        return prompt_file.read_text(encoding="utf-8")
     except FileNotFoundError:
-        # Fallback to a basic instruction if file is missing
-        return "You are an expert OCR correction assistant. Correct OCR errors, fix formatting, and improve text structure while preserving the original meaning."
+        console.print("[yellow]⚠[/] Prompt file not found, using fallback instruction")
+        return (
+            "You are an expert OCR correction assistant. "
+            "Correct OCR errors, fix formatting, and improve text structure "
+            "while preserving the original meaning and historical authenticity."
+        )
 
-def correct_text_with_gemini(client, text):
+
+def correct_text_with_llm(client, text: str, system_prompt: str) -> str:
     """
-    Use Gemini to correct OCR errors and improve text formatting.
+    Use LLM to correct OCR errors and improve text formatting.
     
     Args:
-        client (genai.Client): Initialized Gemini client
-        text (str): Raw OCR text to be corrected
+        client: Initialized LLM client from llm_provider
+        text: Raw OCR text to be corrected
+        system_prompt: System instruction for OCR correction
         
     Returns:
         str: Corrected and improved text
     """
+    if not text or not text.strip():
+        return text
+    
+    user_prompt = (
+        "Here is the OCR text that needs correction. "
+        "Analyze the structure, fix errors, and ensure proper formatting:\n\n"
+        f"{text}"
+    )
+    
     try:
-        config = get_generation_config()
-        config.system_instruction = get_system_instruction()
-        
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part(text=f"Here is the OCR text that needs correction. Analyze the structure, fix errors, and ensure proper formatting:\n\n{text}")
-                    ]
-                )
-            ],
-            config=config
-        )
-        return response.text.strip()
+        return client.generate(system_prompt, user_prompt)
     except Exception as e:
-        print(f"Error during Gemini API call: {e}")
+        console.print(f"[red]✗[/] Error during API call: {e}")
         return text  # Return original text if correction fails
 
-def split_text(text, max_tokens=65535):
+def split_text(text: str, max_chars: int = 200000) -> list[str]:
     """
-    Split long texts into manageable chunks for Gemini processing.
+    Split long texts into manageable chunks for LLM processing.
     
     This function implements intelligent text splitting that:
     - Respects sentence boundaries where possible
     - Handles extremely long sentences by splitting on word boundaries
-    - Ensures chunks stay within token limits for Gemini processing
+    - Ensures chunks stay within character limits
     
     Args:
-        text (str): Input text to be split
-        max_tokens (int): Maximum tokens per chunk (default: 65535 for Gemini)
+        text: Input text to be split
+        max_chars: Maximum characters per chunk (default: 200000)
         
     Returns:
-        list: List of text chunks ready for processing
+        List of text chunks ready for processing
     """
-    # Estimate: 1 token ≈ 4 characters, leaving room for system prompt and response
-    # Using 50000 tokens as safe limit for content (leaving ~15000 tokens for prompt and overhead)
-    max_chars = 50000 * 4
-    
     # If text is shorter than limit, return as single chunk
     if len(text) <= max_chars:
         return [text]
@@ -147,7 +124,7 @@ def split_text(text, max_tokens=65535):
     current_length = 0
     
     # Split into sentences (roughly) by splitting on periods followed by spaces
-    sentences = text.replace('. ', '.|').split('|')
+    sentences = text.replace(". ", ".|").split("|")
     
     for sentence in sentences:
         sentence = sentence.strip()
@@ -156,7 +133,7 @@ def split_text(text, max_tokens=65535):
         # If adding this sentence would exceed limit, save current chunk and start new one
         if current_length + sentence_length > max_chars:
             if current_chunk:
-                chunks.append(' '.join(current_chunk))
+                chunks.append(" ".join(current_chunk))
                 current_chunk = []
                 current_length = 0
             
@@ -171,14 +148,14 @@ def split_text(text, max_tokens=65535):
                     word_length = len(word) + 1  # +1 for space
                     if temp_length + word_length > max_chars:
                         if temp_chunk:
-                            chunks.append(' '.join(temp_chunk))
+                            chunks.append(" ".join(temp_chunk))
                             temp_chunk = []
                             temp_length = 0
                     temp_chunk.append(word)
                     temp_length += word_length
                 
                 if temp_chunk:
-                    chunks.append(' '.join(temp_chunk))
+                    chunks.append(" ".join(temp_chunk))
             else:
                 current_chunk.append(sentence)
                 current_length = sentence_length
@@ -188,70 +165,265 @@ def split_text(text, max_tokens=65535):
     
     # Add any remaining text
     if current_chunk:
-        chunks.append(' '.join(current_chunk))
+        chunks.append(" ".join(current_chunk))
     
     return chunks
 
-def process_file(client, input_file_path, output_file_path, max_length):
+
+def process_file(
+    client,
+    input_file_path: Path,
+    output_file_path: Path,
+    system_prompt: str,
+    max_length: int,
+) -> tuple[bool, str]:
     """
     Process a single text file through the OCR correction pipeline.
     
     Args:
-        client (genai.Client): Initialized Gemini client
-        input_file_path (str): Path to input text file
-        output_file_path (str): Path where corrected text will be saved
-        max_length (int): Maximum text length before chunking is required
+        client: Initialized LLM client
+        input_file_path: Path to input text file
+        output_file_path: Path where corrected text will be saved
+        system_prompt: System instruction for OCR correction
+        max_length: Maximum text length before chunking is required
+        
+    Returns:
+        Tuple of (success: bool, message: str)
     """
-    with open(input_file_path, 'r', encoding='utf-8') as infile:
-        original_text = infile.read()
+    try:
+        original_text = input_file_path.read_text(encoding="utf-8")
+        
+        if not original_text.strip():
+            return False, "Empty file"
+        
+        if len(original_text) > max_length:
+            chunks = split_text(original_text, max_length)
+            corrected_chunks = [
+                correct_text_with_llm(client, chunk, system_prompt)
+                for chunk in chunks
+            ]
+            corrected_text = " ".join(corrected_chunks)
+        else:
+            corrected_text = correct_text_with_llm(client, original_text, system_prompt)
+        
+        output_file_path.write_text(corrected_text, encoding="utf-8")
+        return True, "Success"
+        
+    except Exception as e:
+        return False, str(e)
 
-    if len(original_text) > max_length:
-        chunks = split_text(original_text, max_length)
-        corrected_chunks = [correct_text_with_gemini(client, chunk) for chunk in chunks]
-        corrected_text = ' '.join(corrected_chunks)
-    else:
-        corrected_text = correct_text_with_gemini(client, original_text)
 
-    with open(output_file_path, 'w', encoding='utf-8') as outfile:
-        outfile.write(corrected_text)
-
-def process_txt_files(client, input_dir, output_dir, max_length=200000):
+def process_txt_files(
+    client,
+    input_dir: Path,
+    output_dir: Path,
+    system_prompt: str,
+    max_length: int = 200000,
+) -> tuple[int, int]:
     """
     Process all text files in a directory through the OCR correction pipeline.
     
     Args:
-        client (genai.Client): Initialized Gemini client
-        input_dir (str): Directory containing input text files
-        output_dir (str): Directory where corrected files will be saved
-        max_length (int): Maximum text length before chunking is required
+        client: Initialized LLM client
+        input_dir: Directory containing input text files
+        output_dir: Directory where corrected files will be saved
+        system_prompt: System instruction for OCR correction
+        max_length: Maximum text length before chunking is required
+        
+    Returns:
+        Tuple of (success_count, error_count)
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    txt_files = sorted(input_dir.glob("*.txt"))
+    
+    if not txt_files:
+        console.print("[yellow]⚠[/] No .txt files found in input directory")
+        return 0, 0
+    
+    success_count = 0
+    error_count = 0
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Processing files...", total=len(txt_files))
+        
+        for txt_file in txt_files:
+            output_file = output_dir / txt_file.name
+            success, message = process_file(
+                client, txt_file, output_file, system_prompt, max_length
+            )
+            
+            if success:
+                success_count += 1
+            else:
+                error_count += 1
+                console.print(f"[red]✗[/] {txt_file.name}: {message}")
+            
+            progress.update(task, advance=1, description=f"Processing {txt_file.name}")
+    
+    return success_count, error_count
 
-    txt_files = [f for f in os.listdir(input_dir) if f.endswith('.txt')]
 
-    for txt_file in tqdm(txt_files, desc="Processing files"):
-        input_file_path = os.path.join(input_dir, txt_file)
-        output_file_path = os.path.join(output_dir, txt_file)
-        process_file(client, input_file_path, output_file_path, max_length)
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Correct OCR text using AI models",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--model",
+        choices=ALLOWED_MODELS,
+        default=None,
+        help="AI model to use for correction (default: interactive selection)",
+    )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        help="Input directory containing .txt files (default: ./TXT)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Output directory for corrected files (default: ./Corrected_TXT)",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=200000,
+        help="Maximum text length before chunking (default: 200000)",
+    )
+    return parser.parse_args()
+
 
 def main():
     """
     Main execution function that orchestrates the OCR correction process.
     
-    Sets up directories, initializes the Gemini client, and processes all text files
-    while providing progress feedback through tqdm.
+    Sets up directories, initializes the LLM client, and processes all text files
+    while providing rich console output for progress and status.
     """
-    # Get the directory of the current script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    args = parse_args()
     
-    # Set input and output directories relative to the script directory
-    input_dir = os.path.join(script_dir, 'TXT')  # Directory containing the input .txt files
-    output_dir = os.path.join(script_dir, 'Corrected_TXT')  # Directory to save the corrected .txt files
+    # Display welcome banner
+    console.print(
+        Panel(
+            "[bold]OCR Text Correction Pipeline[/bold]\n\n"
+            "Corrects OCR errors in text files using AI models.\n"
+            "Preserves historical authenticity while fixing technical artifacts.",
+            title="📝 OCR Correction",
+            border_style="cyan",
+        )
+    )
     
-    api_key = get_api_key()
-    client = initialize_client(api_key)
-    process_txt_files(client, input_dir, output_dir)
+    # Get script directory for default paths
+    script_dir = Path(__file__).resolve().parent
+    input_dir = args.input_dir or (script_dir / "TXT")
+    output_dir = args.output_dir or (script_dir / "Corrected_TXT")
+    
+    # Get model selection
+    try:
+        model_option = get_model_option(args.model, allowed_keys=ALLOWED_MODELS)
+    except ValueError as e:
+        console.print(f"[red]✗[/] {e}")
+        sys.exit(1)
+    
+    # Configure LLM based on provider
+    # For Gemini Flash: disable thinking for faster, cheaper processing
+    # For other models: use appropriate defaults
+    if model_option.key == "gemini-flash":
+        config = LLMConfig(temperature=0.2, thinking_budget=0)  # Disable thinking
+    elif model_option.key == "gemini-pro":
+        config = LLMConfig(temperature=0.2, thinking_level="low")  # Minimal thinking
+    else:
+        config = LLMConfig(temperature=0.2)  # Default for OpenAI/Mistral
+    
+    # Display configuration
+    console.rule("[bold cyan]Configuration")
+    
+    config_table = Table(box=box.ROUNDED, show_header=False)
+    config_table.add_column("Setting", style="dim")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("Model", summary_from_option(model_option))
+    config_table.add_row("Input Directory", str(input_dir))
+    config_table.add_row("Output Directory", str(output_dir))
+    config_table.add_row("Max Chunk Length", f"{args.max_length:,} chars")
+    if model_option.key == "gemini-flash":
+        config_table.add_row("Thinking", "Disabled (thinking_budget=0)")
+    elif model_option.key == "gemini-pro":
+        config_table.add_row("Thinking Level", "low")
+    console.print(config_table)
+    console.print()
+    
+    # Validate input directory
+    if not input_dir.exists():
+        console.print(f"[red]✗[/] Input directory not found: {input_dir}")
+        sys.exit(1)
+    
+    # Count files
+    txt_files = list(input_dir.glob("*.txt"))
+    console.print(f"[cyan]📁[/] Found [bold]{len(txt_files)}[/bold] text files to process")
+    console.print()
+    
+    if not txt_files:
+        console.print("[yellow]⚠[/] No files to process. Exiting.")
+        sys.exit(0)
+    
+    # Initialize LLM client
+    console.print("[cyan]🔌[/] Initializing LLM client...")
+    try:
+        client = build_llm_client(model_option, config=config)
+    except RuntimeError as e:
+        console.print(f"[red]✗[/] Failed to initialize client: {e}")
+        sys.exit(1)
+    
+    # Load system prompt
+    system_prompt = get_system_instruction()
+    console.print(f"[green]✓[/] System prompt loaded ({len(system_prompt):,} chars)")
+    console.print()
+    
+    # Process files
+    console.rule("[bold cyan]Processing Files")
+    success_count, error_count = process_txt_files(
+        client, input_dir, output_dir, system_prompt, args.max_length
+    )
+    
+    # Display summary
+    console.print()
+    console.rule("[bold cyan]Summary")
+    
+    summary_table = Table(box=box.ROUNDED, show_header=False)
+    summary_table.add_column("Metric", style="dim")
+    summary_table.add_column("Value")
+    summary_table.add_row("Total Files", str(len(txt_files)))
+    summary_table.add_row("Successful", f"[green]{success_count}[/]")
+    summary_table.add_row("Failed", f"[red]{error_count}[/]" if error_count else "[green]0[/]")
+    summary_table.add_row("Output Location", str(output_dir))
+    console.print(summary_table)
+    
+    if error_count == 0:
+        console.print(
+            Panel(
+                f"[green]✓ All {success_count} files corrected successfully![/]",
+                border_style="green",
+            )
+        )
+    else:
+        console.print(
+            Panel(
+                f"[yellow]⚠ Completed with {error_count} error(s)[/]",
+                border_style="yellow",
+            )
+        )
+
 
 if __name__ == "__main__":
     main()
