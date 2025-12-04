@@ -58,6 +58,8 @@ AI_audio_summary/Transcriptions/
 AI_htr_extraction/PDF/
 AI_htr_extraction/OCR_Results
 AI_NER/output/
+AI_ocr_correction/ALTO/
+AI_ocr_correction/ALTO_Corrected/
 AI_ocr_correction/Corrected_TXT/
 AI_ocr_correction/TXT/
 AI_ocr_extraction/OCR_Results/
