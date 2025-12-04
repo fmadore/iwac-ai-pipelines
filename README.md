@@ -58,7 +58,11 @@ Reads handwritten documents—colonial correspondence, manuscript annotations, p
 Extracts people, places, organizations, and topics from documents using **Gemini, OpenAI, or Mistral**. Reconciles entities against authority databases and updates Omeka S with structured metadata. Features native structured outputs for guaranteed valid JSON.
 
 ### 📝 OCR Correction (`AI_ocr_correction/`)
-Fixes errors in machine-generated text from scanned documents. Uses the shared LLM provider supporting **Gemini, OpenAI, and Mistral**. Particularly effective for historical newspapers where print quality varies.
+Fixes errors in machine-generated text from scanned documents. Supports two approaches:
+- **Plain text correction**: Reconstructs paragraphs and fixes OCR errors
+- **ALTO XML correction**: Preserves word-level coordinates while fixing text
+
+Uses the shared LLM provider supporting **Gemini, OpenAI, and Mistral**. Particularly effective for historical newspapers where print quality varies.
 
 ### 📄 OCR Extraction (`AI_ocr_extraction/`)
 Extracts text from PDF scans using **Gemini's vision capabilities** or **Mistral Document AI**. Handles complex layouts common in newspapers and magazines. Includes intelligent copyright handling with automatic RECITATION error recovery.
