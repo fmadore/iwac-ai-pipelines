@@ -67,15 +67,15 @@ This is the recommended approach when you have ALTO XML files and need to:
 - Preserve page layout information
 
 **How it works**:
-1. Parses ALTO XML and extracts `<TextLine>` contents
-2. Sends text lines to LLM for correction using **structured output**
+1. Parses ALTO XML and groups `<TextLine>` elements by parent `<TextBlock>` (for paragraph context)
+2. Sends each block to LLM for correction using **structured output**
 3. Enforces strict 1:1 token alignment (same number of words in/out)
 4. Updates only `CONTENT` attributes, preserving all coordinates
 5. Writes corrected ALTO XML with original structure intact
 
 **Features**:
+- **Block-level processing**: Full paragraph context for better corrections
 - Structured output with Pydantic models for reliable token alignment
-- Batch processing (configurable lines per API call)
 - Multi-provider support (Gemini, OpenAI, Mistral)
 - Automatic ALTO namespace detection (v2, v3, v4)
 - Rich console output with progress tracking
@@ -88,8 +88,8 @@ python 02_correct_alto_xml.py
 # Use Gemini Flash (fast, no thinking)
 python 02_correct_alto_xml.py --model gemini-flash
 
-# Custom directories and batch size
-python 02_correct_alto_xml.py --model gemini-flash --input-dir ./ALTO --output-dir ./ALTO_Corrected --batch-size 30
+# Custom directories and max lines per request
+python 02_correct_alto_xml.py --model gemini-flash --input-dir ./ALTO --output-dir ./ALTO_Corrected --max-lines 40
 ```
 
 **Input**: ALTO XML files from `ALTO/` directory
@@ -182,6 +182,14 @@ python 02_correct_alto_xml.py --model gemini-flash
 
 ## ALTO XML Correction Details
 
+### Block-Level Processing
+
+The ALTO correction groups lines by their parent `<TextBlock>` element before sending to the LLM. This provides **full paragraph context**, which significantly improves correction quality:
+
+- The LLM can see how words connect across line breaks (e.g., "rache-" + "ter")
+- Better understanding of sentence structure and meaning
+- More accurate correction of ambiguous OCR errors
+
 ### Token Alignment Strategy
 
 The ALTO correction uses **structured output** to enforce strict token alignment:
@@ -210,6 +218,15 @@ This ensures:
 - Historical spellings: `connexion`, `shew`, `to-day`
 - Original language: French stays French
 - Token boundaries: Never merge or split words
+
+### Known Limitations
+
+Due to coordinate preservation, the script **cannot**:
+- **Merge tokens**: `ilest` cannot become `il est` (would need 2 coordinate boxes)
+- **Split tokens**: `il est` cannot become `ilest` (would lose a coordinate box)
+- **Add/remove words**: Token count must match exactly
+
+Words that need merging/splitting are flagged in the LLM's analysis but returned unchanged to preserve coordinates.
 
 ### Example
 
@@ -252,7 +269,7 @@ Note: Only `CONTENT` changed; all coordinates preserved!
 - **gemini-pro**: Low thinking (`thinking_level="low"`) for balance
 
 ### Processing Parameters
-- **Batch size**: 20 lines per API call (configurable)
+- **Max lines per request**: 50 lines per API call for large blocks (configurable via `--max-lines`)
 - **Temperature**: 0.1-0.2 for consistent corrections
 - **Max text length**: 200,000 characters before chunking (plain text)
 

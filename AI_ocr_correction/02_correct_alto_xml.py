@@ -2,13 +2,13 @@
 ALTO XML OCR Correction Pipeline
 
 This script corrects OCR text in ALTO XML files while preserving all coordinates
-and layout information. It extracts text from TextLine elements, sends them to
-an LLM for correction, and writes back the corrected text to the original
+and layout information. It extracts text from TextBlock elements (for better context),
+sends them to an LLM for correction, and writes back the corrected text to the original
 String elements while keeping HPOS, VPOS, WIDTH, HEIGHT untouched.
 
 The approach:
-1. Parse ALTO XML and extract TextLine contents (concatenated String elements)
-2. Send lines to LLM for correction using structured output
+1. Parse ALTO XML and group TextLines by their parent TextBlock (for paragraph context)
+2. Send each block's lines to LLM for correction using structured output
 3. Re-tokenize corrected text and map back to original String elements
 4. Update only CONTENT attributes, preserving all coordinate data
 
@@ -131,6 +131,17 @@ class TextLineData:
     element: ET.Element
     strings: list[StringElement]
     full_text: str  # Concatenated text from all String elements
+    line_id: str = ""  # ALTO ID attribute if present
+
+
+@dataclass
+class TextBlockData:
+    """Represents an ALTO TextBlock with its TextLine children."""
+
+    element: ET.Element
+    lines: list[TextLineData]
+    block_id: str = ""  # ALTO ID attribute if present
+    full_text: str = ""  # Concatenated text from all lines (for context)
 
 
 def detect_alto_namespace(root: ET.Element) -> Optional[str]:
@@ -148,15 +159,18 @@ def detect_alto_namespace(root: ET.Element) -> Optional[str]:
     return None
 
 
-def parse_alto_xml(file_path: Path) -> tuple[ET.ElementTree, list[TextLineData], str]:
+def parse_alto_xml(file_path: Path) -> tuple[ET.ElementTree, list[TextBlockData], str]:
     """
-    Parse an ALTO XML file and extract all TextLine elements.
+    Parse an ALTO XML file and extract TextBlocks with their TextLines.
+
+    Grouping by TextBlock provides better context for OCR correction,
+    as the LLM can see full paragraphs instead of isolated lines.
 
     Args:
         file_path: Path to the ALTO XML file
 
     Returns:
-        Tuple of (ElementTree, list of TextLineData, namespace URI)
+        Tuple of (ElementTree, list of TextBlockData, namespace URI)
     """
     tree = ET.parse(file_path)
     root = tree.getroot()
@@ -165,37 +179,57 @@ def parse_alto_xml(file_path: Path) -> tuple[ET.ElementTree, list[TextLineData],
     ns = detect_alto_namespace(root)
     ns_prefix = f"{{{ns}}}" if ns else ""
 
-    text_lines = []
+    text_blocks = []
 
-    # Find all TextLine elements
-    for text_line in root.iter(f"{ns_prefix}TextLine"):
-        strings = []
-        text_parts = []
+    # Find all TextBlock elements
+    for text_block in root.iter(f"{ns_prefix}TextBlock"):
+        block_id = text_block.get("ID", "")
+        lines = []
+        block_text_parts = []
 
-        # Extract all String elements within this TextLine
-        for string_elem in text_line.iter(f"{ns_prefix}String"):
-            content = string_elem.get("CONTENT", "")
-            string_data = StringElement(
-                element=string_elem,
-                content=content,
-                hpos=_safe_float(string_elem.get("HPOS")),
-                vpos=_safe_float(string_elem.get("VPOS")),
-                width=_safe_float(string_elem.get("WIDTH")),
-                height=_safe_float(string_elem.get("HEIGHT")),
-            )
-            strings.append(string_data)
-            text_parts.append(content)
+        # Extract all TextLine elements within this TextBlock
+        for text_line in text_block.iter(f"{ns_prefix}TextLine"):
+            line_id = text_line.get("ID", "")
+            strings = []
+            text_parts = []
 
-        if strings:
-            text_lines.append(
-                TextLineData(
-                    element=text_line,
-                    strings=strings,
-                    full_text=" ".join(text_parts),
+            # Extract all String elements within this TextLine
+            for string_elem in text_line.iter(f"{ns_prefix}String"):
+                content = string_elem.get("CONTENT", "")
+                string_data = StringElement(
+                    element=string_elem,
+                    content=content,
+                    hpos=_safe_float(string_elem.get("HPOS")),
+                    vpos=_safe_float(string_elem.get("VPOS")),
+                    width=_safe_float(string_elem.get("WIDTH")),
+                    height=_safe_float(string_elem.get("HEIGHT")),
+                )
+                strings.append(string_data)
+                text_parts.append(content)
+
+            if strings:
+                line_full_text = " ".join(text_parts)
+                lines.append(
+                    TextLineData(
+                        element=text_line,
+                        strings=strings,
+                        full_text=line_full_text,
+                        line_id=line_id,
+                    )
+                )
+                block_text_parts.append(line_full_text)
+
+        if lines:
+            text_blocks.append(
+                TextBlockData(
+                    element=text_block,
+                    lines=lines,
+                    block_id=block_id,
+                    full_text=" ".join(block_text_parts),
                 )
             )
 
-    return tree, text_lines, ns or ""
+    return tree, text_blocks, ns or ""
 
 
 def _safe_float(value: Optional[str]) -> Optional[float]:
@@ -286,7 +320,7 @@ def correct_lines_batch(
         client: LLM client
         lines: List of TextLineData to correct
         system_prompt: System prompt for the LLM
-        batch_size: Number of lines to process per API call
+        batch_size: Number of lines to process per API call (used for very large blocks)
 
     Returns:
         Dictionary mapping line index to corrected token list
@@ -341,17 +375,92 @@ def correct_lines_batch(
     return corrections
 
 
+def correct_block(
+    client,
+    block: TextBlockData,
+    system_prompt: str,
+    max_lines_per_request: int = 50,
+) -> dict[int, list[str]]:
+    """
+    Correct all lines in a TextBlock, sending the full block for context.
+
+    This provides better OCR correction because the LLM can see the full
+    paragraph context, including word breaks across lines (e.g., "rache-" + "ter").
+
+    Args:
+        client: LLM client
+        block: TextBlockData containing all lines in the block
+        system_prompt: System prompt for the LLM
+        max_lines_per_request: Maximum lines to send in one request (for very large blocks)
+
+    Returns:
+        Dictionary mapping line index (within block) to corrected token list
+    """
+    lines = block.lines
+    corrections = {}
+
+    # For small blocks, send all at once
+    if len(lines) <= max_lines_per_request:
+        # Build the user prompt with full block context
+        user_prompt_parts = [
+            f"Correct the following OCR text block (Block ID: {block.block_id or 'unknown'}).\n",
+            f"Full block text for context: \"{block.full_text}\"\n",
+            "\nLines to correct:\n"
+        ]
+
+        for i, line_data in enumerate(lines):
+            tokens = [s.content for s in line_data.strings]
+            user_prompt_parts.append(
+                f"\nLine {i}:\n"
+                f"  Text: \"{line_data.full_text}\"\n"
+                f"  Tokens ({len(tokens)}): {tokens}"
+            )
+
+        user_prompt = "\n".join(user_prompt_parts)
+
+        try:
+            result = client.generate_structured(
+                system_prompt,
+                user_prompt,
+                LineCorrectionBatch,
+            )
+
+            # Process results
+            for corrected_line in result.lines:
+                idx = corrected_line.line_index
+                if 0 <= idx < len(lines):
+                    original_count = len(lines[idx].strings)
+                    corrected_count = len(corrected_line.corrected_tokens)
+
+                    if corrected_count == original_count:
+                        corrections[idx] = corrected_line.corrected_tokens
+                    else:
+                        console.print(
+                            f"[yellow]⚠[/] Block {block.block_id}, Line {idx}: token count mismatch "
+                            f"(expected {original_count}, got {corrected_count}), keeping original"
+                        )
+
+        except Exception as e:
+            console.print(f"[red]✗[/] Error processing block {block.block_id}: {e}")
+
+    else:
+        # For very large blocks, fall back to batch processing
+        corrections = correct_lines_batch(client, lines, system_prompt, max_lines_per_request)
+
+    return corrections
+
+
 def apply_corrections_to_alto(
-    text_lines: list[TextLineData],
-    corrections: dict[int, list[str]],
+    text_blocks: list[TextBlockData],
+    all_corrections: dict[str, dict[int, list[str]]],
     ns: str,
 ) -> int:
     """
     Apply corrections to the ALTO XML String elements.
 
     Args:
-        text_lines: List of TextLineData with references to XML elements
-        corrections: Dictionary mapping line index to corrected tokens
+        text_blocks: List of TextBlockData with references to XML elements
+        all_corrections: Dictionary mapping block_id to {line_index: corrected_tokens}
         ns: ALTO namespace URI
 
     Returns:
@@ -359,22 +468,29 @@ def apply_corrections_to_alto(
     """
     updated_count = 0
 
-    for line_idx, corrected_tokens in corrections.items():
-        if line_idx >= len(text_lines):
+    for block in text_blocks:
+        block_key = block.block_id or id(block)
+        if block_key not in all_corrections:
             continue
 
-        line_data = text_lines[line_idx]
+        corrections = all_corrections[block_key]
 
-        # Verify token count matches
-        if len(corrected_tokens) != len(line_data.strings):
-            continue
+        for line_idx, corrected_tokens in corrections.items():
+            if line_idx >= len(block.lines):
+                continue
 
-        # Apply corrections to each String element
-        for string_data, new_content in zip(line_data.strings, corrected_tokens):
-            old_content = string_data.content
-            if old_content != new_content:
-                string_data.element.set("CONTENT", new_content)
-                updated_count += 1
+            line_data = block.lines[line_idx]
+
+            # Verify token count matches
+            if len(corrected_tokens) != len(line_data.strings):
+                continue
+
+            # Apply corrections to each String element
+            for string_data, new_content in zip(line_data.strings, corrected_tokens):
+                old_content = string_data.content
+                if old_content != new_content:
+                    string_data.element.set("CONTENT", new_content)
+                    updated_count += 1
 
     return updated_count
 
@@ -387,8 +503,8 @@ def process_alto_file(
     input_path: Path,
     output_path: Path,
     system_prompt: str,
-    batch_size: int = 20,
-) -> tuple[bool, int, int, str]:
+    max_lines_per_request: int = 50,
+) -> tuple[bool, int, int, int, str]:
     """
     Process a single ALTO XML file.
 
@@ -397,34 +513,42 @@ def process_alto_file(
         input_path: Path to input ALTO XML
         output_path: Path for corrected output
         system_prompt: System prompt for LLM
-        batch_size: Lines per API batch
+        max_lines_per_request: Max lines per API request for large blocks
 
     Returns:
-        Tuple of (success, lines_processed, strings_updated, message)
+        Tuple of (success, blocks_processed, lines_processed, strings_updated, message)
     """
     try:
         # Parse ALTO XML
-        tree, text_lines, ns = parse_alto_xml(input_path)
+        tree, text_blocks, ns = parse_alto_xml(input_path)
 
-        if not text_lines:
-            return True, 0, 0, "No text lines found"
+        if not text_blocks:
+            return True, 0, 0, 0, "No text blocks found"
 
-        # Get corrections from LLM
-        corrections = correct_lines_batch(client, text_lines, system_prompt, batch_size)
+        # Count total lines
+        total_lines = sum(len(block.lines) for block in text_blocks)
+
+        # Get corrections for each block
+        all_corrections = {}
+        for block in text_blocks:
+            block_key = block.block_id or id(block)
+            corrections = correct_block(client, block, system_prompt, max_lines_per_request)
+            if corrections:
+                all_corrections[block_key] = corrections
 
         # Apply corrections to XML
-        updated_count = apply_corrections_to_alto(text_lines, corrections, ns)
+        updated_count = apply_corrections_to_alto(text_blocks, all_corrections, ns)
 
         # Write corrected XML
         output_path.parent.mkdir(parents=True, exist_ok=True)
         tree.write(output_path, encoding="unicode", xml_declaration=True)
 
-        return True, len(text_lines), updated_count, "Success"
+        return True, len(text_blocks), total_lines, updated_count, "Success"
 
     except ET.ParseError as e:
-        return False, 0, 0, f"XML parse error: {e}"
+        return False, 0, 0, 0, f"XML parse error: {e}"
     except Exception as e:
-        return False, 0, 0, str(e)
+        return False, 0, 0, 0, str(e)
 
 
 def process_alto_files(
@@ -432,8 +556,8 @@ def process_alto_files(
     input_dir: Path,
     output_dir: Path,
     system_prompt: str,
-    batch_size: int = 20,
-) -> tuple[int, int, int, int]:
+    max_lines_per_request: int = 50,
+) -> tuple[int, int, int, int, int]:
     """
     Process all ALTO XML files in a directory.
 
@@ -442,10 +566,10 @@ def process_alto_files(
         input_dir: Directory containing ALTO XML files
         output_dir: Directory for corrected files
         system_prompt: System prompt for LLM
-        batch_size: Lines per API batch
+        max_lines_per_request: Max lines per API request for large blocks
 
     Returns:
-        Tuple of (success_count, error_count, total_lines, total_strings_updated)
+        Tuple of (success_count, error_count, total_blocks, total_lines, total_strings_updated)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -458,10 +582,11 @@ def process_alto_files(
 
     if not alto_files:
         console.print("[yellow]⚠[/] No ALTO XML files found in input directory")
-        return 0, 0, 0, 0
+        return 0, 0, 0, 0, 0
 
     success_count = 0
     error_count = 0
+    total_blocks = 0
     total_lines = 0
     total_strings = 0
 
@@ -477,17 +602,18 @@ def process_alto_files(
 
         for alto_file in alto_files:
             output_file = output_dir / alto_file.name
-            success, lines, strings, message = process_alto_file(
-                client, alto_file, output_file, system_prompt, batch_size
+            success, blocks, lines, strings, message = process_alto_file(
+                client, alto_file, output_file, system_prompt, max_lines_per_request
             )
 
             if success:
                 success_count += 1
+                total_blocks += blocks
                 total_lines += lines
                 total_strings += strings
                 if strings > 0:
                     console.print(
-                        f"[green]✓[/] {alto_file.name}: {lines} lines, {strings} corrections"
+                        f"[green]✓[/] {alto_file.name}: {blocks} blocks, {lines} lines, {strings} corrections"
                     )
             else:
                 error_count += 1
@@ -495,7 +621,7 @@ def process_alto_files(
 
             progress.update(task, advance=1, description=f"Processing {alto_file.name}")
 
-    return success_count, error_count, total_lines, total_strings
+    return success_count, error_count, total_blocks, total_lines, total_strings
 
 
 # --- CLI ---
@@ -514,8 +640,8 @@ Examples:
   # Use Gemini Flash (fast, no thinking)
   python 02_correct_alto_xml.py --model gemini-flash
 
-  # Custom directories
-  python 02_correct_alto_xml.py --input-dir ./ALTO --output-dir ./ALTO_Corrected
+  # Custom directories and max lines per request
+  python 02_correct_alto_xml.py --input-dir ./ALTO --output-dir ./ALTO_Corrected --max-lines 40
 """,
     )
     parser.add_argument(
@@ -537,10 +663,10 @@ Examples:
         help="Output directory for corrected files (default: ./ALTO_Corrected)",
     )
     parser.add_argument(
-        "--batch-size",
+        "--max-lines",
         type=int,
-        default=20,
-        help="Number of lines to process per API call (default: 20)",
+        default=50,
+        help="Maximum lines per API request for large blocks (default: 50)",
     )
     return parser.parse_args()
 
@@ -555,6 +681,7 @@ def main():
             "[bold]ALTO XML OCR Correction Pipeline[/bold]\n\n"
             "Corrects OCR errors in ALTO XML files while preserving\n"
             "all coordinate data (HPOS, VPOS, WIDTH, HEIGHT).\n\n"
+            "Processes by TextBlock for better paragraph context.\n"
             "Uses structured output for reliable token-level alignment.",
             title="📄 ALTO Correction",
             border_style="cyan",
@@ -590,7 +717,7 @@ def main():
     config_table.add_row("Model", summary_from_option(model_option))
     config_table.add_row("Input Directory", str(input_dir))
     config_table.add_row("Output Directory", str(output_dir))
-    config_table.add_row("Batch Size", f"{args.batch_size} lines/request")
+    config_table.add_row("Max Lines/Request", f"{args.max_lines} (for large blocks)")
     if model_option.key == "gemini-flash":
         config_table.add_row("Thinking", "Disabled (thinking_budget=0)")
     elif model_option.key == "gemini-pro":
@@ -634,8 +761,8 @@ def main():
 
     # Process files
     console.rule("[bold cyan]Processing Files")
-    success_count, error_count, total_lines, total_strings = process_alto_files(
-        client, input_dir, output_dir, system_prompt, args.batch_size
+    success_count, error_count, total_blocks, total_lines, total_strings = process_alto_files(
+        client, input_dir, output_dir, system_prompt, args.max_lines
     )
 
     # Display summary
@@ -650,6 +777,7 @@ def main():
     summary_table.add_row(
         "Failed", f"[red]{error_count}[/]" if error_count else "[green]0[/]"
     )
+    summary_table.add_row("Text Blocks Processed", f"{total_blocks:,}")
     summary_table.add_row("Text Lines Processed", f"{total_lines:,}")
     summary_table.add_row("Strings Corrected", f"{total_strings:,}")
     summary_table.add_row("Output Location", str(output_dir))
@@ -659,7 +787,7 @@ def main():
         console.print(
             Panel(
                 f"[green]✓ All {success_count} files processed successfully![/]\n"
-                f"[dim]{total_strings:,} String elements corrected across {total_lines:,} lines[/]",
+                f"[dim]{total_strings:,} String elements corrected across {total_blocks:,} blocks ({total_lines:,} lines)[/]",
                 border_style="green",
             )
         )
