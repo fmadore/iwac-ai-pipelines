@@ -32,10 +32,22 @@ import os
 import time
 import logging
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rich.progress import Progress as ProgressType
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader, PdfWriter
 import io
+
+# Rich console output
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+console = Console()
 
 # Import shared LLM provider for model selection (but use genai.Client directly for multimodal)
 import sys
@@ -152,7 +164,7 @@ class GeminiPDFProcessor:
             # Gemini 3 Pro uses thinking_level ("low" or "high"), cannot be disabled
             thinking_level = self.llm_config.thinking_level or self.model_option.default_thinking_level or "low"
             config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
-            print(f"🧠 Using thinking_level='{thinking_level}' for {self.model_name}")
+            console.print(f"  [cyan]🧠 Thinking:[/] level='{thinking_level}' for {self.model_name}")
         else:
             # Gemini 2.5 series uses thinking_budget
             thinking_budget = self.llm_config.thinking_budget
@@ -161,9 +173,9 @@ class GeminiPDFProcessor:
             
             if thinking_budget is not None:
                 if thinking_budget == 0:
-                    print(f"🧠 Disabling thinking mode for {self.model_name}")
+                    console.print(f"  [cyan]🧠 Thinking:[/] disabled for {self.model_name}")
                 else:
-                    print(f"🧠 Using thinking_budget={thinking_budget} for {self.model_name}")
+                    console.print(f"  [cyan]🧠 Thinking:[/] budget={thinking_budget} for {self.model_name}")
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
         
         return types.GenerateContentConfig(**config_kwargs)
@@ -271,15 +283,11 @@ class GeminiPDFProcessor:
             Optional[str]: Extracted text or None if failed
         """
         try:
-            print(f"  └─ � Processing page {page_num} inline...")
-            
             # Create PDF part from page bytes
             pdf_part = types.Part.from_bytes(
                 data=page_bytes,
                 mime_type='application/pdf'
             )
-            
-            print(f"  └─ 🤖 Generating OCR text for page {page_num}...")
             
             # System instruction is in the config, just provide user request with document
             user_prompt = (
@@ -301,21 +309,15 @@ class GeminiPDFProcessor:
             
             if not candidate.content or not candidate.content.parts:
                 finish_reason = candidate.finish_reason
-                if finish_reason == types.FinishReason.RECITATION:
-                    print(f"  └─ ⚠️ Page {page_num}: Copyright detection triggered, trying alternative...")
-                    return self._try_alternative_prompts(pdf_part, page_num)
-                else:
-                    raise Exception(f"No valid response. Finish reason: {finish_reason}")
+                raise Exception(f"No valid response. Finish reason: {finish_reason}")
             
             text_content = self._extract_text_from_response(response)
             if not text_content:
                 raise Exception("Empty text response from Gemini")
             
-            print(f"  └─ ✅ Page {page_num} OCR complete")
             return text_content
             
         except Exception as e:
-            print(f"  └─ ❌ Page {page_num} inline processing failed: {str(e)}")
             logging.error(f"Page {page_num} inline processing failed: {e}")
             return None
 
@@ -335,7 +337,6 @@ class GeminiPDFProcessor:
 
         for attempt in range(max_retries):
             try:
-                print(f"  └─ ⬆️  Uploading page {page_num} to Gemini...")
                 
                 # Save page bytes to a temporary file for upload (SDK requires file path)
                 import tempfile
@@ -359,7 +360,6 @@ class GeminiPDFProcessor:
                 if not pdf_file or not pdf_file.name:
                     raise Exception("Failed to upload page to Gemini")
                 
-                print(f"  └─ ⏳ Waiting for page {page_num} processing...")
                 processing_attempts = 0
                 max_processing_time = 60
                 
@@ -381,8 +381,6 @@ class GeminiPDFProcessor:
                 if processing_attempts >= max_processing_time:
                     raise TimeoutError(f"File processing timed out after {max_processing_time} seconds")
                 
-                print(f"  └─ 🤖 Generating OCR text for page {page_num}...")
-                
                 # System instruction is in the config, just provide user request with document
                 user_prompt = (
                     "Please perform complete OCR transcription of this single page. "
@@ -403,97 +401,24 @@ class GeminiPDFProcessor:
                 
                 if not candidate.content or not candidate.content.parts:
                     finish_reason = candidate.finish_reason
-                    if finish_reason == types.FinishReason.RECITATION:
-                        print(f"  └─ ⚠️ Page {page_num}: Copyright detection, trying alternatives...")
-                        result = self._try_alternative_prompts(pdf_file, page_num)
-                        if result:
-                            return result
-                        raise Exception("All copyright retry strategies failed")
-                    else:
-                        raise Exception(f"No valid response. Finish reason: {finish_reason}")
+                    raise Exception(f"No valid response. Finish reason: {finish_reason}")
                 
                 text_content = self._extract_text_from_response(response)
                 if not text_content:
                     raise Exception("Empty text response from Gemini")
                 
-                print(f"  └─ ✅ Page {page_num} OCR complete")
                 return text_content
                 
             except Exception as e:
-                print(f"  └─ ❌ Page {page_num} error (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 logging.error(f"Page {page_num} processing error (attempt {attempt + 1}): {e}", exc_info=True)
                 
                 if attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)
-                    print(f"  └─ 🔄 Retrying in {delay} seconds...")
                     time.sleep(delay)
-                else:
-                    print(f"  └─ ❌ Page {page_num} max retries reached.")
         
         return None
 
-    def _try_alternative_prompts(self, pdf_content, page_num: int) -> Optional[str]:
-        """
-        Try alternative prompts when copyright detection is triggered.
-        
-        Args:
-            pdf_content: PDF Part or File object
-            page_num (int): Page number (for logging, 1-indexed)
-            
-        Returns:
-            Optional[str]: Extracted text or None if all strategies failed
-        """
-        alternative_prompts = [
-            (
-                "Academic Fair Use Request",
-                "This is a legitimate academic research request for historical document preservation and scholarly analysis. "
-                "Under fair use principles, please perform OCR text extraction from this historical page. "
-                "The purpose is archival preservation and academic research, not commercial reproduction. "
-                "Please extract all visible text while maintaining original formatting and structure."
-            ),
-            (
-                "Educational OCR Request",
-                "Please assist with educational OCR processing of this historical document page. "
-                "Extract the text content for research and educational purposes. "
-                "Focus on accuracy and completeness of the text transcription."
-            ),
-            (
-                "Technical OCR Analysis",
-                "Perform technical optical character recognition analysis on this document page. "
-                "Output the detected text content with preserved formatting. "
-                "This is for document digitization and preservation purposes."
-            )
-        ]
-        
-        for strategy_name, alternative_prompt in alternative_prompts:
-            try:
-                print(f"  └─ 🔄 Page {page_num}: Trying {strategy_name}...")
-                retry_response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=[pdf_content, alternative_prompt],  # Document first, then prompt
-                    config=self.generation_config
-                )
-                
-                if (retry_response.candidates and 
-                    retry_response.candidates[0].content and 
-                    retry_response.candidates[0].content.parts):
-                    text_content = self._extract_text_from_response(retry_response)
-                    if text_content:
-                        print(f"  └─ ✅ Page {page_num} complete (using {strategy_name})")
-                        return text_content
-                    else:
-                        print(f"  └─ ⚠️ Page {page_num}: {strategy_name} returned empty response")
-                else:
-                    retry_finish_reason = retry_response.candidates[0].finish_reason if retry_response.candidates else 'Unknown'
-                    print(f"  └─ ⚠️ Page {page_num}: {strategy_name} failed. Finish reason: {retry_finish_reason}")
-                    
-            except Exception as e:
-                print(f"  └─ ⚠️ Page {page_num}: {strategy_name} error: {str(e)}")
-                continue
-        
-        return None
-
-    def process_pdf(self, pdf_path: Path, output_dir: Path) -> None:
+    def process_pdf(self, pdf_path: Path, output_dir: Path, progress: Optional[Progress] = None) -> None:
         """
         Process a PDF file page-by-page and save results to a text file.
         
@@ -506,61 +431,55 @@ class GeminiPDFProcessor:
         Args:
             pdf_path (Path): Path to the PDF file to process
             output_dir (Path): Directory to save the output text file
+            progress (Optional[Progress]): Rich progress bar for page tracking
         """
         try:
-            print("\n" + "="*50)
-            print(f"📄 Processing PDF: {pdf_path.name}")
-            print("="*50)
+            console.print()
+            console.rule(f"[bold]📄 {pdf_path.name}[/]")
             
             # Verify PDF exists
             if not pdf_path.exists():
-                print(f"❌ PDF file not found: {pdf_path}")
+                console.print(f"[red]✗[/] PDF file not found: {pdf_path}")
                 logging.error(f"PDF file not found: {pdf_path}")
                 return
             
             file_size_mb = pdf_path.stat().st_size / (1024 * 1024)
-            print(f"📊 PDF size: {file_size_mb:.2f} MB")
+            console.print(f"  [dim]Size:[/] {file_size_mb:.2f} MB")
             
             # Get page count
-            print("\n🔄 Reading PDF structure...")
             total_pages = self.get_pdf_page_count(pdf_path)
-            print(f"✅ PDF has {total_pages} pages")
+            console.print(f"  [dim]Pages:[/] {total_pages}")
             
             # Create output file
             output_file = output_dir / f"{pdf_path.stem}.txt"
-            print(f"\n📝 Output will be saved to: {output_file}")
+            console.print(f"  [dim]Output:[/] {output_file.name}")
             
             # Track processing statistics
             successful_pages = 0
             failed_pages = []
             
-            # Process each page
+            # Process each page with nested progress
             with open(output_file, 'w', encoding='utf-8') as f:
+                # Create page progress bar if parent progress exists
+                page_task = None
+                if progress:
+                    page_task = progress.add_task(f"[dim]  Pages", total=total_pages, visible=True)
+                
                 for page_idx in range(total_pages):
                     page_num = page_idx + 1  # 1-indexed for display
                     
-                    print("\n" + "-"*40)
-                    print(f"📃 Processing page {page_num}/{total_pages}")
-                    print("-"*40)
-                    
                     try:
                         # Extract single page as PDF bytes
-                        print(f"  └─ 📄 Extracting page {page_num}...")
                         page_bytes = self.extract_pdf_page(pdf_path, page_idx)
                         page_size_mb = len(page_bytes) / (1024 * 1024)
                         
                         # Process page (try inline first, then upload if needed)
                         text = None
                         if page_size_mb < 20:
-                            print(f"  └─ � Page size: {page_size_mb:.2f} MB - trying inline...")
                             text = self.process_pdf_page_inline(page_bytes, page_num)
                         
                         # Fallback to upload if inline failed or page too large
                         if not text:
-                            if page_size_mb < 20:
-                                print(f"  └─ ⚠️ Inline failed, falling back to upload...")
-                            else:
-                                print(f"  └─ � Page size: {page_size_mb:.2f} MB - using upload...")
                             text = self.process_pdf_page_upload(page_bytes, page_num)
                         
                         if text and text.strip():
@@ -573,10 +492,8 @@ class GeminiPDFProcessor:
                                 f.write(text)
                             
                             successful_pages += 1
-                            print(f"✅ Successfully processed page {page_num}")
                         else:
                             failed_pages.append(page_num)
-                            print(f"❌ Failed to process page {page_num}")
                             # Add a placeholder for failed pages
                             if page_num == 1:
                                 f.write(f"[ERROR: Failed to process page {page_num}]")
@@ -585,31 +502,32 @@ class GeminiPDFProcessor:
                     
                     except Exception as e:
                         failed_pages.append(page_num)
-                        print(f"❌ Error processing page {page_num}: {e}")
                         logging.error(f"Error processing page {page_num} of {pdf_path}: {e}")
                         # Add error placeholder
                         if page_num == 1:
                             f.write(f"[ERROR: Failed to process page {page_num}: {str(e)}]")
                         else:
                             f.write(f"\n\n--- Page {page_num} ---\n\n[ERROR: Failed to process page {page_num}: {str(e)}]")
+                    
+                    # Update page progress
+                    if progress and page_task is not None:
+                        progress.update(page_task, advance=1)
+                
+                # Remove page task when done
+                if progress and page_task is not None:
+                    progress.remove_task(page_task)
             
             # Report processing statistics
-            print("\n" + "="*50)
-            print(f"📊 Processing Summary for {pdf_path.name}")
-            print("="*50)
-            print(f"Total pages: {total_pages}")
-            print(f"Successfully processed: {successful_pages}")
-            print(f"Failed pages: {len(failed_pages)}")
-            if failed_pages:
-                print(f"Failed page numbers: {failed_pages}")
-            
             success_rate = (successful_pages / total_pages) * 100 if total_pages > 0 else 0
-            print(f"Success rate: {success_rate:.1f}%")
-            
-            # Validate output file
             output_size = output_file.stat().st_size
-            print(f"Output file size: {output_size:,} bytes")
-            print("="*50 + "\n")
+            
+            # Show completion status
+            if failed_pages:
+                console.print(f"  [yellow]⚠[/] {successful_pages}/{total_pages} pages ([red]failed: {failed_pages}[/])")
+            else:
+                console.print(f"  [green]✓[/] {successful_pages}/{total_pages} pages ({success_rate:.0f}%)")
+            
+            console.print(f"  [dim]Output size:[/] {output_size:,} bytes")
             
             # Log the results
             logging.info(f"PDF {pdf_path.name}: {successful_pages}/{total_pages} pages successful ({success_rate:.1f}%)")
@@ -617,7 +535,7 @@ class GeminiPDFProcessor:
                 logging.warning(f"PDF {pdf_path.name}: Failed pages: {failed_pages}")
             
         except Exception as e:
-            print(f"\n❌ Error processing PDF {pdf_path}: {e}")
+            console.print(f"[red]✗[/] Error processing PDF {pdf_path}: {e}")
             logging.error(f"Error processing PDF {pdf_path}: {e}", exc_info=True)
 
 def main():
@@ -627,24 +545,26 @@ def main():
     Handles user interaction, model selection, and batch processing of PDFs.
     Each PDF is processed page-by-page for better control and error recovery.
     """
-    print("\n🚀 Starting Page-by-Page PDF OCR Process")
-    print("="*50)
-    print("📖 This script processes PDFs page-by-page without image conversion")
-    print("="*50)
+    # Welcome banner
+    console.print(Panel(
+        "[bold]AI-Powered PDF OCR using Google Gemini[/bold]\n"
+        "Processes PDFs page-by-page with native document understanding",
+        title="📄 Gemini OCR Processor",
+        border_style="cyan"
+    ))
     
     # Load environment variables from .env file
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("❌ GEMINI_API_KEY not found in environment variables!")
+        console.print("[red]✗[/] GEMINI_API_KEY not found in environment variables!")
         return
-    print("✅ API Key loaded successfully")
+    console.print("[green]✓[/] API Key loaded successfully")
 
     # Use shared LLM provider for model selection (Gemini models only)
-    print("\n🤖 Model Selection")
-    print("="*50)
+    console.print()
+    console.rule("[bold cyan]🤖 Model Selection[/]")
     model_option = get_model_option(None, allowed_keys=["gemini-flash", "gemini-pro"])
-    print(f"✅ Using model: {summary_from_option(model_option)}")
     
     # Configure LLM for OCR task based on model type
     # OCR benefits from low temperature and minimal thinking for speed
@@ -656,14 +576,24 @@ def main():
             temperature=0.1,  # Low temperature for consistent OCR
             thinking_level="low"  # Use low thinking for faster OCR
         )
-        print(f"📋 Config: temperature={llm_config.temperature}, thinking_level={llm_config.thinking_level}")
     else:
         # Gemini 2.5 Flash uses thinking_budget (0 to disable)
         llm_config = LLMConfig(
             temperature=0.1,  # Low temperature for consistent OCR
             thinking_budget=0  # Disable thinking for Flash
         )
-        print(f"📋 Config: temperature={llm_config.temperature}, thinking_budget={llm_config.thinking_budget}")
+    
+    # Display configuration table
+    config_table = Table(title="Configuration", box=box.ROUNDED)
+    config_table.add_column("Setting", style="dim")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("Model", summary_from_option(model_option))
+    config_table.add_row("Temperature", str(llm_config.temperature))
+    if is_gemini_3:
+        config_table.add_row("Thinking Level", llm_config.thinking_level or "low")
+    else:
+        config_table.add_row("Thinking Budget", str(llm_config.thinking_budget))
+    console.print(config_table)
     
     # Set up directory paths
     script_dir = Path(__file__).parent
@@ -672,17 +602,29 @@ def main():
     output_dir.mkdir(exist_ok=True)
     
     # Initialize the PDF processor
-    print("\n🔧 Initializing Gemini PDF Processor...")
-    processor = GeminiPDFProcessor(api_key, model_option, llm_config)
+    console.print()
+    with console.status("[cyan]Initializing Gemini PDF Processor..."):
+        processor = GeminiPDFProcessor(api_key, model_option, llm_config)
+    console.print("[green]✓[/] Processor initialized")
     
     # Find all PDF files to process
     pdf_files = list(pdf_dir.glob("*.pdf"))
     if not pdf_files:
-        print("\n❌ No PDF files found in the PDF directory!")
+        console.print("[red]✗[/] No PDF files found in the PDF directory!")
         return
     
     total_pdfs = len(pdf_files)
-    print(f"\n📚 Found {total_pdfs} PDF files to process")
+    
+    # Display files table
+    console.print()
+    files_table = Table(title=f"📚 PDF Files to Process ({total_pdfs})", box=box.ROUNDED)
+    files_table.add_column("#", style="dim", width=4)
+    files_table.add_column("Filename", style="cyan")
+    files_table.add_column("Size", justify="right", style="green")
+    for idx, pdf_file in enumerate(pdf_files, 1):
+        size_mb = pdf_file.stat().st_size / (1024 * 1024)
+        files_table.add_row(str(idx), pdf_file.name, f"{size_mb:.2f} MB")
+    console.print(files_table)
     
     # Track overall statistics
     overall_stats = {
@@ -693,58 +635,75 @@ def main():
         'processing_start': time.time()
     }
     
-    # Process each PDF file sequentially
-    for idx, pdf_path in enumerate(pdf_files, 1):
-        print(f"\n📊 Progress: PDF {idx}/{total_pdfs} ({(idx/total_pdfs*100):.1f}%)")
+    # Process each PDF file with progress tracking
+    console.print()
+    console.rule("[bold cyan]📄 Processing PDFs[/]")
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console
+    ) as progress:
+        pdf_task = progress.add_task("[cyan]Processing PDFs...", total=total_pdfs)
         
-        try:
-            processor.process_pdf(pdf_path, output_dir)
+        for idx, pdf_path in enumerate(pdf_files, 1):
+            progress.update(pdf_task, description=f"[cyan]Processing {pdf_path.name}...")
             
-            # Check if output file has content
-            output_file = output_dir / f"{pdf_path.stem}.txt"
-            if output_file.exists() and output_file.stat().st_size > 100:
-                overall_stats['processed_pdfs'] += 1
-                overall_stats['total_size_mb'] += pdf_path.stat().st_size / (1024 * 1024)
-                logging.info(f"Successfully processed {pdf_path.name}")
-            else:
-                overall_stats['failed_pdfs'] += 1
-                logging.warning(f"Output file for {pdf_path.name} is empty or very small")
+            try:
+                processor.process_pdf(pdf_path, output_dir, progress)
                 
-        except Exception as e:
-            overall_stats['failed_pdfs'] += 1
-            print(f"❌ Failed to process {pdf_path.name}: {e}")
-            logging.error(f"Failed to process {pdf_path.name}: {e}")
+                # Check if output file has content
+                output_file = output_dir / f"{pdf_path.stem}.txt"
+                if output_file.exists() and output_file.stat().st_size > 100:
+                    overall_stats['processed_pdfs'] += 1
+                    overall_stats['total_size_mb'] += pdf_path.stat().st_size / (1024 * 1024)
+                    logging.info(f"Successfully processed {pdf_path.name}")
+                else:
+                    overall_stats['failed_pdfs'] += 1
+                    logging.warning(f"Output file for {pdf_path.name} is empty or very small")
+                    
+            except Exception as e:
+                overall_stats['failed_pdfs'] += 1
+                console.print(f"[red]✗[/] Failed to process {pdf_path.name}: {e}")
+                logging.error(f"Failed to process {pdf_path.name}: {e}")
+            
+            progress.update(pdf_task, advance=1)
 
     # Calculate processing time
     processing_time = time.time() - overall_stats['processing_start']
+    success_rate = (overall_stats['processed_pdfs'] / overall_stats['total_pdfs']) * 100 if overall_stats['total_pdfs'] > 0 else 0
     
-    # Print final summary
-    print("\n" + "="*60)
-    print("📈 FINAL PROCESSING SUMMARY")
-    print("="*60)
-    print(f"Total PDFs found: {overall_stats['total_pdfs']}")
-    print(f"Successfully processed: {overall_stats['processed_pdfs']}")
-    print(f"Failed to process: {overall_stats['failed_pdfs']}")
-    print(f"Total size processed: {overall_stats['total_size_mb']:.2f} MB")
-    print(f"Processing time: {processing_time/60:.1f} minutes")
-    
-    if overall_stats['total_pdfs'] > 0:
-        success_rate = (overall_stats['processed_pdfs'] / overall_stats['total_pdfs']) * 100
-        print(f"Overall success rate: {success_rate:.1f}%")
-    
-    print("="*60)
+    # Print final summary table
+    console.print()
+    summary_table = Table(title="📈 Processing Summary", box=box.ROUNDED)
+    summary_table.add_column("Metric", style="dim")
+    summary_table.add_column("Value", justify="right")
+    summary_table.add_row("Total PDFs", str(overall_stats['total_pdfs']))
+    summary_table.add_row("[green]Successful[/]", f"[green]{overall_stats['processed_pdfs']}[/]")
+    summary_table.add_row("[red]Failed[/]", f"[red]{overall_stats['failed_pdfs']}[/]")
+    summary_table.add_row("Total Size", f"{overall_stats['total_size_mb']:.2f} MB")
+    summary_table.add_row("Processing Time", f"{processing_time/60:.1f} minutes")
+    summary_table.add_row("Success Rate", f"{success_rate:.1f}%")
+    console.print(summary_table)
     
     # Log final summary
     logging.info(f"Processing complete. {overall_stats['processed_pdfs']}/{overall_stats['total_pdfs']} PDFs processed successfully in {processing_time/60:.1f} minutes")
 
-    print("\n✨ Direct PDF OCR Process Complete! ✨\n")
+    console.print(Panel(
+        f"[green]✓[/] Processed {overall_stats['processed_pdfs']}/{overall_stats['total_pdfs']} PDFs successfully",
+        title="✨ OCR Complete",
+        border_style="green"
+    ))
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n⚠️ Process interrupted by user")
+        console.print("\n[yellow]⚠[/] Process interrupted by user")
         logging.info("Process interrupted by user")
     except Exception as e:
-        print(f"\n❌ An error occurred: {e}")
+        console.print(f"\n[red]✗[/] An error occurred: {e}")
         logging.error(f"An error occurred: {e}", exc_info=True)
