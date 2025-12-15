@@ -27,8 +27,8 @@ The pipeline consists of four main scripts:
 - **Academic-grade text extraction** with proper formatting & French typography
 - **Automatic database updates** preserving existing metadata
 - **Configurable AI models** (Gemini Flash/Pro or Mistral OCR)
-- **Intelligent copyright handling** with automatic RECITATION error recovery (Gemini)
-- **Fair use compliance** with academic research-focused prompts
+- **Rich console output** with progress bars and status tables
+- **Smart output handling** – no files created for complete failures
 
 ## Prerequisites
 
@@ -52,6 +52,7 @@ Required packages:
 - `mistralai` - Mistral AI client (for Mistral OCR)
 - `PyPDF2` - PDF page extraction
 - `python-dotenv` - Environment variable management
+- `rich` - Console output formatting
 - `tqdm` - Progress bars
 - `pathlib` - Modern path handling
 
@@ -226,23 +227,18 @@ AI_ocr_extraction/
 The `ocr_system_prompt.md` file controls the extraction behavior for French newspaper articles and documents. It defines:
 
 ### Key Features
-- **Reading Zone Protocol** – Multi-column layout handling & precise reading order
-- **Content Hierarchy** – Primary, secondary, tertiary zones (headers, footers, captions)
-- **Semantic Integration** – Intelligent paragraph joining and line merging
+- **Paragraph Consolidation (Critical)** – Joins column line breaks and handles hyphenated/unhyphenated word breaks
+- **Reading Order** – Left-to-right, top-to-bottom: main columns first, then headers, captions, sidebars
 - **French Typography** – Proper spacing rules for ` : `, ` ; `, ` ! `, ` ? `
-- **De-hyphenation** – Removes end-of-line hyphens while preserving compounds
-- **Quality Control** – Built-in self-review checklist for formatting consistency
+- **De-hyphenation** – Removes end-of-line hyphens while preserving compound words
+- **Authenticity** – Preserves original spelling, grammar, punctuation without correction
 
 ### Processing Approach
-The system prompt is loaded once and combined with page-specific instructions for each page:
+The system prompt is loaded as the `system_instruction` and combined with a simple user request for each page:
 ```
-[Full OCR System Prompt from file]
-
 Please perform complete OCR transcription of this single page.
 Extract all visible text maintaining original formatting and structure.
 ```
-
-The prompt is sent **after** the PDF page content (following Google's best practices for document processing).
 
 ### Customization
 Edit `ocr_system_prompt.md` to refine extraction behavior without modifying Python code. The prompt emphasizes research-grade accuracy and archival-quality output suitable for academic research.
@@ -256,46 +252,19 @@ The pipeline includes comprehensive error handling:
 - **Page extraction errors** with detailed logging
 - **Missing dependencies** with clear error messages
 - **Partial processing** continuation after errors
-- **RECITATION errors** with intelligent fallback strategies
+- **Smart output handling** – files only created when at least one page succeeds
 
-### RECITATION Error Handling (Copyright Detection)
-
-Gemini models may trigger `FinishReason.RECITATION` when they detect potentially copyrighted content in historical documents. The pipeline automatically handles this with multi-layered fallback strategies.
-
-#### When RECITATION Errors Occur
-- **Primary trigger**: Gemini returns `FinishReason.RECITATION` 
-- **Secondary trigger**: Empty response with no content/parts
-- **Common cause**: Historical newspaper content triggering copyright detection
-
-#### Automatic Fallback Strategies
-
-When a page hits RECITATION, the system tries three escalating strategies:
-
-1. **Academic Fair Use**: Emphasizes legitimate research, archival preservation, and fair use principles
-2. **Educational Request**: Focuses on educational and research purposes
-3. **Technical Analysis**: Frames as technical OCR analysis for digitization
-
-#### Safety Settings Configuration
-The pipeline configures Gemini with permissive safety settings for legitimate OCR tasks using string-based values (per latest Google GenAI SDK):
+### Safety Settings Configuration
+The pipeline configures Gemini with permissive safety settings for legitimate OCR tasks:
 - `HARM_CATEGORY_HARASSMENT`: `BLOCK_NONE`
 - `HARM_CATEGORY_HATE_SPEECH`: `BLOCK_NONE` 
 - `HARM_CATEGORY_SEXUALLY_EXPLICIT`: `BLOCK_NONE`
 - `HARM_CATEGORY_DANGEROUS_CONTENT`: `BLOCK_NONE`
 
-#### Processing Flow
-1. **First attempt**: Uses full detailed system prompt
-2. **RECITATION detected**: Automatically tries alternative prompts
-3. **Success**: Continues with extracted text
-4. **All strategies fail**: Logs error and marks page as failed
-
-#### Monitoring RECITATION Errors
-Watch for these log messages:
-- `"Page X: Copyright detection triggered, trying alternative..."`
-- `"Page X: Trying Academic Fair Use Request..."`
-- `"Page X complete (using [Strategy Name])"`
-- `"All copyright retry strategies failed"`
-
-This ensures maximum success rate even when processing historical copyrighted material under fair use principles.
+### Failed Page Handling
+- Failed pages are logged but not written to output files
+- If all pages fail, no output file is created (keeps OCR_Results clean)
+- Partial successes include only successfully extracted pages
 
 ## Logging
 
@@ -354,11 +323,9 @@ Log files use timestamps and severity levels for easy debugging and tracking.
 
 5. **"Response lacks content. Finish reason: FinishReason.RECITATION"**
    - Gemini detected potential copyright content
-   - The pipeline automatically tries alternative prompts
-   - If all strategies fail, consider:
-     - Using Gemini Pro instead of Flash (less restrictive)
-     - Manually reviewing content for copyright concerns
-     - Checking logs for which pages consistently fail
+   - The page will be skipped and logged
+   - Consider using Gemini Pro instead of Flash (less restrictive)
+   - Check logs for which pages consistently fail
 
 6. **"File processing timed out"**
    - Network issues or API slowdown
