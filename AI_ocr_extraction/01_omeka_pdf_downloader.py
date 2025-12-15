@@ -18,11 +18,19 @@ import requests
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
-from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from urllib.parse import urljoin
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+# Initialize rich console
+console = Console()
 
 @dataclass
 class OmekaConfig:
@@ -308,36 +316,96 @@ def download_pdfs_from_item_set(item_set_id: str, pdf_folder: Path, max_workers:
     client = OmekaClient(config)
     downloader = PDFDownloader(client, pdf_folder)
     
+    # Display configuration
+    config_table = Table(title="⚙️ Configuration", box=box.ROUNDED)
+    config_table.add_column("Setting", style="dim")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("Item Set ID", item_set_id)
+    config_table.add_row("Output Folder", str(pdf_folder))
+    config_table.add_row("Max Workers", str(max_workers))
+    config_table.add_row("Omeka URL", config.base_url)
+    console.print(config_table)
+    console.print()
+    
     # Retrieve all items from the specified item set
-    items = client.get_items(item_set_id)
+    with console.status("[cyan]Fetching items from Omeka S...", spinner="dots"):
+        items = client.get_items(item_set_id)
+        
     if not items:
+        console.print("[red]✗[/] No items found for item set", item_set_id)
         logging.error(f"No items found for item set {item_set_id}")
         return
+    
+    console.print(f"[green]✓[/] Found [cyan]{len(items)}[/] items in item set")
+    console.print()
+    console.rule("[bold blue]Downloading PDFs")
+    console.print()
         
     # Process items concurrently with thread pool
     results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all download tasks
-        futures = [executor.submit(downloader.process_item, item) for item in items]
+    failed_count = 0
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("[cyan]Downloading PDFs...", total=len(items))
         
-        # Collect results with progress bar
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Downloading PDFs"):
-            result = future.result()
-            if result:
-                results.append(result)
-                
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all download tasks
+            futures = {executor.submit(downloader.process_item, item): item for item in items}
+            
+            # Collect results
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+                else:
+                    failed_count += 1
+                progress.update(task, advance=1)
+    
+    # Display summary
+    console.print()
+    console.rule("[bold blue]Summary")
+    console.print()
+    
+    summary_table = Table(box=box.ROUNDED)
+    summary_table.add_column("Metric", style="dim")
+    summary_table.add_column("Count", justify="right")
+    summary_table.add_row("[green]PDFs Downloaded[/]", f"[green]{len(results)}[/]")
+    summary_table.add_row("[red]Failed/Skipped[/]", f"[red]{failed_count}[/]")
+    summary_table.add_row("Total Items", str(len(items)))
+    console.print(summary_table)
+    
     logging.info(f"Total PDFs downloaded: {len(results)}")
+    console.print(f"\n[green]✓[/] Download complete! PDFs saved to: [cyan]{pdf_folder}[/]")
 
 if __name__ == "__main__":
     # Initialize script directory and logging
     script_dir = Path(__file__).parent
     setup_logging(script_dir)
     
+    # Display welcome banner
+    console.print(Panel(
+        "[bold]Download PDF files from Omeka S digital collections[/]\n\n"
+        "This script retrieves all PDF media attachments from an item set "
+        "and saves them locally for OCR processing.",
+        title="📥 Omeka S PDF Downloader",
+        border_style="cyan"
+    ))
+    console.print()
+    
     # Set up PDF storage directory
     pdf_folder = script_dir / "PDF"
     
     # Get item set ID from user input
-    item_set_id = input("Enter the Omeka S item set ID: ")
+    from rich.prompt import Prompt
+    item_set_id = Prompt.ask("[cyan]Enter the Omeka S item set ID[/]")
+    console.print()
     
     # Start the download process
     download_pdfs_from_item_set(item_set_id, pdf_folder, max_workers=2)
