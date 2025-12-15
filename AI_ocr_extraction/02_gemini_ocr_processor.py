@@ -58,6 +58,7 @@ from common.llm_provider import get_model_option, summary_from_option, LLMConfig
 try:
     from google import genai
     from google.genai import types
+    from google.genai import errors as genai_errors
 except ImportError:
     raise RuntimeError("google-genai package is required for PDF processing")
 
@@ -180,6 +181,92 @@ class GeminiPDFProcessor:
         
         return types.GenerateContentConfig(**config_kwargs)
     
+    def _log_gemini_error(self, error: Exception, context: str, page_num: Optional[int] = None) -> None:
+        """
+        Log detailed information about Gemini API errors.
+        
+        Provides structured error logging with:
+        - Error classification (rate limit, invalid request, auth, etc.)
+        - HTTP status codes when available
+        - Detailed error messages and context
+        - Actionable suggestions for common errors
+        
+        Args:
+            error: The exception that was caught
+            context: Description of what was being attempted
+            page_num: Optional page number for page-specific errors
+        """
+        page_info = f" (page {page_num})" if page_num else ""
+        base_msg = f"Gemini API error during {context}{page_info}"
+        
+        if isinstance(error, genai_errors.APIError):
+            # Extract detailed info from APIError
+            error_code = getattr(error, 'code', 'unknown')
+            error_message = getattr(error, 'message', str(error))
+            error_status = getattr(error, 'status', 'unknown')
+            
+            # Classify error and provide actionable feedback
+            if error_code == 429:
+                error_type = "RATE_LIMIT"
+                suggestion = "Consider reducing request frequency or implementing longer delays between requests."
+                console.print(f"  [yellow]⚠ Rate limit exceeded{page_info}[/] - API quota reached")
+            elif error_code == 400:
+                error_type = "INVALID_REQUEST"
+                suggestion = "Check request parameters, content format, or file size."
+                console.print(f"  [red]✗ Invalid request{page_info}[/] - {error_message[:100]}")
+            elif error_code == 401 or error_code == 403:
+                error_type = "AUTH_ERROR"
+                suggestion = "Verify GEMINI_API_KEY is valid and has proper permissions."
+                console.print(f"  [red]✗ Authentication error{page_info}[/] - Check API key")
+            elif error_code == 404:
+                error_type = "NOT_FOUND"
+                suggestion = "Verify the model name or resource exists."
+                console.print(f"  [red]✗ Resource not found{page_info}[/] - {error_message[:100]}")
+            elif error_code == 500 or error_code == 503:
+                error_type = "SERVER_ERROR"
+                suggestion = "Gemini API is experiencing issues. Retry later."
+                console.print(f"  [yellow]⚠ Server error{page_info}[/] - Gemini API issue (code {error_code})")
+            else:
+                error_type = "API_ERROR"
+                suggestion = "Check the full error log for details."
+                console.print(f"  [red]✗ API error{page_info}[/] - Code {error_code}: {error_message[:80]}")
+            
+            # Detailed logging
+            logging.error(
+                f"{base_msg}\n"
+                f"  Error Type: {error_type}\n"
+                f"  HTTP Code: {error_code}\n"
+                f"  Status: {error_status}\n"
+                f"  Message: {error_message}\n"
+                f"  Suggestion: {suggestion}"
+            )
+        elif isinstance(error, TimeoutError):
+            console.print(f"  [yellow]⚠ Timeout{page_info}[/] - Operation took too long")
+            logging.error(
+                f"{base_msg}\n"
+                f"  Error Type: TIMEOUT\n"
+                f"  Message: {str(error)}\n"
+                f"  Suggestion: Try with smaller pages or increase timeout duration."
+            )
+        elif isinstance(error, ConnectionError):
+            console.print(f"  [yellow]⚠ Connection error{page_info}[/] - Network issue")
+            logging.error(
+                f"{base_msg}\n"
+                f"  Error Type: CONNECTION_ERROR\n"
+                f"  Message: {str(error)}\n"
+                f"  Suggestion: Check network connectivity and try again."
+            )
+        else:
+            # Generic error handling
+            error_type = type(error).__name__
+            console.print(f"  [red]✗ Error{page_info}[/] - {error_type}: {str(error)[:80]}")
+            logging.error(
+                f"{base_msg}\n"
+                f"  Error Type: {error_type}\n"
+                f"  Message: {str(error)}",
+                exc_info=True
+            )
+
     def _extract_text_from_response(self, response) -> str:
         """
         Safely extract text from response, ignoring thought traces.
@@ -307,8 +394,14 @@ class GeminiPDFProcessor:
             
             candidate = response.candidates[0]
             
+            # Check for RECITATION - content blocked due to potential copyright
+            finish_reason = candidate.finish_reason
+            if str(finish_reason) == "FinishReason.RECITATION":
+                console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
+                logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
+                return None
+            
             if not candidate.content or not candidate.content.parts:
-                finish_reason = candidate.finish_reason
                 raise Exception(f"No valid response. Finish reason: {finish_reason}")
             
             text_content = self._extract_text_from_response(response)
@@ -317,8 +410,11 @@ class GeminiPDFProcessor:
             
             return text_content
             
+        except genai_errors.APIError as e:
+            self._log_gemini_error(e, "inline PDF processing", page_num)
+            return None
         except Exception as e:
-            logging.error(f"Page {page_num} inline processing failed: {e}")
+            self._log_gemini_error(e, "inline PDF processing", page_num)
             return None
 
     def process_pdf_page_upload(self, page_bytes: bytes, page_num: int) -> Optional[str]:
@@ -371,7 +467,20 @@ class GeminiPDFProcessor:
                     if state == 'ACTIVE':
                         break
                     elif state == 'FAILED':
-                        raise Exception(f"File processing failed: {state}")
+                        # Extract detailed error info from file status if available
+                        file_error = getattr(file, 'error', None)
+                        if file_error:
+                            error_code = getattr(file_error, 'code', 'unknown')
+                            error_msg = getattr(file_error, 'message', 'No message')
+                            error_details = getattr(file_error, 'details', [])
+                            logging.error(
+                                f"Page {page_num} file processing failed\n"
+                                f"  Error Code: {error_code}\n"
+                                f"  Message: {error_msg}\n"
+                                f"  Details: {error_details}"
+                            )
+                            raise Exception(f"File processing failed: {error_msg} (code: {error_code})")
+                        raise Exception(f"File processing failed with state: {state}")
                     elif state not in ['PROCESSING', 'STATE_UNSPECIFIED']:
                         raise Exception(f"Unexpected file state: {state}")
                     
@@ -399,8 +508,14 @@ class GeminiPDFProcessor:
                 
                 candidate = response.candidates[0]
                 
+                # Check for RECITATION - content blocked due to potential copyright
+                finish_reason = candidate.finish_reason
+                if str(finish_reason) == "FinishReason.RECITATION":
+                    console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
+                    logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
+                    return None
+                
                 if not candidate.content or not candidate.content.parts:
-                    finish_reason = candidate.finish_reason
                     raise Exception(f"No valid response. Finish reason: {finish_reason}")
                 
                 text_content = self._extract_text_from_response(response)
@@ -409,11 +524,28 @@ class GeminiPDFProcessor:
                 
                 return text_content
                 
+            except genai_errors.APIError as e:
+                self._log_gemini_error(e, f"upload PDF processing (attempt {attempt + 1}/{max_retries})", page_num)
+                
+                # Check if error is retryable
+                error_code = getattr(e, 'code', 0)
+                is_retryable = error_code in [429, 500, 503]  # Rate limit or server errors
+                
+                if attempt < max_retries - 1 and is_retryable:
+                    delay = base_delay * (2 ** attempt)
+                    console.print(f"    [dim]Retrying in {delay}s...[/]")
+                    time.sleep(delay)
+                elif not is_retryable:
+                    # Non-retryable error, don't waste attempts
+                    logging.warning(f"Page {page_num}: Non-retryable error (code {error_code}), skipping retries")
+                    break
+                    
             except Exception as e:
-                logging.error(f"Page {page_num} processing error (attempt {attempt + 1}): {e}", exc_info=True)
+                self._log_gemini_error(e, f"upload PDF processing (attempt {attempt + 1}/{max_retries})", page_num)
                 
                 if attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)
+                    console.print(f"    [dim]Retrying in {delay}s...[/]")
                     time.sleep(delay)
         
         return None
@@ -457,77 +589,76 @@ class GeminiPDFProcessor:
             # Track processing statistics
             successful_pages = 0
             failed_pages = []
+            page_contents = []  # Collect content, write only if we have successes
             
             # Process each page with nested progress
-            with open(output_file, 'w', encoding='utf-8') as f:
-                # Create page progress bar if parent progress exists
-                page_task = None
-                if progress:
-                    page_task = progress.add_task(f"[dim]  Pages", total=total_pages, visible=True)
+            # Create page progress bar if parent progress exists
+            page_task = None
+            if progress:
+                page_task = progress.add_task(f"[dim]  Pages", total=total_pages, visible=True)
+            
+            for page_idx in range(total_pages):
+                page_num = page_idx + 1  # 1-indexed for display
                 
-                for page_idx in range(total_pages):
-                    page_num = page_idx + 1  # 1-indexed for display
+                try:
+                    # Extract single page as PDF bytes
+                    page_bytes = self.extract_pdf_page(pdf_path, page_idx)
+                    page_size_mb = len(page_bytes) / (1024 * 1024)
                     
-                    try:
-                        # Extract single page as PDF bytes
-                        page_bytes = self.extract_pdf_page(pdf_path, page_idx)
-                        page_size_mb = len(page_bytes) / (1024 * 1024)
-                        
-                        # Process page (try inline first, then upload if needed)
-                        text = None
-                        if page_size_mb < 20:
-                            text = self.process_pdf_page_inline(page_bytes, page_num)
-                        
-                        # Fallback to upload if inline failed or page too large
-                        if not text:
-                            text = self.process_pdf_page_upload(page_bytes, page_num)
-                        
-                        if text and text.strip():
-                            # Special handling for first page - no header, no extra newlines
-                            if page_num == 1:
-                                f.write(text)
-                            else:
-                                # For subsequent pages, add page marker and newlines
-                                f.write(f"\n\n--- Page {page_num} ---\n\n")
-                                f.write(text)
-                            
-                            successful_pages += 1
-                        else:
-                            failed_pages.append(page_num)
-                            # Add a placeholder for failed pages
-                            if page_num == 1:
-                                f.write(f"[ERROR: Failed to process page {page_num}]")
-                            else:
-                                f.write(f"\n\n--- Page {page_num} ---\n\n[ERROR: Failed to process page {page_num}]")
+                    # Process page (try inline first, then upload if needed)
+                    text = None
+                    if page_size_mb < 20:
+                        text = self.process_pdf_page_inline(page_bytes, page_num)
                     
-                    except Exception as e:
+                    # Fallback to upload if inline failed or page too large
+                    if not text:
+                        text = self.process_pdf_page_upload(page_bytes, page_num)
+                    
+                    if text and text.strip():
+                        page_contents.append((page_num, text))
+                        successful_pages += 1
+                    else:
                         failed_pages.append(page_num)
-                        logging.error(f"Error processing page {page_num} of {pdf_path}: {e}")
-                        # Add error placeholder
-                        if page_num == 1:
-                            f.write(f"[ERROR: Failed to process page {page_num}: {str(e)}]")
-                        else:
-                            f.write(f"\n\n--- Page {page_num} ---\n\n[ERROR: Failed to process page {page_num}: {str(e)}]")
-                    
-                    # Update page progress
-                    if progress and page_task is not None:
-                        progress.update(page_task, advance=1)
                 
-                # Remove page task when done
+                except Exception as e:
+                    failed_pages.append(page_num)
+                    logging.error(f"Error processing page {page_num} of {pdf_path}: {e}")
+                
+                # Update page progress
                 if progress and page_task is not None:
-                    progress.remove_task(page_task)
+                    progress.update(page_task, advance=1)
+            
+            # Remove page task when done
+            if progress and page_task is not None:
+                progress.remove_task(page_task)
+            
+            # Only write output file if we have successful pages
+            if successful_pages > 0:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    for i, (page_num, text) in enumerate(page_contents):
+                        if i == 0:
+                            f.write(text)
+                        else:
+                            f.write(f"\n\n--- Page {page_num} ---\n\n")
+                            f.write(text)
+                
+                output_size = output_file.stat().st_size
+            else:
+                # No successful pages - don't create file
+                output_size = 0
             
             # Report processing statistics
             success_rate = (successful_pages / total_pages) * 100 if total_pages > 0 else 0
-            output_size = output_file.stat().st_size
             
             # Show completion status
-            if failed_pages:
+            if successful_pages == 0:
+                console.print(f"  [red]✗[/] All {total_pages} pages failed - no output file created")
+            elif failed_pages:
                 console.print(f"  [yellow]⚠[/] {successful_pages}/{total_pages} pages ([red]failed: {failed_pages}[/])")
+                console.print(f"  [dim]Output size:[/] {output_size:,} bytes")
             else:
                 console.print(f"  [green]✓[/] {successful_pages}/{total_pages} pages ({success_rate:.0f}%)")
-            
-            console.print(f"  [dim]Output size:[/] {output_size:,} bytes")
+                console.print(f"  [dim]Output size:[/] {output_size:,} bytes")
             
             # Log the results
             logging.info(f"PDF {pdf_path.name}: {successful_pages}/{total_pages} pages successful ({success_rate:.1f}%)")
