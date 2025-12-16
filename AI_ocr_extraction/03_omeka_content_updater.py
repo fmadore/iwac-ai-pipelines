@@ -15,11 +15,19 @@ Requirements:
 
 import os
 import requests
-from tqdm import tqdm
 
 # Load environment variables from .env if present
 from dotenv import load_dotenv
 load_dotenv()
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich import box
+
+# Initialize rich console
+console = Console()
 
 
 # Load API credentials from environment variables (now loaded from .env if present)
@@ -59,12 +67,15 @@ def update_item_with_new_content(item_id, new_content):
     Args:
         item_id (str): The ID of the item to update
         new_content (str): The new OCR text content to add/update
+        
+    Returns:
+        bool: True if update succeeded, False otherwise
     """
     # Retrieve current item data to preserve existing properties
     item_data = get_full_item_data(item_id)
     if not item_data:
-        print(f"No data found for item {item_id}. Skipping update.")
-        return
+        console.print(f"  [yellow]⚠[/] No data found for item {item_id}. Skipping.")
+        return False
 
     # Ensure the 'value' key exists for storing property values
     if 'value' not in item_data:
@@ -99,9 +110,10 @@ def update_item_with_new_content(item_id, new_content):
     
     response = requests.patch(url, json=item_data, params=params, headers=headers)
     if response.status_code == 200:
-        print(f"Successfully updated item {item_id} with new content")
+        return True
     else:
-        print(f"Failed to update item {item_id}: {response.text}")
+        console.print(f"  [red]✗[/] Failed to update item {item_id}: {response.text}")
+        return False
 
 def main():
     """
@@ -110,48 +122,105 @@ def main():
     Reads all text files from the OCR_Results directory and updates the
     corresponding Omeka S items with the extracted text content.
     """
+    # Display welcome banner
+    console.print(Panel(
+        "[bold]Update Omeka S items with OCR extracted text[/]\n\n"
+        "This script reads OCR text files and updates the corresponding "
+        "Omeka S items with the bibo:content property.",
+        title="📤 Omeka S Content Updater",
+        border_style="cyan"
+    ))
+    console.print()
+    
     # Verify that all required environment variables are set
     if not all([base_url, key_identity, key_credential]):
-        print("Error: Missing required environment variables. Please set OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, and OMEKA_KEY_CREDENTIAL.")
+        console.print("[red]✗[/] Error: Missing required environment variables.")
+        console.print("  Please set OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, and OMEKA_KEY_CREDENTIAL.")
         return
 
     # Set up directory paths
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ocr_folder = os.path.join(script_dir, "OCR_Results")
 
+    # Display configuration
+    config_table = Table(title="⚙️ Configuration", box=box.ROUNDED)
+    config_table.add_column("Setting", style="dim")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("OCR Results Folder", ocr_folder)
+    config_table.add_row("Omeka URL", base_url)
+    console.print(config_table)
+    console.print()
+
     # Verify that the OCR results directory exists
     if not os.path.exists(ocr_folder):
-        print(f"Error: OCR_Results folder not found: {ocr_folder}")
+        console.print(f"[red]✗[/] Error: OCR_Results folder not found: {ocr_folder}")
         return
 
     # Find all text files in the OCR results directory
     txt_files = [f for f in os.listdir(ocr_folder) if f.endswith('.txt')]
     
     if not txt_files:
-        print("No .txt files found in OCR_Results directory.")
+        console.print("[yellow]⚠[/] No .txt files found in OCR_Results directory.")
         return
     
-    print(f"Found {len(txt_files)} text files to process.")
+    console.print(f"[green]✓[/] Found [cyan]{len(txt_files)}[/] text files to process.")
+    console.print()
+    console.rule("[bold blue]Updating Omeka S Items")
+    console.print()
 
     # Process each text file and update corresponding Omeka S item
-    for txt_file in tqdm(txt_files, desc="Updating Omeka S items"):
-        # Extract item ID from filename (assumes filename format: {item_id}.txt)
-        item_id = os.path.splitext(txt_file)[0]
-        txt_path = os.path.join(ocr_folder, txt_file)
+    success_count = 0
+    failed_count = 0
+    skipped_count = 0
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("[cyan]Updating items...", total=len(txt_files))
+        
+        for txt_file in txt_files:
+            # Extract item ID from filename (assumes filename format: {item_id}.txt)
+            item_id = os.path.splitext(txt_file)[0]
+            txt_path = os.path.join(ocr_folder, txt_file)
 
-        # Read the OCR text content
-        try:
-            with open(txt_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Read the OCR text content
+            try:
+                with open(txt_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                # Update the Omeka S item with the OCR content
+                result = update_item_with_new_content(item_id, content)
+                if result:
+                    success_count += 1
+                else:
+                    skipped_count += 1
                 
-            # Update the Omeka S item with the OCR content
-            update_item_with_new_content(item_id, content)
-            
-        except Exception as e:
-            print(f"Error processing file {txt_file}: {e}")
-            continue
+            except Exception as e:
+                console.print(f"  [red]✗[/] Error processing file {txt_file}: {e}")
+                failed_count += 1
+                
+            progress.update(task, advance=1)
 
-    print("Database update process completed.")
+    # Display summary
+    console.print()
+    console.rule("[bold blue]Summary")
+    console.print()
+    
+    summary_table = Table(box=box.ROUNDED)
+    summary_table.add_column("Metric", style="dim")
+    summary_table.add_column("Count", justify="right")
+    summary_table.add_row("[green]Successfully Updated[/]", f"[green]{success_count}[/]")
+    summary_table.add_row("[yellow]Skipped[/]", f"[yellow]{skipped_count}[/]")
+    summary_table.add_row("[red]Failed[/]", f"[red]{failed_count}[/]")
+    summary_table.add_row("Total Files", str(len(txt_files)))
+    console.print(summary_table)
+    
+    console.print(f"\n[green]✓[/] Database update process completed.")
 
 if __name__ == "__main__":
     main()
