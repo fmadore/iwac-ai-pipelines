@@ -851,16 +851,21 @@ def process_subject_items(
     written: List[str] = []
     total = len(articles)
     file_ext = (file_ext or "md").lower().lstrip(".")
+    
+    # Create a subfolder for this subject
+    subject_dir = os.path.join(out_dir, safe_subj_title)
+    os.makedirs(subject_dir, exist_ok=True)
+    console.print(f"[cyan]ℹ[/] Creating folder: [dim]{os.path.basename(subject_dir)}[/]")
 
     # Write each publisher's articles to a separate file (or multiple files if too large)
     for publisher_name, pub_articles in articles_by_publisher.items():
         safe_pub_name = sanitize_filename(publisher_name)
-        file_stub = f"{safe_subj_title}_{safe_pub_name}"
+        file_stub = safe_pub_name  # Just use publisher name since we're in a subject folder
         header_title = f"Subject: {subj_title} - Publisher: {publisher_name}"
         pub_count = len(pub_articles)
         
         if pub_count <= max_items_per_file:
-            out_path = os.path.join(out_dir, f"{file_stub}_articles.{file_ext}")
+            out_path = os.path.join(subject_dir, f"{file_stub}_articles.{file_ext}")
             write_articles_to_file(pub_articles, out_path, header_title, env=env)
             written.append(out_path)
             console.print(f"[green]✓[/] {publisher_name}: {pub_count} articles → [dim]{os.path.basename(out_path)}[/]")
@@ -871,7 +876,7 @@ def process_subject_items(
                 start_idx = (part_num - 1) * max_items_per_file
                 end_idx = min(start_idx + max_items_per_file, pub_count)
                 part_articles = pub_articles[start_idx:end_idx]
-                out_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
+                out_path = os.path.join(subject_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
                 write_articles_to_file(part_articles, out_path, header_title, part_num, env=env)
                 written.append(out_path)
                 console.print(f"  Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
