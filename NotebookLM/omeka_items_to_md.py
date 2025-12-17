@@ -803,6 +803,9 @@ def process_subject_items(
 ) -> Tuple[int, List[str]]:
     """Process reverse-linked items for a given subject Item ID and export to file(s).
 
+    Articles are grouped by publisher (newspaper) into separate files.
+    Each publisher's articles are written to a file named after the subject and publisher.
+
     Args:
         env: Loaded env dict.
         subject_item_id: Item ID used as dcterms:subject by articles.
@@ -820,34 +823,58 @@ def process_subject_items(
         return 0, []
 
     subj_title = subject.get("o:title") or extract_first_value(subject.get("dcterms:title")) or f"item_{subject_item_id}"
-    safe_title = sanitize_filename(str(subj_title))
-    header_title = f"Subject: {subj_title} (ID {subject_item_id})"
-    file_stub = f"{safe_title}_subject_{subject_item_id}"
+    safe_subj_title = sanitize_filename(str(subj_title))
 
     if not articles:
         console.print(f"[yellow]⚠[/] No bibo:Article items reference subject {subject_item_id}.")
         return 0, []
 
+    # Group articles by publisher
+    console.print(f"[cyan]ℹ[/] Grouping {len(articles)} articles by publisher...")
+    articles_by_publisher: Dict[str, List[JSONObj]] = {}
+    for art in articles:
+        publishers = extract_publishers(art)
+        # Use first publisher or "Unknown" if none
+        publisher_name = publishers[0] if publishers else "Unknown"
+        if publisher_name not in articles_by_publisher:
+            articles_by_publisher[publisher_name] = []
+        articles_by_publisher[publisher_name].append(art)
+    
+    # Display publisher breakdown
+    pub_table = Table(title=f"📰 Articles by Publisher", box=box.ROUNDED)
+    pub_table.add_column("Publisher", style="cyan")
+    pub_table.add_column("Articles", style="green", justify="right")
+    for pub_name, pub_articles in sorted(articles_by_publisher.items(), key=lambda x: -len(x[1])):
+        pub_table.add_row(pub_name, str(len(pub_articles)))
+    console.print(pub_table)
+
     written: List[str] = []
     total = len(articles)
     file_ext = (file_ext or "md").lower().lstrip(".")
 
-    if total <= max_items_per_file:
-        out_path = os.path.join(out_dir, f"{file_stub}_articles.{file_ext}")
-        write_articles_to_file(articles, out_path, header_title, env=env)
-        written.append(out_path)
-        console.print(f"[green]✓[/] Wrote {total} articles → [dim]{os.path.basename(out_path)}[/]")
-    else:
-        num_parts = (total + max_items_per_file - 1) // max_items_per_file
-        console.print(f"[cyan]ℹ[/] Splitting {total} articles into {num_parts} parts...")
-        for part_num in range(1, num_parts + 1):
-            start_idx = (part_num - 1) * max_items_per_file
-            end_idx = min(start_idx + max_items_per_file, total)
-            part_articles = articles[start_idx:end_idx]
-            out_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
-            write_articles_to_file(part_articles, out_path, header_title, part_num, env=env)
+    # Write each publisher's articles to a separate file (or multiple files if too large)
+    for publisher_name, pub_articles in articles_by_publisher.items():
+        safe_pub_name = sanitize_filename(publisher_name)
+        file_stub = f"{safe_subj_title}_{safe_pub_name}"
+        header_title = f"Subject: {subj_title} - Publisher: {publisher_name}"
+        pub_count = len(pub_articles)
+        
+        if pub_count <= max_items_per_file:
+            out_path = os.path.join(out_dir, f"{file_stub}_articles.{file_ext}")
+            write_articles_to_file(pub_articles, out_path, header_title, env=env)
             written.append(out_path)
-            console.print(f"  Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
+            console.print(f"[green]✓[/] {publisher_name}: {pub_count} articles → [dim]{os.path.basename(out_path)}[/]")
+        else:
+            num_parts = (pub_count + max_items_per_file - 1) // max_items_per_file
+            console.print(f"[cyan]ℹ[/] {publisher_name}: Splitting {pub_count} articles into {num_parts} parts...")
+            for part_num in range(1, num_parts + 1):
+                start_idx = (part_num - 1) * max_items_per_file
+                end_idx = min(start_idx + max_items_per_file, pub_count)
+                part_articles = pub_articles[start_idx:end_idx]
+                out_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
+                write_articles_to_file(part_articles, out_path, header_title, part_num, env=env)
+                written.append(out_path)
+                console.print(f"  Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
     return total, written
 
