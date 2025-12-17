@@ -29,7 +29,7 @@ How it works
 1) Loads credentials from .env
 2) In "Whole IWAC" mode: iterate predefined Item Set IDs per country
 3) In "Single Item Set" mode: process only the provided Item Set ID
-4) For each item set, list items (paginated), keep "bibo:Article" (and "bibo:Issue")
+4) For each item set, list items (paginated), keep only "bibo:Article" items
 5) For each article, extracts:
      - TITLE: o:title
      - NEWSPAPER: dcterms:publisher (display_title)
@@ -55,8 +55,9 @@ Output
 - Layout per article (Markdown):
 
         # <title>
-        **Newspaper:** <publisher(s)>
-        **Date:** <date>
+        **Journal :** <publisher(s)>
+        **Date :** <date>
+        **Pays :** <country>
 
         <article body>
 
@@ -64,6 +65,8 @@ Output
 
 Notes
 - The format favors readability and simple chunking for tools like NotebookLM.
+- French labels are used (Journal, Date, Pays) since most content is in French.
+- Country is extracted from the publisher's "Spatial Coverage" (dcterms:spatial) field.
 - Only the first value is taken for multi-valued fields (date/content) to avoid
     duplications and keep the file compact.
 - Maximum 250 articles per file to stay within NotebookLM's word limits.
@@ -279,20 +282,106 @@ def extract_publishers(article: JSONObj) -> List[str]:
     return publishers
 
 
-def format_article(article: JSONObj) -> str:
+def extract_country_from_item_set(item_set: JSONObj) -> Optional[str]:
+    """Extract the country from an item set's dcterms:spatial field.
+
+    Args:
+        item_set: Omeka JSON object representing an Item Set.
+
+    Returns:
+        The country name from the item set's spatial coverage, or None if not found.
+    """
+    spatial_list = item_set.get("dcterms:spatial")
+    if not isinstance(spatial_list, list):
+        return None
+    
+    for s in spatial_list:
+        if isinstance(s, dict):
+            # Try display_title first (linked item), then @value (literal)
+            country = s.get("display_title") or s.get("@value")
+            if country:
+                return str(country).strip()
+    
+    return None
+
+
+# Cache for item set countries to avoid repeated API calls
+_item_set_country_cache: Dict[str, Optional[str]] = {}
+
+
+def extract_article_country(article: JSONObj, env: Dict[str, str]) -> Optional[str]:
+    """Extract the country from an article's item set's dcterms:spatial field.
+
+    Fetches the article's item set from Omeka and looks up its Spatial Coverage field.
+    Results are cached to avoid repeated API calls for the same item set.
+
+    Args:
+        article: Omeka JSON object representing a bibo:Article item.
+        env: Environment dict from load_env() with API credentials.
+
+    Returns:
+        The country name from the item set's spatial coverage, or None if not found.
+    """
+    # Get the article's item set(s)
+    item_set_list = article.get("o:item_set")
+    if not isinstance(item_set_list, list) or not item_set_list:
+        return None
+    
+    # Get the first item set's ID
+    first_set = item_set_list[0]
+    if not isinstance(first_set, dict):
+        return None
+    
+    # Get item set ID from o:id or @id
+    set_id = first_set.get("o:id")
+    if set_id:
+        set_id = str(set_id)
+    else:
+        set_id_url = first_set.get("@id")
+        if set_id_url:
+            # Parse ID from URL like "https://islam.zmo.de/api/item_sets/2185"
+            import re
+            m = re.search(r"/item_sets/(\d+)$", set_id_url)
+            set_id = m.group(1) if m else None
+    
+    if not set_id:
+        return None
+    
+    # Check cache first
+    if set_id in _item_set_country_cache:
+        return _item_set_country_cache[set_id]
+    
+    # Fetch the item set
+    item_set = fetch_item_set(env, set_id)
+    if not item_set:
+        _item_set_country_cache[set_id] = None
+        return None
+    
+    # Extract country from item set's spatial coverage
+    country = extract_country_from_item_set(item_set)
+    _item_set_country_cache[set_id] = country
+    return country
+    return country
+
+
+def format_article(article: JSONObj, env: Optional[Dict[str, str]] = None, country: Optional[str] = None) -> str:
     """Convert a single newspaper article into NotebookLM-friendly Markdown format.
 
     Creates a standardized Markdown block for each article with:
     - Level 1 heading with the article title
-    - Bold metadata lines for Newspaper and Date
+    - Bold metadata lines for Journal (newspaper), Date, and Pays (country)
     - The full article content (cleaned of extra whitespace)
     - A horizontal rule separator for visual separation
 
     This format is optimized for NotebookLM ingestion and human readability.
+    French labels are used (Journal, Date, Pays) as most content is in French.
 
     Args:
         article: Omeka JSON object representing a bibo:Article with fields like
                 o:title, dcterms:date, dcterms:publisher, bibo:content.
+        env: Optional environment dict from load_env() (kept for backward compatibility).
+        country: Optional country name to include in metadata. If not provided,
+                 will attempt to extract from publisher's spatial coverage.
 
     Returns:
         Formatted Markdown string ready to write to file, including trailing
@@ -300,23 +389,30 @@ def format_article(article: JSONObj) -> str:
         
     Example output:
         # Article Title Here
-        **Newspaper:** L'Observateur
-        **Date:** 1998-02-16
+        **Journal :** L'Observateur
+        **Date :** 1998-02-16
+        **Pays :** Bénin
         
         Article content goes here with proper formatting...
         
         ---
     """
     title = article.get("o:title") or "No title"
-    date = extract_first_value(article.get("dcterms:date")) or "Unknown"
+    date = extract_first_value(article.get("dcterms:date")) or "Inconnu"
     content = extract_first_value(article.get("bibo:content")) or ""
     content = normalize_md_whitespace(content)
     publishers = extract_publishers(article)
-    publisher_str = "; ".join(publishers) if publishers else "Unknown"
+    publisher_str = "; ".join(publishers) if publishers else "Inconnu"
+    
+    # Use provided country, or try to extract from article's item set if env is provided
+    if not country and env:
+        country = extract_article_country(article, env)
 
     lines = [f"# {title}"]
-    lines.append(f"**Newspaper:** {publisher_str}")
-    lines.append(f"**Date:** {date}")
+    lines.append(f"**Journal :** {publisher_str}")
+    lines.append(f"**Date :** {date}")
+    if country:
+        lines.append(f"**Pays :** {country}")
     lines.append("")
     if content:
         lines.append(content)
@@ -468,7 +564,7 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
             
             # Optimization: Skip obvious non-articles using embedded type information
             ref_types = ref.get("@type")
-            if isinstance(ref_types, list) and "bibo:Article" not in ref_types and "bibo:Issue" not in ref_types:
+            if isinstance(ref_types, list) and "bibo:Article" not in ref_types:
                 skipped_non_article += 1
                 progress.update(task, advance=1, description=f"Fetching articles... [dim](added={len(article_items)}, skipped={skipped_non_article})[/]")
                 continue
@@ -499,9 +595,9 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
                 progress.update(task, advance=1)
                 continue
                 
-            # Final type check: only keep actual articles and issues
+            # Final type check: only keep actual articles (exclude bibo:Issue which are full newspaper editions)
             types = item.get("@type", [])
-            if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
+            if isinstance(types, list) and "bibo:Article" in types:
                 article_items.append(item)
                 
             progress.update(task, advance=1, description=f"Fetching articles... [dim](added={len(article_items)}, skipped={skipped_non_article})[/]")
@@ -603,7 +699,7 @@ def process_item_set(
     This is the main processing function for Item Set-based exports. It:
     1. Fetches the Item Set metadata to get its title
     2. Retrieves all items in the set (with pagination)
-    3. Filters for newspaper articles (bibo:Article and bibo:Issue types)
+    3. Filters for newspaper articles (bibo:Article type only, excludes bibo:Issue)
     4. Exports articles to Markdown file(s), splitting if needed for size limits
     5. Organizes output by country if specified
 
@@ -631,6 +727,9 @@ def process_item_set(
     # Extract and sanitize the set title for use in filenames
     set_title = extract_first_value(item_set.get("dcterms:title")) or f"item_set_{set_id}"
     safe_set_title = sanitize_filename(set_title)
+    
+    # Extract country from item set's spatial coverage
+    country = extract_country_from_item_set(item_set)
 
     # Create progress messages with optional country prefix
     prefix = f"[cyan]{country_label}[/] » " if country_label else ""
@@ -640,11 +739,11 @@ def process_item_set(
     items = fetch_items_in_set(env, set_id, per_page=100)
     console.print(f"  [dim]Found {len(items)} items. Filtering for articles...[/]")
 
-    # Filter for newspaper articles only
+    # Filter for newspaper articles only (exclude bibo:Issue which are full newspaper editions)
     articles: List[JSONObj] = []
     for it in items:
         types = it.get("@type", [])
-        if isinstance(types, list) and ("bibo:Article" in types or "bibo:Issue" in types):
+        if isinstance(types, list) and "bibo:Article" in types:
             articles.append(it)
 
     if not articles:
@@ -675,7 +774,7 @@ def process_item_set(
     if total_articles <= max_items_per_file:
         # Small collection: write all articles to a single file
         out_path = os.path.join(target_dir, f"{file_stub}_articles.{file_ext}")
-        write_articles_to_file(articles, out_path, header_title)
+        write_articles_to_file(articles, out_path, header_title, env=env, country=country)
         written_files.append(out_path)
         console.print(f"  [green]✓[/] Wrote {total_articles} articles → [dim]{os.path.basename(out_path)}[/]")
     else:
@@ -688,7 +787,7 @@ def process_item_set(
             end_idx = min(start_idx + max_items_per_file, total_articles)
             part_articles = articles[start_idx:end_idx]
             out_path = os.path.join(target_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
-            write_articles_to_file(part_articles, out_path, header_title, part_num)
+            write_articles_to_file(part_articles, out_path, header_title, part_num, env=env, country=country)
             written_files.append(out_path)
             console.print(f"    Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
@@ -735,7 +834,7 @@ def process_subject_items(
 
     if total <= max_items_per_file:
         out_path = os.path.join(out_dir, f"{file_stub}_articles.{file_ext}")
-        write_articles_to_file(articles, out_path, header_title)
+        write_articles_to_file(articles, out_path, header_title, env=env)
         written.append(out_path)
         console.print(f"[green]✓[/] Wrote {total} articles → [dim]{os.path.basename(out_path)}[/]")
     else:
@@ -746,14 +845,21 @@ def process_subject_items(
             end_idx = min(start_idx + max_items_per_file, total)
             part_articles = articles[start_idx:end_idx]
             out_path = os.path.join(out_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
-            write_articles_to_file(part_articles, out_path, header_title, part_num)
+            write_articles_to_file(part_articles, out_path, header_title, part_num, env=env)
             written.append(out_path)
             console.print(f"  Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
     return total, written
 
 
-def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title: str, part_num: int = None) -> None:
+def write_articles_to_file(
+    articles: List[JSONObj],
+    file_path: str,
+    header_title: str,
+    part_num: int = None,
+    env: Optional[Dict[str, str]] = None,
+    country: Optional[str] = None,
+) -> None:
     """Write a batch of articles to a single Markdown file (no top header).
     
     Args:
@@ -761,10 +867,12 @@ def write_articles_to_file(articles: List[JSONObj], file_path: str, header_title
         file_path: Full path to the output file.
         header_title: Unused (kept for backward compatibility).
         part_num: Part number for multi-part exports (unused in content).
+        env: Environment dict from load_env() for fetching publisher country.
+        country: Optional country name to include in all articles' metadata.
     """
     with open(file_path, "w", encoding="utf-8") as f:
         for art in articles:
-            f.write(format_article(art))
+            f.write(format_article(art, env, country))
 
 
 def main():
