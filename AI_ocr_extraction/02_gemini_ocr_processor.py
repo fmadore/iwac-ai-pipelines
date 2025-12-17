@@ -394,12 +394,29 @@ class GeminiPDFProcessor:
             
             candidate = response.candidates[0]
             
-            # Check for RECITATION - content blocked due to potential copyright
+            # Check finish reason for special handling
             finish_reason = candidate.finish_reason
-            if str(finish_reason) == "FinishReason.RECITATION":
+            finish_reason_str = str(finish_reason)
+            
+            # Check for RECITATION - content blocked due to potential copyright
+            if finish_reason_str == "FinishReason.RECITATION":
                 console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
                 logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
                 return None
+            
+            # Check for MAX_TOKENS - partial content available, don't retry
+            if finish_reason_str == "FinishReason.MAX_TOKENS":
+                # Try to extract partial text - it's still valuable for OCR
+                partial_text = self._extract_text_from_response(response)
+                if partial_text:
+                    console.print(f"  [yellow]⚠ Page {page_num} truncated[/] - Output exceeded max tokens (partial text saved)")
+                    logging.warning(f"Page {page_num}: MAX_TOKENS - Output truncated but {len(partial_text)} chars recovered")
+                    # Add marker indicating truncation so user knows content is incomplete
+                    return partial_text + "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
+                else:
+                    console.print(f"  [red]✗ Page {page_num}[/] - MAX_TOKENS with no recoverable text")
+                    logging.error(f"Page {page_num}: MAX_TOKENS but no text could be extracted")
+                    return None
             
             if not candidate.content or not candidate.content.parts:
                 raise Exception(f"No valid response. Finish reason: {finish_reason}")
@@ -508,12 +525,29 @@ class GeminiPDFProcessor:
                 
                 candidate = response.candidates[0]
                 
-                # Check for RECITATION - content blocked due to potential copyright
+                # Check finish reason for special handling
                 finish_reason = candidate.finish_reason
-                if str(finish_reason) == "FinishReason.RECITATION":
+                finish_reason_str = str(finish_reason)
+                
+                # Check for RECITATION - content blocked due to potential copyright
+                if finish_reason_str == "FinishReason.RECITATION":
                     console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
                     logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
                     return None
+                
+                # Check for MAX_TOKENS - partial content available, don't retry
+                if finish_reason_str == "FinishReason.MAX_TOKENS":
+                    # Try to extract partial text - it's still valuable for OCR
+                    partial_text = self._extract_text_from_response(response)
+                    if partial_text:
+                        console.print(f"  [yellow]⚠ Page {page_num} truncated[/] - Output exceeded max tokens (partial text saved)")
+                        logging.warning(f"Page {page_num}: MAX_TOKENS - Output truncated but {len(partial_text)} chars recovered")
+                        # Add marker indicating truncation so user knows content is incomplete
+                        return partial_text + "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
+                    else:
+                        console.print(f"  [red]✗ Page {page_num}[/] - MAX_TOKENS with no recoverable text")
+                        logging.error(f"Page {page_num}: MAX_TOKENS but no text could be extracted")
+                        return None
                 
                 if not candidate.content or not candidate.content.parts:
                     raise Exception(f"No valid response. Finish reason: {finish_reason}")
