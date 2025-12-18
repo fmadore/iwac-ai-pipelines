@@ -53,7 +53,7 @@ This will:
 
 ```bash
 # Use a specific model
-python AI_video_summary.py --model gemini-2.5-flash
+python AI_video_summary.py --model gemini-3-flash-preview
 
 # Specify custom input/output folders
 python AI_video_summary.py --video-folder my_videos --output-folder results
@@ -66,7 +66,7 @@ python AI_video_summary.py --model gemini-3-pro-preview --video-folder recording
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--model` | Model to use (`gemini-3-pro-preview` or `gemini-2.5-flash`) | Interactive selection |
+| `--model` | Model to use (`gemini-3-pro-preview` or `gemini-3-flash-preview`) | Interactive selection |
 | `--video-folder` | Folder containing video files | `video` |
 | `--output-folder` | Folder for output files | `output` |
 
@@ -98,7 +98,7 @@ Best for: Archival purposes, accessibility, detailed analysis.
 | Model | Best For | Speed | Quality |
 |-------|----------|-------|---------|
 | `gemini-3-pro-preview` | Detailed transcription, complex scenes | Slower | Higher |
-| `gemini-2.5-flash` | Summaries, shorter videos | Faster | Good |
+| `gemini-3-flash-preview` | Summaries, shorter videos | Faster | Good |
 
 ## File Size Handling
 
@@ -142,7 +142,7 @@ AI_video_summary/
 Ensure your `.env` file exists and contains a valid API key.
 
 ### Video processing takes too long
-- Use `gemini-2.5-flash` for faster processing
+- Use `gemini-3-flash-preview` for faster processing
 - Consider using shorter video clips
 
 ### "Unsupported video format"

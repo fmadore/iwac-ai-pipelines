@@ -2,7 +2,7 @@
 
 This pipeline automatically generates French summaries of text content from an Omeka S database using:
 
-1. **Google Gemini** (gemini-2.5-flash) - Fast and cost-effective
+1. **Google Gemini** (gemini-3-flash-preview) - Fast and cost-effective
 2. **OpenAI** (gpt-5-mini) - Cost-optimized with reasoning capabilities
 3. **Mistral** (ministral-14b) - Fast and affordable ($0.2/M tokens)
 
@@ -206,7 +206,7 @@ The script uses the shared `common/llm_provider.py` module for model selection. 
 | Key | Provider | Model | Description |
 |-----|----------|-------|-------------|
 | `gpt-5-mini` | OpenAI | gpt-5-mini | Cost-optimized with reasoning |
-| `gemini-flash` | Google | gemini-2.5-flash | Fast and cost-effective |
+| `gemini-flash` | Google | gemini-3-flash-preview | Fast and cost-effective |
 | `ministral-14b` | Mistral | ministral-14b-2512 | Affordable ($0.2/M tokens) |
 
 To add more models or change defaults, edit `common/llm_provider.py` and update the `allowed_keys` in the script.

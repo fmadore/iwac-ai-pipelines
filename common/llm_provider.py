@@ -51,7 +51,7 @@ PROVIDER_MISTRAL = "mistral"
 
 DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 OPENAI_FULL_MODEL = "gpt-5.1"
-DEFAULT_GEMINI_FLASH = "gemini-2.5-flash"
+DEFAULT_GEMINI_FLASH = "gemini-3-flash-preview"
 DEFAULT_GEMINI_PRO = "gemini-3-pro-preview"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
@@ -68,9 +68,9 @@ class ModelOption:
     default_reasoning_effort: str = "low"  # "low", "medium", "high"
     default_text_verbosity: str = "low"    # "low", "medium", "high"
     # Gemini-specific defaults
-    default_thinking_mode: bool = False    # Enable thinking for flash (Pro always has thinking)
-    default_thinking_budget: Optional[int] = None  # For 2.5 series: None = model default, 0 = disabled (flash only), >0 = custom
-    default_thinking_level: Optional[str] = None  # For Gemini 3 Pro: "low" or "high"
+    default_thinking_mode: bool = False    # Legacy, use thinking_level instead
+    default_thinking_budget: Optional[int] = None  # Legacy for 2.5 series (no longer used)
+    default_thinking_level: Optional[str] = None  # For Gemini 3: Flash="MINIMAL"/"LOW"/"MEDIUM"/"HIGH", Pro="LOW"/"HIGH"
 
 @dataclass
 class LLMConfig:
@@ -85,23 +85,20 @@ class LLMConfig:
     Gemini parameters:
         temperature: 0.0-1.0 - controls randomness (OpenAI ignores this)
         
-        For Gemini 3 Pro:
-            thinking_level: "low" or "high" - controls reasoning depth
-                           Cannot be disabled for Gemini 3 Pro
-        
-        For Gemini 2.5 series:
-            thinking_budget: 0 to disable (Flash only), 128-32768 for Pro, 0-24576 for Flash
-                            Note: 2.5 Pro cannot disable thinking (min 128)
+        For Gemini 3 (Flash and Pro):
+            thinking_level: Controls reasoning depth (cannot be disabled)
+                           Flash: "MINIMAL", "LOW", "MEDIUM", or "HIGH"
+                           Pro: "LOW" or "HIGH" only
     
     Example:
         # High-quality reasoning for complex NER
         config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
         
         # Fast OCR with Gemini 3 Pro (low thinking)
-        config = LLMConfig(thinking_level="low", temperature=0.1)
+        config = LLMConfig(thinking_level="LOW", temperature=0.1)
         
-        # Fast OCR correction with Flash (disable thinking)
-        config = LLMConfig(thinking_budget=0, temperature=0.1)
+        # Fast OCR correction with Gemini 3 Flash (minimal thinking)
+        config = LLMConfig(thinking_level="MINIMAL", temperature=0.1)
     """
     temperature: Optional[float] = None
     reasoning_effort: Optional[str] = None
@@ -129,8 +126,9 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         key="gemini-flash",
         provider=PROVIDER_GEMINI,
         model=DEFAULT_GEMINI_FLASH,
-        label="Gemini 2.5 Flash",
-        description="Google Gemini 2.5 Flash — fast, cost-effective"
+        label="Gemini 3 Flash",
+        description="Google Gemini 3 Flash — fast, cost-effective",
+        default_thinking_level="MINIMAL"  # Gemini 3 Flash uses thinking_level, cannot be disabled
     ),
     "gemini-pro": ModelOption(
         key="gemini-pro",
@@ -171,9 +169,8 @@ MODEL_ALIASES = {
     "openai:gpt-5": "gpt-5.1",
     "openai-5": "gpt-5.1",  # Legacy key name
     "openai-5.1": "gpt-5.1",  # Legacy key name
-    "gemini-2.5-flash": "gemini-flash",
+    "gemini-3-flash-preview": "gemini-flash",
     "gemini-3-pro-preview": "gemini-pro",
-    "gemini-2.5-pro": "gemini-pro",
     # Mistral aliases
     "mistral": "mistral-large",
     "mistral-large-latest": "mistral-large",
@@ -410,50 +407,27 @@ class GeminiGenerateContentClient(BaseLLMClient):
     def _build_generation_config(self, effective_config: LLMConfig) -> Any:
         """Build Gemini generation config with thinking support.
         
-        Handles both Gemini 3 Pro (uses thinking_level) and Gemini 2.5 series (uses thinking_budget).
+        All Gemini 3 models (Flash and Pro) use thinking_level ("MINIMAL", "LOW", or "HIGH").
+        Thinking cannot be disabled for Gemini 3 models.
         """
         temp = effective_config.temperature or self.option.default_temperature
         gen_config_kwargs: Dict[str, Any] = {"temperature": temp}
-        
-        # Check if this is a Gemini 3 model (uses thinking_level)
-        is_gemini_3 = "gemini-3" in self.option.model.lower()
         
         if genai_types is None:
             return gen_config_kwargs
         
         try:
-            if is_gemini_3:
-                # Gemini 3 Pro uses thinking_level ("low" or "high"), cannot disable thinking
-                thinking_level = effective_config.thinking_level or self.option.default_thinking_level or "low"
-                thinking_config = genai_types.ThinkingConfig(thinking_level=thinking_level)
-                gen_config_kwargs["thinking_config"] = thinking_config
-                LOGGER.debug(f"Gemini 3 request with thinking_level={thinking_level}, temperature={temp}")
-            else:
-                # Gemini 2.5 series uses thinking_budget
-                thinking_mode = effective_config.thinking_mode
-                if thinking_mode is None:
-                    thinking_mode = self.option.default_thinking_mode
-                thinking_budget = effective_config.thinking_budget
-                if thinking_budget is None:
-                    thinking_budget = self.option.default_thinking_budget
-                
-                # Gemini 2.5 Pro cannot disable thinking (minimum 128)
+            # All Gemini 3 models use thinking_level (cannot be disabled)
+            # Default to "MINIMAL" for Flash, "LOW" for Pro if not specified
+            thinking_level = effective_config.thinking_level or self.option.default_thinking_level
+            if thinking_level is None:
+                # Fallback based on model type
                 is_pro_model = "pro" in self.option.model.lower()
-                if is_pro_model and thinking_budget is not None and thinking_budget < 128:
-                    LOGGER.warning(
-                        f"Cannot set thinking_budget below 128 for {self.option.model}. "
-                        f"Using minimum budget of 128."
-                    )
-                    thinking_budget = 128
-                
-                # Add thinking config if enabled or budget specified
-                if thinking_mode or thinking_budget is not None:
-                    if thinking_budget is not None:
-                        thinking_config = genai_types.ThinkingConfig(thinking_budget=thinking_budget)
-                        gen_config_kwargs["thinking_config"] = thinking_config
-                        LOGGER.debug(f"Gemini 2.5 request with thinking_budget={thinking_budget}, temperature={temp}")
-                    else:
-                        LOGGER.debug(f"Gemini request with temperature={temp}")
+                thinking_level = "LOW" if is_pro_model else "MINIMAL"
+            
+            thinking_config = genai_types.ThinkingConfig(thinking_level=thinking_level)
+            gen_config_kwargs["thinking_config"] = thinking_config
+            LOGGER.debug(f"Gemini 3 request with thinking_level={thinking_level}, temperature={temp}")
         except Exception as exc:  # pragma: no cover - optional field
             LOGGER.warning("Failed to configure thinking mode: %s", exc)
         

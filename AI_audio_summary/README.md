@@ -102,7 +102,7 @@ The script will prompt you to:
 ```bash
 # Specify model directly
 python 02_AI_transcribe_audio.py --model gemini-3-pro-preview
-python 02_AI_transcribe_audio.py --model gemini-2.5-flash
+python 02_AI_transcribe_audio.py --model gemini-3-flash-preview
 
 # Enable audio splitting
 python 02_AI_transcribe_audio.py --split
@@ -199,7 +199,7 @@ Creates structured summaries rather than full transcription:
 | Model | Speed | Quality | Cost | Best For |
 |-------|-------|---------|------|----------|
 | `gemini-3-pro-preview` | Slower | Higher | Higher | Complex audio, multiple speakers, background noise |
-| `gemini-2.5-flash` | Faster | Good | Lower | Clear recordings, single speaker, bulk processing |
+| `gemini-3-flash-preview` | Faster | Good | Lower | Clear recordings, single speaker, bulk processing |
 
 ## Audio Splitting
 
@@ -356,7 +356,7 @@ Gemini API pricing (per 1M tokens, paid tier):
 
 | Model | Audio Input | Output |
 |-------|-------------|--------|
-| `gemini-2.5-flash` | $1.00 | $2.50 |
+| `gemini-3-flash-preview` | $1.00 | $2.50 |
 | `gemini-3-pro-preview` | $2.00-$4.00 | $12.00-$18.00 |
 
 A typical 1-hour interview might cost $0.50-2.00 with Flash or $5-15 with Pro.

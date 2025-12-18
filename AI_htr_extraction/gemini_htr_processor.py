@@ -614,7 +614,7 @@ def main():
 
     # Present model selection options to user
     print("\nPlease choose the Gemini model to use:")
-    print("1: gemini-2.5-flash (Faster, good for most cases)")
+    print("1: gemini-3-flash-preview (Faster, good for most cases)")
     print("2: gemini-3-pro-preview (More powerful, more accurate but slower)")
     
     # Get valid model choice from user
@@ -626,7 +626,7 @@ def main():
 
     # Map choice to model name
     if model_choice == "1":
-        selected_model_name = "gemini-2.5-flash"
+        selected_model_name = "gemini-3-flash-preview"
     else:
         selected_model_name = "gemini-3-pro-preview"
     

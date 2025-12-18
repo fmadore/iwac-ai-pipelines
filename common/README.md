@@ -7,8 +7,8 @@ This guide explains how to use the enhanced `llm_provider.py` to configure AI mo
 The `LLMConfig` class allows individual scripts to customize AI behavior without modifying the shared provider code. You can now configure:
 
 - **OpenAI**: `reasoning_effort` and `text_verbosity`
-- **Gemini 3 Pro**: `temperature` and `thinking_level` ("low" or "high")
-- **Gemini 2.5 series**: `temperature` and `thinking_budget` (0 to disable for Flash, min 128 for Pro)
+- **Gemini 3 Flash**: `temperature` and `thinking_level` ("MINIMAL", "LOW", "MEDIUM", or "HIGH")
+- **Gemini 3 Pro**: `temperature` and `thinking_level` ("LOW" or "HIGH")
 - **Mistral**: `temperature`
 
 ## Available Models
@@ -19,7 +19,7 @@ The provider supports these models via the `MODEL_REGISTRY`:
 |-----|----------|----------|-------|-------------|
 | `gpt-5-mini` | OpenAI | `gpt-5-mini` | ChatGPT (GPT-5 mini) | Cost-optimized, fast |
 | `gpt-5.1` | OpenAI | `gpt-5.1` | ChatGPT (GPT-5.1 full) | Flagship model |
-| `gemini-flash` | Gemini | `gemini-2.5-flash` | Gemini 2.5 Flash | Fast, cost-effective |
+| `gemini-flash` | Gemini | `gemini-3-flash-preview` | Gemini 3 Flash | Fast, cost-effective |
 | `gemini-pro` | Gemini | `gemini-3-pro-preview` | Gemini 3.0 Pro | Highest quality |
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |

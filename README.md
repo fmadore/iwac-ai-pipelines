@@ -124,7 +124,7 @@ OMEKA_KEY_CREDENTIAL=your_key_credential
 |----------|-----------|-------------|
 | OpenAI | `gpt-5-mini` | Cost-optimized, fast |
 | OpenAI | `gpt-5.1` | Flagship model |
-| Gemini | `gemini-flash` | Gemini 2.5 Flash — fast, cost-effective |
+| Gemini | `gemini-flash` | Gemini 3 Flash — fast, cost-effective |
 | Gemini | `gemini-pro` | Gemini 3.0 Pro — highest quality |
 | Mistral | `mistral-large` | Mistral Large 3 — 41B active params |
 | Mistral | `ministral-14b` | Ministral 3 14B — fast, affordable |
@@ -141,7 +141,7 @@ cd AI_audio_summary/
 python 02_AI_transcribe_audio.py
 
 # Or specify model directly
-python 02_AI_transcribe_audio.py --model gemini-2.5-flash
+python 02_AI_transcribe_audio.py --model gemini-3-flash-preview
 
 # Output appears in Transcriptions/
 ```

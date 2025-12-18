@@ -6,7 +6,7 @@ Processes video files from the video folder and saves summaries/transcriptions a
 Supports:
 - Video summarization
 - Full transcription with periodic visual descriptions
-- Both Gemini 3.0 Pro Preview and Gemini 2.5 Flash models
+- Both Gemini 3.0 Pro Preview and Gemini 3 Flash models
 """
 
 import argparse
@@ -33,7 +33,7 @@ class VideoProcessor:
         
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-2.5-flash'. 
+            model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-3-flash-preview'. 
                                    Default is 'gemini-3-pro-preview'.
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
@@ -495,13 +495,13 @@ def parse_args():
         epilog="""
 Examples:
   python AI_video_summary.py
-  python AI_video_summary.py --model gemini-2.5-flash
+  python AI_video_summary.py --model gemini-3-flash-preview
   python AI_video_summary.py --video-folder my_videos --output-folder results
         """
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-3-pro-preview", "gemini-2.5-flash"],
+        choices=["gemini-3-pro-preview", "gemini-3-flash-preview"],
         default=None,
         help="Model to use for processing (default: interactive selection)"
     )
@@ -524,11 +524,11 @@ def select_model_interactive():
     """
     print("\nAvailable models:")
     print("1. gemini-3-pro-preview (Higher quality, best for detailed transcription)")
-    print("2. gemini-2.5-flash (Faster, good for summaries)")
+    print("2. gemini-3-flash-preview (Faster, good for summaries)")
     model_choice = input("\nSelect a model (1 or 2) or press Enter for default (gemini-3-pro-preview): ").strip()
     
     if model_choice == '2':
-        return 'gemini-2.5-flash'
+        return 'gemini-3-flash-preview'
     return 'gemini-3-pro-preview'
 
 

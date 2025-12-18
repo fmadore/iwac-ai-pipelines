@@ -5,7 +5,7 @@ from an Islamic magazine using Gemini's native PDF understanding with structured
 
 Supported models:
 - Gemini 3 Pro (step 1) - High-quality extraction with thinking_level
-- Gemini 2.5 Flash (step 2) - Fast consolidation with thinking_budget
+- Gemini 3 Flash (step 2) - Fast consolidation with thinking_level
 
 Step 1: Page-by-page extraction (high-performance model)
 - Extracts individual pages using PyPDF2
@@ -35,8 +35,7 @@ API Best Practices:
 - Uses system_instruction in GenerateContentConfig for prompts
 - Uses response_mime_type='application/json' for structured outputs
 - Uses response_schema with Pydantic models for type-safe extraction
-- Uses ThinkingConfig with thinking_level for Gemini 3 Pro
-- Uses ThinkingConfig with thinking_budget for Gemini 2.5 Flash
+- Uses ThinkingConfig with thinking_level for all Gemini 3 models
 - Passes PDF bytes via Part.from_bytes for native processing
 
 Usage:
@@ -446,19 +445,14 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
         "response_schema": PageExtraction,  # Pydantic model for structured output
     }
     
-    # Handle thinking config based on model type
-    is_gemini_3 = "gemini-3" in model_option.model.lower()
-    if is_gemini_3:
-        thinking_level = llm_config.thinking_level or model_option.default_thinking_level or "low"
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
-        logging.info(f"Using Gemini 3 with thinking_level={thinking_level}")
-    else:
-        thinking_budget = llm_config.thinking_budget
-        if thinking_budget is None:
-            thinking_budget = model_option.default_thinking_budget
-        if thinking_budget is not None:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
-            logging.info(f"Using Gemini 2.5 with thinking_budget={thinking_budget}")
+    # Handle thinking config - all Gemini 3 models use thinking_level
+    thinking_level = llm_config.thinking_level or model_option.default_thinking_level
+    if thinking_level is None:
+        # Default based on model type: MINIMAL for Flash, LOW for Pro
+        is_pro_model = "pro" in model_option.model.lower()
+        thinking_level = "LOW" if is_pro_model else "MINIMAL"
+    config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
+    logging.info(f"Using Gemini 3 with thinking_level={thinking_level}")
     
     gen_config = types.GenerateContentConfig(**config_kwargs)
     
@@ -630,17 +624,13 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
         "response_schema": MagazineIndex,  # Pydantic model for structured output
     }
     
-    # Handle thinking config based on model type
-    is_gemini_3 = "gemini-3" in model_option.model.lower()
-    if is_gemini_3:
-        thinking_level = llm_config.thinking_level or model_option.default_thinking_level or "low"
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
-    else:
-        thinking_budget = llm_config.thinking_budget
-        if thinking_budget is None:
-            thinking_budget = model_option.default_thinking_budget
-        if thinking_budget is not None:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+    # Handle thinking config - all Gemini 3 models use thinking_level
+    thinking_level = llm_config.thinking_level or model_option.default_thinking_level
+    if thinking_level is None:
+        # Default based on model type: MINIMAL for Flash, LOW for Pro
+        is_pro_model = "pro" in model_option.model.lower()
+        thinking_level = "LOW" if is_pro_model else "MINIMAL"
+    config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
     
     gen_config = types.GenerateContentConfig(**config_kwargs)
     
@@ -713,23 +703,16 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     # Initialize Gemini client
     client = genai.Client(api_key=api_key)
     
-    # Configure for each step based on model type
-    # Step 1: Gemini 3 Pro uses thinking_level, Gemini 2.5 uses thinking_budget
-    is_step1_gemini_3 = "gemini-3" in model_step1.model.lower()
-    if is_step1_gemini_3:
-        config_step1 = LLMConfig(
-            thinking_level="low",  # Use low thinking for faster processing
-            temperature=0.2
-        )
-    else:
-        config_step1 = LLMConfig(
-            thinking_budget=500,  # Gemini 2.5 uses thinking_budget
-            temperature=0.2
-        )
+    # Configure for each step - all Gemini 3 models use thinking_level
+    # Step 1: Pro uses LOW thinking for quality
+    config_step1 = LLMConfig(
+        thinking_level="LOW",
+        temperature=0.2
+    )
     
-    # Step 2: Gemini 2.5 Flash with thinking disabled for simple consolidation
+    # Step 2: Flash uses MINIMAL thinking for speed
     config_step2 = LLMConfig(
-        thinking_budget=0,
+        thinking_level="MINIMAL",
         temperature=0.3
     )
     

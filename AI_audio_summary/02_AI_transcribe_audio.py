@@ -64,7 +64,7 @@ class AudioTranscriber:
         
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-2.5-flash'. Default is 'gemini-3-pro-preview'.
+            model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-3-flash-preview'. Default is 'gemini-3-pro-preview'.
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
@@ -1168,7 +1168,7 @@ def parse_args():
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-3-pro-preview", "gemini-2.5-flash"],
+        choices=["gemini-3-pro-preview", "gemini-3-flash-preview"],
         default=None,
         help="Model to use for transcription (default: interactive selection)"
     )
@@ -1210,13 +1210,13 @@ def select_model_interactive():
     models_table.add_column("Model", style="green")
     models_table.add_column("Description", style="dim")
     models_table.add_row("1", "gemini-3-pro-preview", "Higher quality, slower")
-    models_table.add_row("2", "gemini-2.5-flash", "Faster, good quality")
+    models_table.add_row("2", "gemini-3-flash-preview", "Faster, good quality")
     console.print(models_table)
     
     model_choice = console.input("\n[bold]Select a model (1 or 2) or press Enter for default (gemini-3-pro-preview):[/] ").strip()
     
     if model_choice == '2':
-        return 'gemini-2.5-flash'
+        return 'gemini-3-flash-preview'
     return 'gemini-3-pro-preview'
 
 

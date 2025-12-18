@@ -117,7 +117,7 @@ Model comparison:
 
 | Aspect | Gemini Flash | OpenAI mini | Mistral Large | Ministral 14B |
 |--------|--------------|-------------|---------------|---------------|
-| Model name | `gemini-2.5-flash` | `gpt-5-mini` | `mistral-large-2512` | `ministral-14b-2512` |
+| Model name | `gemini-3-flash-preview` | `gpt-5-mini` | `mistral-large-2512` | `ministral-14b-2512` |
 | Env var | `GEMINI_API_KEY` | `OPENAI_API_KEY` | `MISTRAL_API_KEY` | `MISTRAL_API_KEY` |
 | Dependency | `google-genai` | `openai` | `mistralai` | `mistralai` |
 | Configuration | thinking_budget=500, temp=0.2 | reasoning="medium", verbosity="medium" | temp=0.2 | temp=0.2 |

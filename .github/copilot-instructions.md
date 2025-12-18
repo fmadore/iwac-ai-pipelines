@@ -29,9 +29,9 @@ These notes tell GitHub Copilot how to help inside this repo. Apply them to ever
 
 - **Create task-specific configs**: Use `LLMConfig()` to define parameters suited to your pipeline's needs.
 - **OpenAI parameters**: `reasoning_effort` ("low"/"medium"/"high"), `text_verbosity` ("low"/"medium"/"high").
-- **Gemini parameters**: `temperature` (0.0-1.0), `thinking_budget` (0=off for Flash, None=default, >0=custom).
+- **Gemini parameters**: `temperature` (0.0-1.0), `thinking_level` ("MINIMAL"/"LOW"/"HIGH").
 - **Mistral parameters**: `temperature` (0.0-1.0) - straightforward configuration.
-- **Cost-conscious defaults**: Use "medium" reasoning and moderate thinking budgets (e.g., 500) unless high quality is critical.
+- **Cost-conscious defaults**: Use "MINIMAL" thinking for Flash, "LOW" for Pro unless high quality is critical.
 - **Log your config**: Always log the effective configuration for reproducibility.
 
 ## Gemini API best practices (multimodal scripts)
@@ -53,15 +53,16 @@ When using `google.genai.Client()` directly in multimodal scripts:
       config=config
   )
   ```
-- **Thinking configuration by model**:
-  - Gemini 3 Pro: Use `thinking_level` ("low" or "high") - cannot be disabled
-  - Gemini 2.5 Flash/Pro: Use `thinking_budget` (0=disabled, >0=token budget)
+- **Thinking configuration for Gemini 3**:
+  - All Gemini 3 models use `thinking_level` - cannot be disabled
+  - Gemini 3 Flash: Use `thinking_level` ("MINIMAL", "LOW", "MEDIUM", or "HIGH")
+  - Gemini 3 Pro: Use `thinking_level` ("LOW" or "HIGH" only)
   ```python
-  # Gemini 3 Pro
-  config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+  # Gemini 3 Pro (higher quality thinking)
+  config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="LOW")
   
-  # Gemini 2.5 Flash (disable thinking)
-  config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+  # Gemini 3 Flash (minimal thinking for speed)
+  config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="MINIMAL")
   ```
 - **PDF processing**: Use `types.Part.from_bytes()` for inline PDF processing.
 - **Structured outputs**: Pass Pydantic `BaseModel` classes directly to `response_schema` parameter.
@@ -168,7 +169,7 @@ console.print(f"[red]✗[/] Failed: {error_count} items")
   - Gemini: `google.genai.Client()` with `GEMINI_API_KEY`
   - Mistral OCR: `mistralai.Mistral()` with `MISTRAL_API_KEY` and `client.ocr.process()`
 - [ ] **Gemini API**: Uses `system_instruction` in `GenerateContentConfig` (not concatenated prompts).
-- [ ] **Gemini API**: Uses correct thinking config (`thinking_level` for Gemini 3, `thinking_budget` for 2.5).
+- [ ] **Gemini API**: Uses correct thinking config (`thinking_level` for all Gemini 3 models: "MINIMAL", "LOW", or "HIGH").
 - [ ] Offers model selection where applicable (e.g., Gemini Flash vs Pro).
 - [ ] Loads prompts from sibling `.md` files (if the API supports system prompts).
 - [ ] Handles API errors with appropriate retry logic.

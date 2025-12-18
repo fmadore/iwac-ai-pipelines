@@ -1,4 +1,4 @@
-"""French Summary Generation using OpenAI GPT-5 mini or Gemini 2.5 Flash.
+"""French Summary Generation using OpenAI GPT-5 mini or Gemini 3 Flash.
 
 Optimized for cost-effective document summarization with low reasoning effort.
 """
@@ -159,7 +159,7 @@ def main():
         config = LLMConfig(
             reasoning_effort="low",      # OpenAI: quick summarization
             text_verbosity="low",        # OpenAI: concise output
-            thinking_budget=0,           # Gemini Flash: no thinking needed for summaries
+            thinking_level="MINIMAL",    # Gemini 3 Flash: minimal thinking for speed
             temperature=0.3              # Gemini: some creativity for natural summaries
         )
         
@@ -172,7 +172,7 @@ def main():
         config_table.add_row("Output Directory", output_dir)
         config_table.add_row("Reasoning Effort", config.reasoning_effort or "default")
         config_table.add_row("Text Verbosity", config.text_verbosity or "default")
-        config_table.add_row("Thinking Budget", str(config.thinking_budget) if config.thinking_budget is not None else "default")
+        config_table.add_row("Thinking Level", config.thinking_level or "default")
         config_table.add_row("Temperature", str(config.temperature) if config.temperature else "default")
         console.print(config_table)
         
