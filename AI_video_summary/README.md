@@ -1,155 +1,92 @@
-# AI Video Summary
+# Video Processing
 
-Process video files using Google Gemini's multimodal capabilities for summarization and transcription with visual descriptions.
+Summarize or transcribe video files with visual descriptions using Google Gemini's multimodal capabilities.
 
-## Features
+## Why This Tool?
 
-- **Video Summarization**: Generate comprehensive summaries of video content including visual and audio elements
-- **Full Transcription with Visual Descriptions**: Create detailed transcripts with periodic descriptions of what appears on screen
-- **Automatic file size handling**: Small files (<20MB) are processed inline; larger files use the Gemini Files API
-- **Multiple model support**: Choose between Gemini 3.0 Pro Preview (higher quality) and Gemini 2.5 Flash (faster)
+Video content combines speech, on-screen text, and visual information. Standard audio transcription misses what's shown on screen—speakers, locations, displayed documents, gestures. This pipeline captures both audio and visual elements for comprehensive documentation.
 
-## Supported Video Formats
+## How It Works
 
-- MP4, MPEG, MOV, AVI, FLV, MPG, WebM, WMV, 3GPP
+```
+Video files → Gemini multimodal processing → Summary or transcript with visual descriptions
+```
 
-## Setup
+The script sends video directly to Gemini, which analyzes both audio and visual streams.
 
-### 1. Install Dependencies
+## Quick Start
 
+1. Place video files in the `video/` folder
+2. Run the script:
+   ```bash
+   python AI_video_summary.py
+   ```
+3. Select model and processing mode
+4. Find outputs in `output/`
+
+Or specify options directly:
 ```bash
-pip install google-genai python-dotenv
-```
-
-### 2. Configure API Key
-
-Create or edit a `.env` file in the repository root:
-
-```
-GEMINI_API_KEY=your-api-key-here
-```
-
-Get your API key from: https://aistudio.google.com/app/api-keys
-
-### 3. Add Video Files
-
-Place video files in the `video/` folder (or specify a custom folder with `--video-folder`).
-
-## Usage
-
-### Interactive Mode
-
-```bash
-python AI_video_summary.py
-```
-
-This will:
-1. Prompt you to select a model (Gemini 3.0 Pro Preview or 2.5 Flash)
-2. Display available processing modes (summary or full transcription)
-3. Process all videos in the `video/` folder
-4. Save outputs to the `output/` folder
-
-### Command Line Options
-
-```bash
-# Use a specific model
 python AI_video_summary.py --model gemini-3-flash-preview
-
-# Specify custom input/output folders
-python AI_video_summary.py --video-folder my_videos --output-folder results
-
-# Full example
-python AI_video_summary.py --model gemini-3-pro-preview --video-folder recordings --output-folder transcripts
 ```
-
-### Available Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--model` | Model to use (`gemini-3-pro-preview` or `gemini-3-flash-preview`) | Interactive selection |
-| `--video-folder` | Folder containing video files | `video` |
-| `--output-folder` | Folder for output files | `output` |
 
 ## Processing Modes
 
-### 1. Video Summary
-Generates a structured summary including:
-- Overview of the video content
-- Setting and context
-- Key participants
-- Main content themes
-- Notable moments
-- Conclusion
+| Mode | Output | Best For |
+|------|--------|----------|
+| **Summary** | Structured overview (setting, participants, themes) | Quick content analysis, cataloging |
+| **Transcription** | Timestamped transcript + periodic visual descriptions | Archival, accessibility, detailed analysis |
 
-Best for: Quick content analysis, cataloging, research documentation.
+## Supported Formats
 
-### 2. Video Transcription with Visual Descriptions
-Creates a detailed transcript with:
-- Timestamped speaker turns
-- Verbatim transcription of spoken content
-- Periodic visual descriptions (every 30-60 seconds)
-- On-screen text and graphics notation
-- Non-speech audio events
+MP4, MPEG, MOV, AVI, FLV, MPG, WebM, WMV, 3GPP
 
-Best for: Archival purposes, accessibility, detailed analysis.
+## Model Selection
 
-## Model Selection Guide
+| Model | Speed | Quality | Best For |
+|-------|-------|---------|----------|
+| `gemini-3-flash-preview` | Faster | Good | Summaries, shorter videos |
+| `gemini-3-pro-preview` | Slower | Higher | Detailed transcription, complex scenes |
 
-| Model | Best For | Speed | Quality |
-|-------|----------|-------|---------|
-| `gemini-3-pro-preview` | Detailed transcription, complex scenes | Slower | Higher |
-| `gemini-3-flash-preview` | Summaries, shorter videos | Faster | Good |
-
-## File Size Handling
-
-- **Small files (≤20MB)**: Processed inline for faster results
-- **Large files (>20MB)**: Automatically uploaded to Gemini Files API, with polling until processing completes
-
-## Output
-
-Processed files are saved as text files in the output folder with metadata headers:
+## Output Format
 
 ```
 Video Processing Output: example_video.mp4
 Generated using: Google gemini-3-pro-preview
 ============================================================
 
-[Content follows...]
+[Summary or transcript content...]
 ```
 
-## Technical Details
+## Limitations
 
-- Video sampling rate: 1 frame per second (default)
-- Token usage: ~300 tokens per second of video at default resolution
-- Maximum video length: Up to 2 hours (2M context models) or 1 hour (1M context models)
+**Visual description frequency**: Descriptions occur every 30-60 seconds; fast-changing visuals between descriptions may be missed.
 
-## Folder Structure
+**On-screen text**: Small or stylized text may not be captured accurately.
 
+**Speaker identification**: Speakers are labeled generically ("Speaker 1") unless visually identifiable.
+
+**Processing time**: Video analysis is slower than audio-only; expect several minutes for longer videos.
+
+**File size**: Files over 20MB are automatically uploaded via Gemini Files API (handled transparently).
+
+## Configuration
+
+Create `.env` in project root:
+
+```bash
+GEMINI_API_KEY=your_key
 ```
-AI_video_summary/
-├── AI_video_summary.py      # Main script
-├── README.md                 # This file
-├── prompts/
-│   ├── 1_video_summary.md              # Summary prompt
-│   └── 2_video_transcription_description.md  # Transcription prompt
-├── video/                    # Input folder (place videos here)
-└── output/                   # Output folder (generated automatically)
-```
+
+## Customization
+
+Edit prompt files in `prompts/` to adjust:
+- `1_video_summary.md` — Summary structure and focus areas
+- `2_video_transcription_description.md` — Visual description frequency and detail level
 
 ## Troubleshooting
 
-### "GEMINI_API_KEY not found"
-Ensure your `.env` file exists and contains a valid API key.
-
-### Video processing takes too long
-- Use `gemini-3-flash-preview` for faster processing
-- Consider using shorter video clips
-
-### "Unsupported video format"
-Convert your video to MP4 format using ffmpeg:
-```bash
-ffmpeg -i input.mkv -c:v libx264 -c:a aac output.mp4
-```
-
-### Large file upload fails
-Ensure you have a stable internet connection. The script will poll for processing status automatically.
+| Problem | Solution |
+|---------|----------|
+| Unsupported format | Convert to MP4: `ffmpeg -i input.mkv output.mp4` |
+| Processing timeout | Use Flash model for faster results |
+| Upload fails | Check internet connection; script retries automatically |

@@ -1,299 +1,116 @@
-# OCR Post-Correction Pipeline
+# OCR Post-Correction
 
-This directory contains pipelines for extracting, correcting, and updating OCR text using AI-powered post-processing with multiple LLM providers (Gemini, OpenAI, Mistral).
+Fix errors in machine-generated OCR text using AI, with optional coordinate preservation for ALTO XML.
 
-## Overview
+## Why This Tool?
 
-The OCR post-correction pipeline processes raw OCR text through AI-powered correction and can upload the improved text back to the database. Two correction approaches are available:
+Raw OCR output contains systematic errors: `rn` misread as `m`, `li` as `d`, encoding artifacts like `cafÃ©`. These errors compound in downstream tasks like named entity recognition and full-text search. AI correction fixes character-level errors while preserving historical spelling and document structure.
 
-1. **Plain Text Correction** (`02_correct_ocr_text.py`): Corrects raw OCR text files
-2. **ALTO XML Correction** (`02_correct_alto_xml.py`): Corrects OCR in ALTO XML while preserving coordinates
+## How It Works
 
-## Pipeline Components
+Two correction approaches are available:
 
-### 1. OCR Text Extraction (`01_extract_ocr_text.py`)
-**Purpose**: Retrieves raw OCR text from Omeka S items and saves them as individual text files.
+### Plain Text Correction
+```
+Raw OCR text → AI correction → Clean text
+```
+Fixes errors and reconstructs paragraphs. Best for display and search.
 
-**Features**:
-- Fetches items from specified Omeka S item sets
-- Extracts `extracttext:extracted_text` property values
-- Concurrent processing with thread pool
-- Pagination support for large item sets
-- Comprehensive error handling and logging
+### ALTO XML Correction
+```
+ALTO XML → AI correction (token-aligned) → ALTO XML with coordinates preserved
+```
+Corrects text while maintaining word-level coordinates. Essential when coordinates matter for display or annotation.
 
-**Input**: Omeka S item set ID
-**Output**: Individual `.txt` files in `TXT/` directory
+## Quick Start
 
-### 2a. AI-Powered Text Correction (`02_correct_ocr_text.py`)
-**Purpose**: Applies AI-powered corrections to raw OCR text using multiple LLM providers.
+### Plain Text Workflow
 
-**Features**:
-- Multi-provider support: Gemini, OpenAI, Mistral
-- Rich console output with progress tracking
-- Intelligent text chunking for large documents
-- Structure analysis and paragraph reconstruction
-- Character recognition error correction
-- Historical text preservation
-
-**Supported Models**:
-- `gemini-flash`: Gemini 2.5 Flash (default, fast, thinking disabled)
-- `gemini-pro`: Gemini 3 Pro (highest quality)
-- `gpt-5-mini`: OpenAI GPT-5 mini (cost-optimized)
-- `gpt-5.1`: OpenAI GPT-5.1 (flagship)
-- `mistral-large`: Mistral Large 3
-- `ministral-14b`: Ministral 3 14B (fast, cost-effective)
-
-**Usage**:
 ```bash
-# Interactive model selection
-python 02_correct_ocr_text.py
-
-# Use specific model
-python 02_correct_ocr_text.py --model gemini-flash
-
-# Custom directories
-python 02_correct_ocr_text.py --model gpt-5-mini --input-dir ./TXT --output-dir ./Corrected_TXT
+python 01_extract_ocr_text.py      # Extract text from Omeka S
+python 02_correct_ocr_text.py      # Apply AI corrections
+python 03_update_database.py       # Update Omeka S
 ```
 
-**Input**: Raw OCR text files from `TXT/` directory
-**Output**: Corrected text files in `Corrected_TXT/` directory
+### ALTO XML Workflow
 
-### 2b. ALTO XML OCR Correction (`02_correct_alto_xml.py`) ⭐ NEW
-**Purpose**: Corrects OCR text in ALTO XML files while **preserving all coordinates and layout**.
-
-This is the recommended approach when you have ALTO XML files and need to:
-- Maintain precise word-level coordinates (HPOS, VPOS, WIDTH, HEIGHT)
-- Keep the XML structure intact for downstream processing
-- Preserve page layout information
-
-**How it works**:
-1. Parses ALTO XML and groups `<TextLine>` elements by parent `<TextBlock>` (for paragraph context)
-2. Sends each block to LLM for correction using **structured output**
-3. Enforces strict 1:1 token alignment (same number of words in/out)
-4. Updates only `CONTENT` attributes, preserving all coordinates
-5. Writes corrected ALTO XML with original structure intact
-
-**Features**:
-- **Block-level processing**: Full paragraph context for better corrections
-- Structured output with Pydantic models for reliable token alignment
-- Multi-provider support (Gemini, OpenAI, Mistral)
-- Automatic ALTO namespace detection (v2, v3, v4)
-- Rich console output with progress tracking
-
-**Usage**:
 ```bash
-# Interactive model selection
-python 02_correct_alto_xml.py
-
-# Use Gemini Flash (fast, no thinking)
+# Place ALTO XML files in ALTO/ folder
 python 02_correct_alto_xml.py --model gemini-flash
-
-# Custom directories and max lines per request
-python 02_correct_alto_xml.py --model gemini-flash --input-dir ./ALTO --output-dir ./ALTO_Corrected --max-lines 40
+# Corrected files saved to ALTO_Corrected/
 ```
 
-**Input**: ALTO XML files from `ALTO/` directory
-**Output**: Corrected ALTO XML files in `ALTO_Corrected/` directory
+## Supported Models
 
-### 3. Content Database Update (`03_update_database.py`)
-**Purpose**: Updates Omeka S items with corrected OCR text content.
+| Model | Speed | Best For |
+|-------|-------|----------|
+| `gemini-flash` | Fast | Bulk processing |
+| `gemini-pro` | Slower | Complex documents |
+| `gpt-5-mini` | Fast | General use |
+| `mistral-large` | Medium | European languages |
 
-**Features**:
-- Preserves existing item metadata
-- Updates or creates `bibo:content` property
-- Exponential backoff retry mechanism
-- Progress tracking and detailed logging
-- Comprehensive error handling
+## What Gets Corrected
 
-**Input**: Corrected text files from `Corrected_TXT/` directory
-**Output**: Updated Omeka S database items
-
-## Directory Structure
-
-```
-AI_ocr_correction/
-├── 01_extract_ocr_text.py          # Step 1: Extract raw OCR text
-├── 02_correct_ocr_text.py          # Step 2a: Plain text correction
-├── 02_correct_alto_xml.py          # Step 2b: ALTO XML correction (preserves coordinates)
-├── 03_update_database.py           # Step 3: Update database
-├── ocr_correction_prompt.md        # Prompt for plain text correction
-├── alto_correction_prompt.md       # Prompt for ALTO XML correction (token-aligned)
-├── TXT/                            # Raw OCR text files
-├── Corrected_TXT/                  # AI-corrected text files
-├── ALTO/                           # Input ALTO XML files
-├── ALTO_Corrected/                 # Corrected ALTO XML files
-└── README.md                       # This file
-```
-
-## Prerequisites
-
-- Python 3.8+
-- Required packages (see parent directory's `requirements.txt`)
-- Environment variables configured (see Setup section)
-
-## Setup
-
-1. **Environment Configuration**:
-   Copy the example environment file and configure your API credentials:
-   ```bash
-   cp ../.env.example ../.env
-   ```
-   
-   Edit the `.env` file in the parent directory with your actual values:
-   ```env
-   OMEKA_BASE_URL=https://your-omeka-instance.com/api
-   OMEKA_KEY_IDENTITY=your_key_identity
-   OMEKA_KEY_CREDENTIAL=your_key_credential
-   GEMINI_API_KEY=your_gemini_api_key
-   OPENAI_API_KEY=your_openai_api_key      # Optional
-   MISTRAL_API_KEY=your_mistral_api_key    # Optional
-   ```
-
-2. **Install Dependencies**:
-   ```bash
-   pip install -r ../requirements.txt
-   ```
-
-## Usage
-
-### Workflow A: Plain Text Correction
-
-```bash
-# Step 1: Extract OCR text from Omeka S
-python 01_extract_ocr_text.py
-
-# Step 2: Apply AI corrections to plain text
-python 02_correct_ocr_text.py --model gemini-flash
-
-# Step 3: Update Omeka S with corrected text
-python 03_update_database.py
-```
-
-### Workflow B: ALTO XML Correction (Preserves Coordinates)
-
-```bash
-# Place your ALTO XML files in the ALTO/ directory
-
-# Correct ALTO XML while preserving coordinates
-python 02_correct_alto_xml.py --model gemini-flash
-
-# Corrected files will be in ALTO_Corrected/
-```
-
-## ALTO XML Correction Details
-
-### Block-Level Processing
-
-The ALTO correction groups lines by their parent `<TextBlock>` element before sending to the LLM. This provides **full paragraph context**, which significantly improves correction quality:
-
-- The LLM can see how words connect across line breaks (e.g., "rache-" + "ter")
-- Better understanding of sentence structure and meaning
-- More accurate correction of ambiguous OCR errors
-
-### Token Alignment Strategy
-
-The ALTO correction uses **structured output** to enforce strict token alignment:
-
-```python
-class CorrectedLine(BaseModel):
-    line_index: int
-    original_tokens: list[str]   # ["Tlie", "gouvernernent", "lias"]
-    corrected_tokens: list[str]  # ["The", "gouvernement", "has"]
-    # ↑ Must be same length!
-```
-
-This ensures:
-- Each `<String>` element maps 1:1 to a corrected token
-- Coordinates (HPOS, VPOS, WIDTH, HEIGHT) remain untouched
-- XML structure is preserved exactly
-
-### What Gets Corrected
-
-✅ **Corrected**:
-- OCR character errors: `Tlie` → `The`, `rn` → `m`
+**Fixed**:
+- Character recognition errors: `Tlie` → `The`, `rn` → `m`
 - Encoding issues: `cafÃ©` → `café`
-- Obvious misspellings: `gouvernernent` → `gouvernement`
+- Obvious OCR artifacts: `gouvernernent` → `gouvernement`
 
-❌ **Preserved**:
+**Preserved**:
 - Historical spellings: `connexion`, `shew`, `to-day`
-- Original language: French stays French
-- Token boundaries: Never merge or split words
+- Original language (no translation)
+- Document structure and formatting
 
-### Known Limitations
+## ALTO XML: Coordinate Preservation
 
-Due to coordinate preservation, the script **cannot**:
-- **Merge tokens**: `ilest` cannot become `il est` (would need 2 coordinate boxes)
-- **Split tokens**: `il est` cannot become `ilest` (would lose a coordinate box)
-- **Add/remove words**: Token count must match exactly
+The ALTO correction enforces strict token alignment:
 
-Words that need merging/splitting are flagged in the LLM's analysis but returned unchanged to preserve coordinates.
-
-### Example
-
-**Original ALTO XML**:
 ```xml
-<TextLine>
-  <String CONTENT="Tlie" HPOS="100" VPOS="50" WIDTH="40" HEIGHT="20"/>
-  <String CONTENT="gouvernernent" HPOS="145" VPOS="50" WIDTH="120" HEIGHT="20"/>
-  <String CONTENT="lias" HPOS="270" VPOS="50" WIDTH="35" HEIGHT="20"/>
-</TextLine>
+<!-- Before -->
+<String CONTENT="Tlie" HPOS="100" VPOS="50" WIDTH="40"/>
+<String CONTENT="gouvernernent" HPOS="145" VPOS="50" WIDTH="120"/>
+
+<!-- After: only CONTENT changes -->
+<String CONTENT="The" HPOS="100" VPOS="50" WIDTH="40"/>
+<String CONTENT="gouvernement" HPOS="145" VPOS="50" WIDTH="120"/>
 ```
 
-**After Correction**:
-```xml
-<TextLine>
-  <String CONTENT="The" HPOS="100" VPOS="50" WIDTH="40" HEIGHT="20"/>
-  <String CONTENT="gouvernement" HPOS="145" VPOS="50" WIDTH="120" HEIGHT="20"/>
-  <String CONTENT="has" HPOS="270" VPOS="50" WIDTH="35" HEIGHT="20"/>
-</TextLine>
-```
+**Limitation**: Token count must match. Words needing merge (`ilest` → `il est`) or split are flagged but left unchanged to preserve coordinates.
 
-Note: Only `CONTENT` changed; all coordinates preserved!
+## Limitations
+
+**Silent errors**: Unlike garbled OCR, AI corrections appear as fluent text. Errors may be harder to spot.
+
+**Over-correction**: Historical or unusual spellings may be "corrected" to modern forms despite instructions to preserve them.
+
+**Token alignment (ALTO)**: Cannot merge or split words without breaking coordinate mapping.
+
+**Context window**: Very long documents are chunked, potentially losing cross-page context.
 
 ## Configuration
 
-### Model Selection
+Create `.env` in project root:
 
-| Model | Provider | Speed | Cost | Best For |
-|-------|----------|-------|------|----------|
-| `gemini-flash` | Google | Fast | Low | Bulk processing |
-| `gemini-pro` | Google | Slow | High | Complex documents |
-| `gpt-5-mini` | OpenAI | Fast | Low | General use |
-| `gpt-5.1` | OpenAI | Slow | High | Maximum accuracy |
-| `mistral-large` | Mistral | Medium | Medium | European languages |
-| `ministral-14b` | Mistral | Fast | Low | Cost-sensitive |
+```bash
+OMEKA_BASE_URL=https://your-instance.com/api
+OMEKA_KEY_IDENTITY=your_key
+OMEKA_KEY_CREDENTIAL=your_credential
 
-### Gemini Thinking Mode
+GEMINI_API_KEY=your_key
+OPENAI_API_KEY=your_key
+MISTRAL_API_KEY=your_key
+```
 
-- **gemini-flash**: Thinking disabled (`thinking_budget=0`) for speed
-- **gemini-pro**: Low thinking (`thinking_level="low"`) for balance
+## Customization
 
-### Processing Parameters
-- **Max lines per request**: 50 lines per API call for large blocks (configurable via `--max-lines`)
-- **Temperature**: 0.1-0.2 for consistent corrections
-- **Max text length**: 200,000 characters before chunking (plain text)
+- `ocr_correction_prompt.md` — Plain text correction rules
+- `alto_correction_prompt.md` — Token-aligned ALTO correction rules
 
-## Error Handling
+## Troubleshooting
 
-All scripts include comprehensive error handling:
-- **Network errors**: Automatic retry with exponential backoff
-- **Token count mismatch**: Falls back to original text
-- **API rate limits**: Built-in delays and retry mechanisms
-- **XML parse errors**: Graceful handling with detailed logging
-- **Processing failures**: Continue processing remaining items
-
-## Output Quality
-
-The AI correction process improves:
-- **Character accuracy**: Fixes common OCR misrecognitions
-- **Text structure**: Reconstructs paragraphs and formatting (plain text)
-- **Coordinate preservation**: Maintains exact layout (ALTO XML)
-- **Historical authenticity**: Preserves period-appropriate language
-
-## Support
-
-For issues or questions:
-- Check the logs for detailed error information
-- Review the main project README
-- Verify environment configuration
-- Test with small batches first
+| Problem | Solution |
+|---------|----------|
+| Token count mismatch | Script falls back to original; check for merged/split words |
+| Historical spellings changed | Adjust prompt with more examples |
+| ALTO namespace errors | Script auto-detects v2/v3/v4; check XML validity |
+| API rate limits | Built-in retry handles this |
