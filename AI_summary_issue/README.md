@@ -9,7 +9,7 @@ Uses Google Gemini's native PDF understanding with individual page extraction.
 
 **Models:**
 - Gemini 3.0 Pro (Step 1: page-by-page extraction with thinking_level)
-- Gemini 2.5 Flash (Step 2: consolidation with thinking_budget)
+- Gemini 3.0 Flash (Step 2: consolidation with thinking_level)
 
 **Features:**
 - ✅ Structured outputs - Pydantic models for guaranteed JSON schema compliance
@@ -52,7 +52,7 @@ This pipeline processes PDF magazines to extract and consolidate articles using 
 - ✅ **Modern API patterns** - Uses `system_instruction` parameter (not concatenated prompts)
 - ✅ **Rich console UI** - Color-coded progress bars, tables, panels, and status indicators
 - ✅ **PyPDF2 page extraction** - Individual pages sent as separate PDFs
-- ✅ **Smart thinking config** - Uses `thinking_level` for Gemini 3, `thinking_budget` for 2.5
+- ✅ **Smart thinking config** - Uses `thinking_level` for all Gemini 3 models (Pro and Flash)
 
 ### Mistral Version
 - ✅ **Structured outputs** - Pydantic models with `client.chat.parse()` for type-safe extraction
@@ -89,7 +89,7 @@ This pipeline processes PDF magazines to extract and consolidate articles using 
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Step 2: Consolidation (Gemini 2.5 Flash)                   │
+│ Step 2: Consolidation (Gemini 3.0 Flash)                   │
 │ → Merge fragmented articles across pages                   │
 │ → Structured output: MagazineIndex Pydantic model          │
 │ → Eliminate duplicates                                     │
@@ -360,15 +360,15 @@ The Gemini version uses `common/llm_provider.py` for model selection. Models are
 ```python
 # Model selection (automatic via llm_provider)
 model_step1 = get_model_option("gemini-pro")   # Gemini 3 Pro for extraction
-model_step2 = get_model_option("gemini-flash") # Gemini 2.5 Flash for consolidation
+model_step2 = get_model_option("gemini-flash") # Gemini 3 Flash for consolidation
 
 # LLM Configuration
 config_step1 = LLMConfig(
-    thinking_level="low",  # Gemini 3 Pro uses thinking_level
+    thinking_level="LOW",  # Gemini 3 Pro uses thinking_level ("LOW" or "HIGH")
     temperature=0.2
 )
 config_step2 = LLMConfig(
-    thinking_budget=0,     # Gemini 2.5 Flash uses thinking_budget (0=disabled)
+    thinking_level="MINIMAL",  # Gemini 3 Flash uses thinking_level ("MINIMAL", "LOW", "MEDIUM", "HIGH")
     temperature=0.3
 )
 
@@ -411,8 +411,8 @@ Page numbers are injected by the script (not AI) for reliability:
 - ✅ **Easier consolidation** - page numbers are trustworthy
 
 ### Why Two Different Models?
-- **Gemini 3.0 Pro (Step 1)**: Higher accuracy for initial extraction with `thinking_level` enabled
-- **Gemini 2.5 Flash (Step 2)**: Faster consolidation with `thinking_budget=0` (disabled)
+- **Gemini 3.0 Pro (Step 1)**: Higher accuracy for initial extraction with `thinking_level="LOW"` or `"HIGH"`
+- **Gemini 3.0 Flash (Step 2)**: Faster consolidation with `thinking_level="MINIMAL"` for speed
 
 ### Why `system_instruction` Pattern?
 The modern Google Gen AI SDK uses `system_instruction` in `GenerateContentConfig`:
