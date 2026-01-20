@@ -417,9 +417,10 @@ class AudioTranscriber:
         for attempt in range(max_retries):
             try:
                 # Generate transcription using the selected model
+                # IMPORTANT: Audio part must come FIRST, then the prompt text
                 response = self.client.models.generate_content(
                     model=self.model,
-                    contents=[prompt, audio_part],
+                    contents=[audio_part, prompt],
                     config=types.GenerateContentConfig(
                         temperature=0.1,  # Low temperature for more consistent transcription
                         max_output_tokens=65536,
