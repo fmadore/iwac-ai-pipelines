@@ -108,6 +108,7 @@ The approach assumes you have digitized materials and need to make them searchab
 
 - [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) — The archive
 - [IWAC Dashboard](https://fmadore.github.io/IWAC-Dashboard/) — Interactive exploration interface
+- [AI-NER-Validator](https://github.com/fmadore/AI-NER-Validator) — Web app for reviewing and validating NER results
 - [Leibniz-Zentrum Moderner Orient](https://www.zmo.de/en) — Host institution
 
 ## Citation
