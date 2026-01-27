@@ -415,7 +415,7 @@ def update_item_sentiment(
             continue
 
         # Helper to build property value with property_id if available
-        def build_property_value(prop_key: str, value_type: str, value: Any, is_resource: bool = False) -> Dict[str, Any]:
+        def build_property_value(prop_key: str, value_type: str, value: Any, is_resource: bool = False, language: str = None) -> Dict[str, Any]:
             prop_value = {
                 "type": value_type,
                 "property_label": prop_key.split(":")[-1],
@@ -431,6 +431,8 @@ def update_item_sentiment(
                 prop_value["value_resource_name"] = "items"
             else:
                 prop_value["@value"] = value
+                if language:
+                    prop_value["@language"] = language
 
             return prop_value
 
@@ -446,7 +448,7 @@ def update_item_sentiment(
         centralite_just = results.get("centralite_justification", "")
         if centralite_just:
             prop_key = props["centralite_justification"]
-            item_data[prop_key] = [build_property_value(prop_key, "literal", centralite_just)]
+            item_data[prop_key] = [build_property_value(prop_key, "literal", centralite_just, language="fr")]
             modified = True
 
         # --- Polarité (resource:item link) ---
@@ -461,7 +463,7 @@ def update_item_sentiment(
         polarite_just = results.get("polarite_justification", "")
         if polarite_just:
             prop_key = props["polarite_justification"]
-            item_data[prop_key] = [build_property_value(prop_key, "literal", polarite_just)]
+            item_data[prop_key] = [build_property_value(prop_key, "literal", polarite_just, language="fr")]
             modified = True
 
         # --- Subjectivité Score (resource:item link) ---
@@ -476,7 +478,7 @@ def update_item_sentiment(
         subj_just = results.get("subjectivite_justification", "")
         if subj_just:
             prop_key = props["subjectivite_justification"]
-            item_data[prop_key] = [build_property_value(prop_key, "literal", subj_just)]
+            item_data[prop_key] = [build_property_value(prop_key, "literal", subj_just, language="fr")]
             modified = True
 
     if not modified:
