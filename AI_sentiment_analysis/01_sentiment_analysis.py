@@ -464,11 +464,12 @@ def update_item_sentiment(
             item_data[prop_key] = [build_property_value(prop_key, "literal", polarite_just)]
             modified = True
 
-        # --- Subjectivité Score (numeric:integer) ---
+        # --- Subjectivité Score (resource:item link) ---
         subj_score = results.get("subjectivite_score")
-        if subj_score is not None:
+        subj_item_id = SUBJECTIVITE_ITEM_IDS.get(subj_score)
+        if subj_item_id:
             prop_key = props["subjectivite_score"]
-            item_data[prop_key] = [build_property_value(prop_key, "numeric:integer", subj_score)]
+            item_data[prop_key] = [build_property_value(prop_key, "resource:item", subj_item_id, is_resource=True)]
             modified = True
 
         # --- Subjectivité Justification (literal) ---
