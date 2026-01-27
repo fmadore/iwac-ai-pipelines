@@ -329,6 +329,30 @@ def get_item_content(item: Dict[str, Any]) -> str:
     return ""
 
 
+def has_existing_sentiment(item: Dict[str, Any], available_models: List[str]) -> bool:
+    """
+    Check if an item already has sentiment analysis values in Omeka.
+
+    Returns True if ALL available models have centralite values set,
+    meaning the item has already been fully analyzed.
+    """
+    for model in available_models:
+        props = PROPERTY_MAPPINGS.get(model)
+        if not props:
+            continue
+
+        # Check if centralite property exists and has a value
+        centralite_key = props["centralite"]
+        centralite_values = item.get(centralite_key, [])
+
+        if not centralite_values:
+            # This model doesn't have results yet
+            return False
+
+    # All available models have sentiment values
+    return True
+
+
 def get_full_item_data(
     item_id: int,
     base_url: str,
@@ -655,21 +679,30 @@ def analyze_with_mistral(
 
     for attempt in range(max_retries):
         try:
-            completion = client.chat.parse(
+            completion = client.chat.complete(
                 model=MISTRAL_MODEL_NAME,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                response_format=SentimentAnalysisOutput,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "sentiment_analysis",
+                        "schema": SentimentAnalysisOutput.model_json_schema(),
+                        "strict": True
+                    }
+                },
                 max_tokens=512,
                 temperature=0.2
             )
 
             message = completion.choices[0].message
 
-            if message.parsed:
-                return {**message.parsed.model_dump(), "analysis_error": None}
+            if message.content:
+                data = json.loads(message.content)
+                validated = SentimentAnalysisOutput(**data)
+                return {**validated.model_dump(), "analysis_error": None}
 
         except Exception as e:
             logger.debug(f"Mistral attempt {attempt + 1} failed: {e}")
@@ -901,22 +934,34 @@ def main():
 
     console.print(f"[green]✓[/] Found [bold]{len(items)}[/] items")
 
-    # Filter items with content
+    # Filter items with content and check for existing sentiment values
     items_with_content = []
+    skipped_existing = 0
+
     for item in items:
         item_id = item.get("o:id")
         content = get_item_content(item)
-        if content and content.strip():
-            items_with_content.append({
-                "id": item_id,
-                "content": content,
-                "title": item.get("o:title", f"Item {item_id}")
-            })
 
-    console.print(f"[green]✓[/] {len(items_with_content)} items have content to analyze")
+        if not content or not content.strip():
+            continue
+
+        # Skip items that already have sentiment values (unless force-reanalyze)
+        if not args.force_reanalyze and has_existing_sentiment(item, available_models):
+            skipped_existing += 1
+            continue
+
+        items_with_content.append({
+            "id": item_id,
+            "content": content,
+            "title": item.get("o:title", f"Item {item_id}")
+        })
+
+    console.print(f"[green]✓[/] {len(items_with_content)} items need sentiment analysis")
+    if skipped_existing > 0:
+        console.print(f"[dim]  (Skipped {skipped_existing} items with existing sentiment values)[/]")
 
     if not items_with_content:
-        console.print("[yellow]![/] No items with bibo:content found")
+        console.print("[yellow]![/] No items to process (all have existing values or no content)")
         return
 
     # Process items
@@ -925,7 +970,8 @@ def main():
         "analyzed": 0,
         "cached": 0,
         "updated": 0,
-        "errors": 0
+        "errors": 0,
+        "skipped_existing": skipped_existing
     }
 
     console.rule("[bold cyan]Processing Items")
@@ -995,7 +1041,9 @@ def main():
     summary_table = Table(title="Summary", box=box.ROUNDED)
     summary_table.add_column("Metric", style="dim")
     summary_table.add_column("Count", justify="right")
-    summary_table.add_row("Total items", str(stats["total"]))
+    if stats["skipped_existing"] > 0:
+        summary_table.add_row("Skipped (existing)", f"[dim]{stats['skipped_existing']}[/]")
+    summary_table.add_row("Processed", str(stats["total"]))
     summary_table.add_row("Newly analyzed", f"[cyan]{stats['analyzed']}[/]")
     summary_table.add_row("From cache", f"[dim]{stats['cached']}[/]")
     if not args.skip_update:
