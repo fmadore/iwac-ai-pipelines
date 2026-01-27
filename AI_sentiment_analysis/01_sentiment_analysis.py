@@ -148,8 +148,31 @@ SUBJECTIVITE_ITEM_IDS = {
     5: 78047,  # Très subjectif
 }
 
-# Property ID cache (loaded from Omeka S at runtime)
-PROPERTY_IDS: Dict[str, int] = {}
+# Property IDs for IWAC Omeka S instance
+# These are stable within the instance and used for API updates
+PROPERTY_IDS: Dict[str, int] = {
+    # Gemini properties (319-324)
+    "iwac:geminiCentralite": 319,
+    "iwac:geminiCentraliteJustification": 320,
+    "iwac:geminiPolarite": 321,
+    "iwac:geminiPolariteJustification": 322,
+    "iwac:geminiSubjectiviteScore": 323,
+    "iwac:geminiSubjectiviteJustification": 324,
+    # ChatGPT properties (325-330)
+    "iwac:chatgptCentralite": 325,
+    "iwac:chatgptCentraliteJustification": 326,
+    "iwac:chatgptPolarite": 327,
+    "iwac:chatgptPolariteJustification": 328,
+    "iwac:chatgptSubjectiviteScore": 329,
+    "iwac:chatgptSubjectiviteJustification": 330,
+    # Mistral properties (331-336)
+    "iwac:mistralCentralite": 331,
+    "iwac:mistralCentraliteJustification": 332,
+    "iwac:mistralPolarite": 333,
+    "iwac:mistralPolariteJustification": 334,
+    "iwac:mistralSubjectiviteScore": 335,
+    "iwac:mistralSubjectiviteJustification": 336,
+}
 
 
 # ============================================================================
@@ -328,65 +351,6 @@ def get_full_item_data(
         return None
 
 
-def fetch_property_ids(
-    base_url: str,
-    key_identity: str,
-    key_credential: str,
-    logger: logging.Logger
-) -> Dict[str, int]:
-    """
-    Fetch property IDs from Omeka S for IWAC ontology properties.
-
-    Returns:
-        Dictionary mapping property terms (e.g., 'iwac:geminiCentralite') to property IDs
-    """
-    global PROPERTY_IDS
-
-    if PROPERTY_IDS:
-        return PROPERTY_IDS
-
-    # Collect all property terms we need
-    needed_terms = set()
-    for model_props in PROPERTY_MAPPINGS.values():
-        needed_terms.update(model_props.values())
-
-    logger.info("Fetching property IDs from Omeka S...")
-
-    try:
-        # Fetch all properties from Omeka S
-        url = f"{base_url}/properties"
-        params = {
-            'key_identity': key_identity,
-            'key_credential': key_credential,
-            'per_page': 500  # Get all properties in one request
-        }
-
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        properties = response.json()
-
-        # Build mapping from term to property ID
-        for prop in properties:
-            vocab_prefix = prop.get('o:vocabulary', {}).get('o:prefix', '')
-            local_name = prop.get('o:local_name', '')
-            prop_id = prop.get('o:id')
-
-            if vocab_prefix and local_name and prop_id:
-                term = f"{vocab_prefix}:{local_name}"
-                if term in needed_terms:
-                    PROPERTY_IDS[term] = prop_id
-
-        # Check if we found all needed properties
-        missing = needed_terms - set(PROPERTY_IDS.keys())
-        if missing:
-            logger.warning(f"Could not find property IDs for: {missing}")
-
-        logger.info(f"Found {len(PROPERTY_IDS)} property IDs")
-        return PROPERTY_IDS
-
-    except requests.RequestException as e:
-        logger.error(f"Error fetching properties: {e}")
-        return {}
 
 
 def update_item_sentiment(
@@ -954,20 +918,6 @@ def main():
     if not items_with_content:
         console.print("[yellow]![/] No items with bibo:content found")
         return
-
-    # Fetch property IDs for Omeka updates (only if not skipping update)
-    if not args.skip_update:
-        console.print("[cyan]Fetching property IDs from Omeka S...[/]")
-        prop_ids = fetch_property_ids(
-            omeka_base_url,
-            omeka_key_identity,
-            omeka_key_credential,
-            logger
-        )
-        if prop_ids:
-            console.print(f"[green]✓[/] Found {len(prop_ids)} property IDs")
-        else:
-            console.print("[yellow]![/] Could not fetch property IDs - updates may fail")
 
     # Process items
     stats = {
