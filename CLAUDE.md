@@ -33,7 +33,7 @@ Text-only pipelines **must** route through `common/llm_provider.py`:
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, summary_from_option
 
 model_option = get_model_option(args.model, allowed_keys=["gemini-flash", "gpt-5-mini"])
-config = LLMConfig(reasoning_effort="medium", thinking_level="LOW")
+config = LLMConfig(reasoning_effort="medium", thinking_level="low")
 llm_client = build_llm_client(model_option, config)
 response = llm_client.generate(system_prompt, user_prompt)
 ```
@@ -60,7 +60,7 @@ Aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `mistral` → `
 ### LLMConfig Parameters
 
 - **OpenAI:** `reasoning_effort` ("low"/"medium"/"high"), `text_verbosity` ("low"/"medium"/"high")
-- **Gemini 3:** `thinking_level` ("MINIMAL"/"LOW"/"MEDIUM"/"HIGH") — cannot be disabled
+- **Gemini 3:** `thinking_level` — Flash: "minimal"/"low"/"medium"/"high"; Pro: "low"/"high" — cannot be disabled
 - **Mistral:** `temperature` (0.0-1.0)
 
 ## Pipeline Categories

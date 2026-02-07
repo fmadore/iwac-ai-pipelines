@@ -7,8 +7,8 @@ This guide explains how to use the enhanced `llm_provider.py` to configure AI mo
 The `LLMConfig` class allows individual scripts to customize AI behavior without modifying the shared provider code. You can now configure:
 
 - **OpenAI**: `reasoning_effort` and `text_verbosity`
-- **Gemini 3 Flash**: `temperature` and `thinking_level` ("MINIMAL", "LOW", "MEDIUM", or "HIGH")
-- **Gemini 3 Pro**: `temperature` and `thinking_level` ("LOW" or "HIGH")
+- **Gemini 3 Flash**: `temperature` and `thinking_level` ("minimal", "low", "medium", or "high")
+- **Gemini 3 Pro**: `temperature` and `thinking_level` ("low" or "high")
 - **Mistral**: `temperature`
 
 ## Available Models
@@ -127,43 +127,28 @@ print(result.locations)     # ['Paris', 'France']
 
 ### Gemini Parameters
 
-Gemini models have different thinking configurations based on the model series:
+Both Gemini 3 models use `thinking_level` to control how much reasoning the model does before answering. Thinking cannot be disabled — these models always reason to some degree.
 
-#### Gemini 3 Pro (uses `thinking_level`)
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
-| `thinking_level` | `str` | `"low"` | `"low"` = minimal reasoning<br>`"high"` = extended reasoning |
-
-**Important**: Gemini 3 Pro cannot disable thinking. Use `"low"` for faster responses.
-
-#### Gemini 2.5 Flash (uses `thinking_budget`)
+#### Gemini 3 Flash
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
-| `thinking_mode` | `bool` | `False` | Enable extended thinking |
-| `thinking_budget` | `int` or `None` | `None` | `0` = disabled<br>`None` = model default<br>`1-24576` = custom budget |
+| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness (lower = more consistent) |
+| `thinking_level` | `str` | `"minimal"` | `"minimal"` = fastest, least reasoning<br>`"low"` / `"medium"` = balanced<br>`"high"` = deepest reasoning |
 
-**Important**: Gemini 2.5 Flash can fully disable thinking with `thinking_budget=0` for maximum speed.
-
-#### Gemini 2.5 Pro (uses `thinking_budget`)
+#### Gemini 3 Pro
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
-| `thinking_budget` | `int` or `None` | `None` | `128-32768` = custom budget<br>`None` = model default |
-
-**Important**: Gemini 2.5 Pro **cannot disable thinking**. The minimum `thinking_budget` is 128. If you set a lower value, the provider will automatically use 128.
+| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness (lower = more consistent) |
+| `thinking_level` | `str` | `"low"` | `"low"` = faster, less reasoning<br>`"high"` = deeper reasoning, slower |
 
 #### Model Comparison
 
-| Model | Thinking Parameter | Can Disable? | Default | Budget Range |
-|-------|-------------------|--------------|---------|--------------|
-| Gemini 3 Pro | `thinking_level` | ❌ No | `"low"` | N/A |
-| Gemini 2.5 Pro | `thinking_budget` | ❌ No (min 128) | `None` | 128-32768 |
-| Gemini 2.5 Flash | `thinking_budget` | ✅ Yes (set to 0) | `None` | 0-24576 |
+| Model | Thinking Levels | Default | Best For |
+|-------|----------------|---------|----------|
+| Gemini 3 Flash | `"minimal"`, `"low"`, `"medium"`, `"high"` | `"minimal"` | Fast processing, bulk tasks |
+| Gemini 3 Pro | `"low"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
 
 ### Mistral Parameters
 
@@ -186,28 +171,19 @@ Complex analysis requiring careful reasoning and detailed output.
 config = LLMConfig(
     reasoning_effort="high",      # OpenAI: careful analysis
     text_verbosity="medium",       # OpenAI: detailed explanations
-    thinking_budget=1000,          # Gemini: extended thinking
+    thinking_level="high",         # Gemini: deep reasoning
     temperature=0.2                # Gemini: consistent results
 )
 ```
 
 ### OCR Extraction/Correction
-Fast processing with minimal thinking needed.
+Fast processing with minimal reasoning needed.
 
 ```python
-# For Gemini 3 Pro (cannot disable thinking)
 config = LLMConfig(
     reasoning_effort="low",        # OpenAI: quick processing
     text_verbosity="low",          # OpenAI: concise output
-    thinking_level="low",          # Gemini 3 Pro: minimal reasoning
-    temperature=0.1                # Gemini: very consistent
-)
-
-# For Gemini 2.5 Flash (can fully disable thinking)
-config = LLMConfig(
-    reasoning_effort="low",        # OpenAI: quick processing
-    text_verbosity="low",          # OpenAI: concise output
-    thinking_budget=0,             # Gemini 2.5 Flash: disable thinking for speed
+    thinking_level="low",          # Gemini: minimal reasoning
     temperature=0.1                # Gemini: very consistent
 )
 ```
@@ -219,7 +195,7 @@ Comprehensive analysis with moderate creativity.
 config = LLMConfig(
     reasoning_effort="medium",     # OpenAI: balanced reasoning
     text_verbosity="medium",       # OpenAI: detailed summaries
-    thinking_mode=True,            # Gemini: enable thinking
+    thinking_level="medium",       # Gemini Flash: balanced thinking
     temperature=0.3                # Gemini: some creativity
 )
 ```
@@ -231,7 +207,7 @@ Simple categorization with deterministic output.
 config = LLMConfig(
     reasoning_effort="low",        # OpenAI: quick classification
     text_verbosity="low",          # OpenAI: just the category
-    thinking_budget=0,             # Gemini Flash: no thinking needed
+    thinking_level="minimal",      # Gemini Flash: least reasoning
     temperature=0.0                # Gemini: completely deterministic
 )
 ```
@@ -307,7 +283,7 @@ def main():
     config = LLMConfig(
         reasoning_effort="high",
         text_verbosity="medium",
-        thinking_budget=1000,
+        thinking_level="high",
         temperature=0.2
     )
     
@@ -336,35 +312,31 @@ if __name__ == "__main__":
 
 ## Best Practices
 
-1. **Choose the right effort level**: Don't use `high` reasoning for simple tasks
-2. **Match thinking to model series**:
-   - Gemini 3 Pro: Use `thinking_level="low"` for fast tasks, `"high"` for complex analysis
-   - Gemini 2.5 Flash: Use `thinking_budget=0` to disable, or custom values for specific needs
-   - Gemini 2.5 Pro: Cannot disable thinking (min 128), use higher values for complex tasks
-3. **Use low temperature for consistency**: OCR, classification, extraction benefit from `temperature=0.0-0.2`
+1. **Choose the right effort level**: Don't use `"high"` reasoning for simple tasks — it's slower and more expensive
+2. **Match thinking to model**:
+   - Gemini 3 Flash: `"minimal"` for fast tasks, `"low"`/`"medium"` for balanced work, `"high"` for complex analysis
+   - Gemini 3 Pro: `"low"` for fast tasks, `"high"` for complex analysis
+3. **Use low temperature for consistency**: OCR, classification, and extraction benefit from `temperature=0.0-0.2`
 4. **Use higher temperature for creativity**: Summaries and generation can use `temperature=0.3-0.7`
-5. **Respect model constraints**: Gemini 3 Pro and 2.5 Pro cannot disable thinking
-6. **Log your config**: Always log the configuration used for reproducibility
-7. **Use structured outputs**: For NER, classification, and data extraction, prefer `generate_structured()` over parsing JSON manually
+5. **Log your config**: Always log the configuration used for reproducibility
+6. **Use structured outputs**: For NER, classification, and data extraction, prefer `generate_structured()` over parsing JSON manually
 
 ## Adding New Models
 
 To add a new model to the registry:
 
 1. Update `MODEL_REGISTRY` in `llm_provider.py`
-2. Set appropriate defaults:
-   - For Gemini 3 series: use `default_thinking_level` (`"low"` or `"high"`)
-   - For Gemini 2.5 series: use `default_thinking_mode` and `default_thinking_budget`
+2. Set appropriate defaults (e.g., `default_thinking_level` for Gemini 3 models)
 3. Add aliases if needed in `MODEL_ALIASES`
 4. Update this README with model-specific guidance
 
 ## Troubleshooting
 
-**Q: Why is Gemini 3 Pro ignoring my `thinking_budget` setting?**  
-A: Gemini 3 Pro uses `thinking_level` ("low" or "high"), not `thinking_budget`. The provider auto-detects the model series and uses the correct parameter.
+**Q: Why is Gemini ignoring my `thinking_budget` setting?**
+A: Gemini 3 models use `thinking_level` (e.g., `"low"`, `"high"`), not the older `thinking_budget` parameter. The provider handles this automatically.
 
-**Q: How do I disable thinking for Gemini?**  
-A: Only Gemini 2.5 Flash supports disabling thinking with `thinking_budget=0`. Gemini 3 Pro always has thinking enabled—use `thinking_level="low"` for minimal reasoning. Gemini 2.5 Pro has a minimum `thinking_budget` of 128.
+**Q: Can I disable thinking for Gemini?**
+A: No. Gemini 3 models always reason to some degree. Use `thinking_level="minimal"` (Flash) or `"low"` (Pro) for the fastest responses.
 
 **Q: Why isn't OpenAI using my `temperature` setting?**  
 A: OpenAI's Responses API uses fixed configuration. Use `reasoning_effort` and `text_verbosity` instead.

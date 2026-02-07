@@ -9,10 +9,10 @@ Handwritten documents—letters, manuscripts, field notes—are often the most v
 ## How It Works
 
 ```
-PDF scans → Convert to images → AI transcription → Text output
+PDF scans → Page-by-page PDF processing → AI transcription → Text output
 ```
 
-The script converts each PDF page to an image, sends it to Gemini's vision model with language-specific instructions, and outputs the transcribed text.
+The script extracts individual pages from each PDF and sends them directly to Gemini's vision model with language-specific instructions, outputting the transcribed text. No image conversion is needed.
 
 ## Quick Start
 
@@ -39,8 +39,8 @@ Each mode uses a specialized prompt (`htr_system_prompt_*.md`) with language-spe
 
 | Model | Speed | Accuracy | Best For |
 |-------|-------|----------|----------|
-| Gemini 2.5 Flash | Faster | Good | Clear handwriting, bulk processing |
-| Gemini 3.0 Pro | Slower | Higher | Difficult scripts, faded ink |
+| Gemini 3 Flash | Faster | Good | Clear handwriting, bulk processing |
+| Gemini 3 Pro | Slower | Higher | Difficult scripts, faded ink |
 
 ## Output
 
@@ -69,13 +69,6 @@ Transcriptions are saved to `OCR_Results/` as `.txt` files with page markers for
 
 ## Requirements
 
-### System Dependencies
-
-**Poppler** (for PDF to image conversion):
-- Windows: Download from [poppler-windows releases](https://github.com/oschwartz10612/poppler-windows/releases/)
-- macOS: `brew install poppler`
-- Linux: `sudo apt-get install poppler-utils`
-
 ### Configuration
 
 Create `.env` in project root:
@@ -95,7 +88,6 @@ Edit the prompt files to adjust transcription behavior:
 
 | Problem | Solution |
 |---------|----------|
-| PDF conversion fails | Check Poppler is installed and on PATH |
-| Empty transcriptions | Try higher DPI or different model |
+| Empty transcriptions | Try different model (Pro for difficult scripts) |
 | Safety/copyright blocks | Check logs; some content may be filtered |
 | Wrong language detected | Use specific language mode instead of Multilingual |

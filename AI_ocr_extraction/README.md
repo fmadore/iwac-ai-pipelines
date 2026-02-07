@@ -35,8 +35,8 @@ python 03_omeka_content_updater.py  # Update Omeka S items
 
 | Model | Speed | Quality | Cost | Notes |
 |-------|-------|---------|------|-------|
-| Gemini 2.5 Flash | Fast | Good | ~$0.54/450 pages | Recommended for most documents |
-| Gemini 3.0 Pro | Slower | Higher | ~$4.49/450 pages | Complex layouts, poor scans |
+| Gemini 3 Flash | Fast | Good | Low | Recommended for most documents |
+| Gemini 3 Pro | Slower | Higher | Higher | Complex layouts, poor scans |
 
 **Recommendation**: Start with Gemini Flash. Switch to Pro for challenging documents or frequent copyright blocks.
 
