@@ -83,23 +83,17 @@ class GeminiHTR:
         Returns:
             types.GenerateContentConfig: Configured generation config
         """
-        # Set thinking budget based on model capabilities
-        if "2.5-pro" in self.model_name.lower():
-            # Gemini 3.0 Pro requires thinking mode (minimum budget 128)
-            thinking_budget = 128  # Minimum for Pro model
-            print(f"🧠 Using thinking budget {thinking_budget} for {self.model_name}")
+        # Gemini 3 uses thinking_level: "low" (Pro min), "minimal" (Flash only), "medium", "high"
+        if "pro" in self.model_name.lower():
+            thinking_level = "low"  # Minimum for Gemini 3 Pro
         else:
-            # Gemini 2.5 Flash can disable thinking for simple tasks
-            thinking_budget = 0  # Disable thinking for faster HTR
-            print(f"🧠 Disabling thinking mode for {self.model_name}")
-        
+            thinking_level = "minimal"  # Minimum for Gemini 3 Flash
+        print(f"🧠 Using thinking level '{thinking_level}' for {self.model_name}")
+
         return types.GenerateContentConfig(
-            temperature=0.1,      # Lower temperature for more consistent output
-            top_p=0.95,          # High top_p for reliable text recognition
-            top_k=40,            # Balanced top_k for good candidate selection
             max_output_tokens=65535,  # Support for long documents
             response_mime_type="text/plain",  # Ensure text output
-            thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
+            thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
             safety_settings=[
                 types.SafetySetting(
                     category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
