@@ -90,3 +90,5 @@ Edit prompt files in `prompts/` to adjust:
 | Unsupported format | Convert to MP4: `ffmpeg -i input.mkv output.mp4` |
 | Processing timeout | Use Flash model for faster results |
 | Upload fails | Check internet connection; script retries automatically |
+| Quota exhausted | Pipeline stops immediately and saves completed results; wait for daily reset |
+| Transient rate limits | Retried automatically with exponential backoff (3 attempts) |

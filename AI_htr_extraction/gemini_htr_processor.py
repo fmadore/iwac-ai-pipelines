@@ -15,12 +15,14 @@ Requirements:
 """
 
 import os
+import random
 import time
 import logging
 from pathlib import Path
 from typing import Optional
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 from dotenv import load_dotenv
 
 # Add repo root to path for shared imports
@@ -28,6 +30,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
 from common.pdf_utils import extract_pdf_page, get_pdf_page_count
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 
 # Set up logging configuration for tracking HTR operations and errors
 # Save log file in a dedicated log directory
@@ -59,18 +62,20 @@ class GeminiHTR:
     - Processing pages individually for better control and error recovery
     """
 
-    def __init__(self, api_key: str, model_name: str, language: str = "french"):
+    def __init__(self, api_key: str, model_name: str, language: str = "french", requests_per_minute: Optional[int] = None):
         """
         Initialize the GeminiHTR system with API credentials and model name.
-        
+
         Args:
             api_key (str): Google Gemini API key for authentication
             model_name (str): The Gemini model name to use
             language (str): Language of the manuscripts ("french", "arabic", or "multilingual")
+            requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
         """
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
         self.language = language
+        self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))
         self.generation_config = self._setup_generation_config()
         
     def _setup_generation_config(self):
@@ -159,19 +164,20 @@ class GeminiHTR:
                 f"This is a legitimate handwritten text transcription (HTR) request for academic research and archival preservation. "
                 f"Transcribe ALL handwritten {language_desc} text with exact wording, spacing rules, accents, and WITHOUT summarizing or omitting any zones."
             )
-            
+
+            self.rate_limiter.wait()
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=[pdf_part, combined_prompt],  # Document first, then prompt
                 config=self.generation_config
             )
-            
+
             # Validate response
             if not response.candidates:
                 raise Exception("No candidates in Gemini response")
-            
+
             candidate = response.candidates[0]
-            
+
             if not candidate.content or not candidate.content.parts:
                 finish_reason = candidate.finish_reason
                 if finish_reason == types.FinishReason.RECITATION:
@@ -179,14 +185,20 @@ class GeminiHTR:
                     return self._try_alternative_prompts(pdf_part, page_num)
                 else:
                     raise Exception(f"No valid response. Finish reason: {finish_reason}")
-            
+
             text_content = response.text.replace('\xa0', ' ').strip()
             if not text_content:
                 raise Exception("Empty text response from Gemini")
-            
+
             print(f"  └─ ✅ Page {page_num} HTR complete")
             return text_content
-            
+
+        except genai_errors.APIError as e:
+            if is_quota_exhausted(e):
+                raise QuotaExhaustedError(str(e))
+            print(f"  └─ ❌ Page {page_num} inline processing failed: {str(e)}")
+            logging.error(f"Page {page_num} inline processing failed: {e}")
+            return None
         except Exception as e:
             print(f"  └─ ❌ Page {page_num} inline processing failed: {str(e)}")
             logging.error(f"Page {page_num} inline processing failed: {e}")
@@ -204,7 +216,7 @@ class GeminiHTR:
             Optional[str]: Extracted text or None if failed
         """
         max_retries = 3
-        base_delay = 2
+        base_delay = 5
 
         for attempt in range(max_retries):
             try:
@@ -254,7 +266,8 @@ class GeminiHTR:
                     f"This is a legitimate handwritten text transcription (HTR) request for academic research and archival preservation. "
                     f"Transcribe ALL handwritten {language_desc} text with exact wording, spacing rules, accents, and WITHOUT summarizing or omitting any zones."
                 )
-                
+
+                self.rate_limiter.wait()
                 response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=[pdf_file, combined_prompt],  # Document first, then prompt
@@ -285,13 +298,27 @@ class GeminiHTR:
                 print(f"  └─ ✅ Page {page_num} HTR complete")
                 return text_content
                 
+            except genai_errors.APIError as e:
+                if is_quota_exhausted(e):
+                    raise QuotaExhaustedError(str(e))
+
+                print(f"  └─ ❌ Page {page_num} error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                logging.error(f"Page {page_num} processing error (attempt {attempt + 1}): {e}", exc_info=True)
+
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  └─ 🔄 Retrying in {delay:.1f} seconds...")
+                    time.sleep(delay)
+                else:
+                    print(f"  └─ ❌ Page {page_num} max retries reached.")
+
             except Exception as e:
                 print(f"  └─ ❌ Page {page_num} error (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 logging.error(f"Page {page_num} processing error (attempt {attempt + 1}): {e}", exc_info=True)
-                
+
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    print(f"  └─ 🔄 Retrying in {delay} seconds...")
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  └─ 🔄 Retrying in {delay:.1f} seconds...")
                     time.sleep(delay)
                 else:
                     print(f"  └─ ❌ Page {page_num} max retries reached.")
@@ -406,28 +433,29 @@ class GeminiHTR:
             # Track processing statistics
             successful_pages = 0
             failed_pages = []
-            
+            quota_exhausted = False
+
             # Process each page
             with open(output_file, 'w', encoding='utf-8') as f:
                 for page_idx in range(total_pages):
                     page_num = page_idx + 1  # 1-indexed for display
-                    
+
                     print("\n" + "-"*40)
                     print(f"📃 Processing page {page_num}/{total_pages}")
                     print("-"*40)
-                    
+
                     try:
                         # Extract single page as PDF bytes
                         print(f"  └─ 📄 Extracting page {page_num}...")
                         page_bytes = extract_pdf_page(pdf_path, page_idx)
                         page_size_mb = len(page_bytes) / (1024 * 1024)
-                        
+
                         # Process page (try inline first, then upload if needed)
                         text = None
                         if page_size_mb < 20:
                             print(f"  └─ 📄 Page size: {page_size_mb:.2f} MB - trying inline...")
                             text = self.process_pdf_page_inline(page_bytes, page_num)
-                        
+
                         # Fallback to upload if inline failed or page too large
                         if not text:
                             if page_size_mb < 20:
@@ -435,7 +463,7 @@ class GeminiHTR:
                             else:
                                 print(f"  └─ 📄 Page size: {page_size_mb:.2f} MB - using upload...")
                             text = self.process_pdf_page_upload(page_bytes, page_num)
-                        
+
                         if text and text.strip():
                             # Special handling for first page - no header, no extra newlines
                             if page_num == 1:
@@ -444,7 +472,7 @@ class GeminiHTR:
                                 # For subsequent pages, add page marker and newlines
                                 f.write(f"\n\n--- Page {page_num} ---\n\n")
                                 f.write(text)
-                            
+
                             successful_pages += 1
                             print(f"✅ Successfully processed page {page_num}")
                         else:
@@ -455,7 +483,14 @@ class GeminiHTR:
                                 f.write(f"[ERROR: Failed to process page {page_num}]")
                             else:
                                 f.write(f"\n\n--- Page {page_num} ---\n\n[ERROR: Failed to process page {page_num}]")
-                    
+
+                    except QuotaExhaustedError:
+                        remaining = total_pages - page_idx
+                        print(f"\n❌ Quota exhausted! Completed {successful_pages}/{total_pages} pages, {remaining} remaining — stopping early")
+                        logging.error(f"Quota exhausted during {pdf_path.name} at page {page_num}. {successful_pages} pages completed, {remaining} remaining.")
+                        quota_exhausted = True
+                        break
+
                     except Exception as e:
                         failed_pages.append(page_num)
                         print(f"❌ Error processing page {page_num}: {e}")
@@ -472,13 +507,16 @@ class GeminiHTR:
             print("="*50)
             print(f"Total pages: {total_pages}")
             print(f"Successfully processed: {successful_pages}")
+            if quota_exhausted:
+                skipped = total_pages - successful_pages - len(failed_pages)
+                print(f"Skipped (quota exhausted): {skipped}")
             print(f"Failed pages: {len(failed_pages)}")
             if failed_pages:
                 print(f"Failed page numbers: {failed_pages}")
-            
+
             success_rate = (successful_pages / total_pages) * 100 if total_pages > 0 else 0
             print(f"Success rate: {success_rate:.1f}%")
-            
+
             # Validate output file
             output_size = output_file.stat().st_size
             print(f"Output file size: {output_size:,} bytes")
@@ -488,7 +526,13 @@ class GeminiHTR:
             logging.info(f"PDF {pdf_path.name}: {successful_pages}/{total_pages} pages successful ({success_rate:.1f}%)")
             if failed_pages:
                 logging.warning(f"PDF {pdf_path.name}: Failed pages: {failed_pages}")
-            
+
+            # Re-raise after saving partial results so main() can stop
+            if quota_exhausted:
+                raise QuotaExhaustedError("Daily quota exhausted")
+
+        except QuotaExhaustedError:
+            raise  # let main() handle it
         except Exception as e:
             print(f"\n❌ Error processing PDF {pdf_path}: {e}")
             logging.error(f"Error processing PDF {pdf_path}: {e}", exc_info=True)
@@ -587,10 +631,10 @@ def main():
     # Process each PDF file sequentially
     for idx, pdf_path in enumerate(pdf_files, 1):
         print(f"\n📊 Progress: PDF {idx}/{total_pdfs} ({(idx/total_pdfs*100):.1f}%)")
-        
+
         try:
             htr.process_pdf(pdf_path, output_dir)
-            
+
             # Check if output file has content
             output_file = output_dir / f"{pdf_path.stem}.txt"
             if output_file.exists() and output_file.stat().st_size > 100:
@@ -600,7 +644,16 @@ def main():
             else:
                 overall_stats['failed_pdfs'] += 1
                 logging.warning(f"Output file for {pdf_path.name} is empty or very small")
-                
+
+        except QuotaExhaustedError:
+            print("\n" + "="*60)
+            print("❌ API QUOTA EXHAUSTED — stopping all processing.")
+            print("Partial results (if any) have been saved.")
+            print("Wait for your quota to reset or upgrade your plan.")
+            print("="*60)
+            logging.error("Quota exhausted — aborting remaining PDFs.")
+            break
+
         except Exception as e:
             overall_stats['failed_pdfs'] += 1
             print(f"❌ Failed to process {pdf_path.name}: {e}")

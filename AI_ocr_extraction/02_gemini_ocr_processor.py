@@ -28,6 +28,7 @@ Advantages over image-based approach:
 """
 
 import os
+import random
 import time
 import logging
 from pathlib import Path
@@ -52,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.llm_provider import get_model_option, summary_from_option, LLMConfig
 from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level, extract_text_from_response
 from common.pdf_utils import extract_pdf_page, get_pdf_page_count
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 
 # Import Gemini types for PDF processing
 try:
@@ -90,15 +92,16 @@ class GeminiPDFProcessor:
     - Processing pages individually for better control and error recovery
     """
 
-    def __init__(self, api_key: str, model_option, llm_config: LLMConfig):
+    def __init__(self, api_key: str, model_option, llm_config: LLMConfig, requests_per_minute: Optional[int] = None):
         """
         Initialize the GeminiPDFProcessor with API credentials and model configuration.
-        
+
         Args:
             api_key (str): Google Gemini API key for authentication
             model_option: ModelOption from llm_provider
             llm_config (LLMConfig): LLM configuration for generation parameters
-        
+            requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
+
         Note: This script uses genai.Client() directly instead of the shared llm_provider
         because it requires multimodal capabilities (PDF uploads, inline processing) that
         the text-only wrapper doesn't expose.
@@ -108,6 +111,7 @@ class GeminiPDFProcessor:
         self.model_option = model_option
         self.model_name = model_option.model
         self.llm_config = llm_config
+        self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))
         self.generation_config = self._setup_generation_config()
         
     def _setup_generation_config(self):
@@ -284,29 +288,30 @@ class GeminiPDFProcessor:
                 "Please perform complete OCR transcription of this single page. "
                 "Extract all visible text maintaining original formatting and structure."
             )
-            
+
+            self.rate_limiter.wait()
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=[pdf_part, user_prompt],  # Document first, then user request
                 config=self.generation_config  # Contains system_instruction
             )
-            
+
             # Validate response
             if not response.candidates:
                 raise Exception("No candidates in Gemini response")
-            
+
             candidate = response.candidates[0]
-            
+
             # Check finish reason for special handling
             finish_reason = candidate.finish_reason
             finish_reason_str = str(finish_reason)
-            
+
             # Check for RECITATION - content blocked due to potential copyright
             if finish_reason_str == "FinishReason.RECITATION":
                 console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
                 logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
                 return None
-            
+
             # Check for MAX_TOKENS - partial content available, don't retry
             if finish_reason_str == "FinishReason.MAX_TOKENS":
                 # Try to extract partial text - it's still valuable for OCR
@@ -320,17 +325,19 @@ class GeminiPDFProcessor:
                     console.print(f"  [red]✗ Page {page_num}[/] - MAX_TOKENS with no recoverable text")
                     logging.error(f"Page {page_num}: MAX_TOKENS but no text could be extracted")
                     return None
-            
+
             if not candidate.content or not candidate.content.parts:
                 raise Exception(f"No valid response. Finish reason: {finish_reason}")
-            
+
             text_content = self._extract_text_from_response(response)
             if not text_content:
                 raise Exception("Empty text response from Gemini")
-            
+
             return text_content
-            
+
         except genai_errors.APIError as e:
+            if is_quota_exhausted(e):
+                raise QuotaExhaustedError(str(e))
             self._log_gemini_error(e, "inline PDF processing", page_num)
             return None
         except Exception as e:
@@ -349,11 +356,11 @@ class GeminiPDFProcessor:
             Optional[str]: Extracted text or None if failed
         """
         max_retries = 3
-        base_delay = 2
+        base_delay = 5
 
         for attempt in range(max_retries):
             try:
-                
+
                 # Save page bytes to a temporary file for upload (SDK requires file path)
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
@@ -415,7 +422,8 @@ class GeminiPDFProcessor:
                     "Please perform complete OCR transcription of this single page. "
                     "Extract all visible text maintaining original formatting and structure."
                 )
-                
+
+                self.rate_limiter.wait()
                 response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=[pdf_file, user_prompt],  # Document first, then user request
@@ -462,27 +470,30 @@ class GeminiPDFProcessor:
                 return text_content
                 
             except genai_errors.APIError as e:
+                if is_quota_exhausted(e):
+                    raise QuotaExhaustedError(str(e))
+
                 self._log_gemini_error(e, f"upload PDF processing (attempt {attempt + 1}/{max_retries})", page_num)
-                
+
                 # Check if error is retryable
                 error_code = getattr(e, 'code', 0)
                 is_retryable = error_code in [429, 500, 503]  # Rate limit or server errors
-                
+
                 if attempt < max_retries - 1 and is_retryable:
-                    delay = base_delay * (2 ** attempt)
-                    console.print(f"    [dim]Retrying in {delay}s...[/]")
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    console.print(f"    [dim]Retrying in {delay:.1f}s...[/]")
                     time.sleep(delay)
                 elif not is_retryable:
                     # Non-retryable error, don't waste attempts
                     logging.warning(f"Page {page_num}: Non-retryable error (code {error_code}), skipping retries")
                     break
-                    
+
             except Exception as e:
                 self._log_gemini_error(e, f"upload PDF processing (attempt {attempt + 1}/{max_retries})", page_num)
-                
+
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    console.print(f"    [dim]Retrying in {delay}s...[/]")
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    console.print(f"    [dim]Retrying in {delay:.1f}s...[/]")
                     time.sleep(delay)
         
         return None
@@ -527,48 +538,56 @@ class GeminiPDFProcessor:
             successful_pages = 0
             failed_pages = []
             page_contents = []  # Collect content, write only if we have successes
-            
+            quota_exhausted = False
+
             # Process each page with nested progress
             # Create page progress bar if parent progress exists
             page_task = None
             if progress:
                 page_task = progress.add_task(f"[dim]  Pages", total=total_pages, visible=True)
-            
+
             for page_idx in range(total_pages):
                 page_num = page_idx + 1  # 1-indexed for display
-                
+
                 try:
                     # Extract single page as PDF bytes
                     page_bytes = extract_pdf_page(pdf_path, page_idx)
                     page_size_mb = len(page_bytes) / (1024 * 1024)
-                    
+
                     # Process page (try inline first, then upload if needed)
                     text = None
                     if page_size_mb < 20:
                         text = self.process_pdf_page_inline(page_bytes, page_num)
-                    
+
                     # Fallback to upload if inline failed or page too large
                     if not text:
                         text = self.process_pdf_page_upload(page_bytes, page_num)
-                    
+
                     if text and text.strip():
                         page_contents.append((page_num, text))
                         successful_pages += 1
                     else:
                         failed_pages.append(page_num)
-                
+
+                except QuotaExhaustedError:
+                    remaining = total_pages - page_idx
+                    console.print(f"  [red]✗ Quota exhausted![/] Completed {successful_pages}/{total_pages} pages, {remaining} remaining — stopping early")
+                    logging.error(f"Quota exhausted during {pdf_path.name} at page {page_num}. {successful_pages} pages completed, {remaining} remaining.")
+                    quota_exhausted = True
+                    break
+
                 except Exception as e:
                     failed_pages.append(page_num)
                     logging.error(f"Error processing page {page_num} of {pdf_path}: {e}")
-                
+
                 # Update page progress
                 if progress and page_task is not None:
                     progress.update(page_task, advance=1)
-            
+
             # Remove page task when done
             if progress and page_task is not None:
                 progress.remove_task(page_task)
-            
+
             # Only write output file if we have successful pages
             if successful_pages > 0:
                 with open(output_file, 'w', encoding='utf-8') as f:
@@ -586,9 +605,14 @@ class GeminiPDFProcessor:
             
             # Report processing statistics
             success_rate = (successful_pages / total_pages) * 100 if total_pages > 0 else 0
-            
+
             # Show completion status
-            if successful_pages == 0:
+            if quota_exhausted and successful_pages > 0:
+                console.print(f"  [yellow]⚠[/] {successful_pages}/{total_pages} pages (quota exhausted, partial results saved)")
+                console.print(f"  [dim]Output size:[/] {output_size:,} bytes")
+            elif quota_exhausted:
+                console.print(f"  [red]✗[/] Quota exhausted before any pages completed - no output file created")
+            elif successful_pages == 0:
                 console.print(f"  [red]✗[/] All {total_pages} pages failed - no output file created")
             elif failed_pages:
                 console.print(f"  [yellow]⚠[/] {successful_pages}/{total_pages} pages ([red]failed: {failed_pages}[/])")
@@ -601,7 +625,13 @@ class GeminiPDFProcessor:
             logging.info(f"PDF {pdf_path.name}: {successful_pages}/{total_pages} pages successful ({success_rate:.1f}%)")
             if failed_pages:
                 logging.warning(f"PDF {pdf_path.name}: Failed pages: {failed_pages}")
-            
+
+            # Re-raise after saving partial results so main() can stop
+            if quota_exhausted:
+                raise QuotaExhaustedError("Daily quota exhausted")
+
+        except QuotaExhaustedError:
+            raise  # let main() handle it
         except Exception as e:
             console.print(f"[red]✗[/] Error processing PDF {pdf_path}: {e}")
             logging.error(f"Error processing PDF {pdf_path}: {e}", exc_info=True)
@@ -660,11 +690,19 @@ def main():
     output_dir = script_dir / "OCR_Results"
     output_dir.mkdir(exist_ok=True)
     
+    # Check for --rpm CLI argument (optional proactive throttling)
+    import argparse
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--rpm", type=int, default=None, help="Requests per minute limit (e.g. 5 for free tier)")
+    known_args, _ = parser.parse_known_args()
+
     # Initialize the PDF processor
     console.print()
     with console.status("[cyan]Initializing Gemini PDF Processor..."):
-        processor = GeminiPDFProcessor(api_key, model_option, llm_config)
+        processor = GeminiPDFProcessor(api_key, model_option, llm_config, requests_per_minute=known_args.rpm)
     console.print("[green]✓[/] Processor initialized")
+    if known_args.rpm:
+        console.print(f"[cyan]⏱[/] Rate limiting: {known_args.rpm} requests/minute")
     
     # Find all PDF files to process
     pdf_files = list(pdf_dir.glob("*.pdf"))
@@ -710,10 +748,10 @@ def main():
         
         for idx, pdf_path in enumerate(pdf_files, 1):
             progress.update(pdf_task, description=f"[cyan]Processing {pdf_path.name}...")
-            
+
             try:
                 processor.process_pdf(pdf_path, output_dir, progress)
-                
+
                 # Check if output file has content
                 output_file = output_dir / f"{pdf_path.stem}.txt"
                 if output_file.exists() and output_file.stat().st_size > 100:
@@ -723,12 +761,23 @@ def main():
                 else:
                     overall_stats['failed_pdfs'] += 1
                     logging.warning(f"Output file for {pdf_path.name} is empty or very small")
-                    
+
+            except QuotaExhaustedError:
+                console.print(Panel(
+                    "[red bold]API quota exhausted — stopping all processing.[/]\n"
+                    "Partial results (if any) have been saved.\n"
+                    "Wait for your quota to reset or upgrade your plan.",
+                    title="Quota Exhausted",
+                    border_style="red"
+                ))
+                logging.error("Quota exhausted — aborting remaining PDFs.")
+                break
+
             except Exception as e:
                 overall_stats['failed_pdfs'] += 1
                 console.print(f"[red]✗[/] Failed to process {pdf_path.name}: {e}")
                 logging.error(f"Failed to process {pdf_path.name}: {e}")
-            
+
             progress.update(pdf_task, advance=1)
 
     # Calculate processing time

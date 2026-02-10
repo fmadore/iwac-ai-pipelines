@@ -91,3 +91,5 @@ Edit the prompt files to adjust transcription behavior:
 | Empty transcriptions | Try different model (Pro for difficult scripts) |
 | Safety/copyright blocks | Check logs; some content may be filtered |
 | Wrong language detected | Use specific language mode instead of Multilingual |
+| Quota exhausted | Pipeline stops immediately and saves partial results; wait for daily reset |
+| Transient rate limits | Retried automatically with exponential backoff |

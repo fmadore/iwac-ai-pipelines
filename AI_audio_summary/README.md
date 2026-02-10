@@ -131,4 +131,5 @@ Create custom transcription modes by adding `.md` files to `prompts/`:
 | pydub not installed | `pip install pydub` (required for splitting) |
 | ffmpeg not found | Install ffmpeg or set `FFMPEG_PATH`/`FFPROBE_PATH` in `.env`. See `common/ffmpeg_utils.py` for discovery logic |
 | Poor transcription quality | Try Pro model, reduce background noise |
+| Quota exhausted | Pipeline stops immediately and saves completed transcriptions; wait for daily reset |
 | Video not converting | Verify ffmpeg is found (`get_ffmpeg_paths()`) and the video format is in `VIDEO_FORMATS` |

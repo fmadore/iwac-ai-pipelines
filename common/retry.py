@@ -11,8 +11,11 @@ Usage:
 
 import functools
 import logging
+import random
 import time
 from typing import Callable, TypeVar
+
+from common.rate_limiter import QuotaExhaustedError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,18 +43,21 @@ def retry_with_backoff(
             for attempt in range(1, max_retries + 1):
                 try:
                     return func(*args, **kwargs)
+                except QuotaExhaustedError:
+                    raise  # never retry quota exhaustion
                 except exceptions as exc:
                     last_exc = exc
                     if attempt < max_retries:
+                        jittered_delay = delay + random.uniform(0, delay * 0.25)
                         LOGGER.warning(
                             "%s failed (attempt %d/%d): %s — retrying in %.1fs",
                             func.__name__,
                             attempt,
                             max_retries,
                             exc,
-                            delay,
+                            jittered_delay,
                         )
-                        time.sleep(delay)
+                        time.sleep(jittered_delay)
                         delay *= 2
                     else:
                         LOGGER.error(

@@ -10,19 +10,24 @@ Supports:
 """
 
 import argparse
+import logging
 import os
+import random
 import time
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 
 # Add repo root to path for shared imports
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
 from common.ffmpeg_utils import VIDEO_FORMATS, get_mime_type
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -32,24 +37,28 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 
 
 class VideoProcessor:
-    def __init__(self, api_key=None, model='gemini-3-pro-preview'):
+    def __init__(self, api_key=None, model='gemini-3-pro-preview', requests_per_minute: Optional[int] = None):
         """
         Initialize the Video Processor with Gemini API.
-        
+
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-3-flash-preview'. 
+            model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-3-flash-preview'.
                                    Default is 'gemini-3-pro-preview'.
+            requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not found in .env file or environment variables")
-        
+
         # Store the model choice
         self.model = model
-        
+
         # Initialize the Gemini client
         self.client = genai.Client(api_key=self.api_key)
+
+        # Rate limiter for proactive throttling
+        self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))
         
         # Default prompt (fallback)
         self.default_prompt = """
@@ -114,95 +123,143 @@ class VideoProcessor:
             print(f"  Error uploading video file: {e}")
             return None
     
-    def process_video_inline(self, video_file_path):
+    def process_video_inline(self, video_file_path, max_retries=3):
         """
         Process a small video file by sending bytes inline.
-        
+
         Args:
             video_file_path (Path): Path to the video file
-            
+            max_retries (int): Maximum retry attempts for transient errors
+
         Returns:
             str: Generated text or None if error
         """
-        try:
-            print(f"  Reading video file...")
-            with open(video_file_path, 'rb') as f:
-                video_bytes = f.read()
-            
-            mime_type = get_mime_type(video_file_path)
-            if not mime_type:
-                print(f"  Unsupported video format: {video_file_path.suffix}")
-                return None
-            
-            print(f"  Sending to Gemini API (inline mode)...")
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=types.Content(
-                    parts=[
-                        types.Part(
-                            inline_data=types.Blob(data=video_bytes, mime_type=mime_type)
-                        ),
-                        types.Part(text=self.processing_prompt)
-                    ]
-                ),
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=65536,
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level=get_thinking_level(self.model)
-                    ),
-                    safety_settings=SAFETY_SETTINGS_NONE,
-                )
-            )
-            
-            return response.text.strip()
-            
-        except Exception as e:
-            print(f"  Error processing video inline: {e}")
+        print(f"  Reading video file...")
+        with open(video_file_path, 'rb') as f:
+            video_bytes = f.read()
+
+        mime_type = get_mime_type(video_file_path)
+        if not mime_type:
+            print(f"  Unsupported video format: {video_file_path.suffix}")
             return None
+
+        base_delay = 5
+        for attempt in range(max_retries):
+            try:
+                print(f"  Sending to Gemini API (inline mode)...")
+                self.rate_limiter.wait()
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=types.Content(
+                        parts=[
+                            types.Part(
+                                inline_data=types.Blob(data=video_bytes, mime_type=mime_type)
+                            ),
+                            types.Part(text=self.processing_prompt)
+                        ]
+                    ),
+                    config=types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=65536,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level=get_thinking_level(self.model)
+                        ),
+                        safety_settings=SAFETY_SETTINGS_NONE,
+                    )
+                )
+
+                return response.text.strip()
+
+            except genai_errors.APIError as e:
+                if is_quota_exhausted(e):
+                    raise QuotaExhaustedError(str(e))
+                error_code = getattr(e, 'code', 0)
+                is_retryable = error_code in [429, 500, 503]
+                if attempt < max_retries - 1 and is_retryable:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  Retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    print(f"  Error processing video inline: {e}")
+                    return None
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  Error: {e} — retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    print(f"  Error processing video inline: {e}")
+                    return None
+
+        return None
     
-    def process_video_uploaded(self, video_file_path):
+    def process_video_uploaded(self, video_file_path, max_retries=3):
         """
         Process a video file by uploading to Files API first.
-        
+
         Args:
             video_file_path (Path): Path to the video file
-            
+            max_retries (int): Maximum retry attempts for transient errors
+
         Returns:
             str: Generated text or None if error
         """
-        try:
-            # Upload the video
-            uploaded_file = self.upload_video_file(video_file_path)
-            if not uploaded_file:
-                return None
-            
-            print(f"  Generating content from video...")
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=[uploaded_file, self.processing_prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=65536,
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level=get_thinking_level(self.model)
-                    ),
-                    safety_settings=SAFETY_SETTINGS_NONE,
-                )
-            )
-            
-            # Optionally delete the uploaded file after processing
-            try:
-                self.client.files.delete(name=uploaded_file.name)
-                print(f"  Cleaned up uploaded file.")
-            except Exception:
-                pass  # Non-critical if deletion fails
-            
-            return response.text.strip()
-            
-        except Exception as e:
-            print(f"  Error processing uploaded video: {e}")
+        # Upload the video
+        uploaded_file = self.upload_video_file(video_file_path)
+        if not uploaded_file:
             return None
+
+        base_delay = 5
+        for attempt in range(max_retries):
+            try:
+                print(f"  Generating content from video...")
+                self.rate_limiter.wait()
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=[uploaded_file, self.processing_prompt],
+                    config=types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=65536,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level=get_thinking_level(self.model)
+                        ),
+                        safety_settings=SAFETY_SETTINGS_NONE,
+                    )
+                )
+
+                # Optionally delete the uploaded file after processing
+                try:
+                    self.client.files.delete(name=uploaded_file.name)
+                    print(f"  Cleaned up uploaded file.")
+                except Exception:
+                    pass  # Non-critical if deletion fails
+
+                return response.text.strip()
+
+            except genai_errors.APIError as e:
+                if is_quota_exhausted(e):
+                    raise QuotaExhaustedError(str(e))
+                error_code = getattr(e, 'code', 0)
+                is_retryable = error_code in [429, 500, 503]
+                if attempt < max_retries - 1 and is_retryable:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  Retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    print(f"  Error processing uploaded video: {e}")
+                    return None
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  Error: {e} — retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    print(f"  Error processing uploaded video: {e}")
+                    return None
+
+        return None
     
     def process_video(self, video_file_path):
         """
@@ -288,7 +345,7 @@ class VideoProcessor:
         for video_file in video_files:
             try:
                 output_text = self.process_video(video_file)
-                
+
                 if output_text:
                     output_file = self.save_output(output_text, video_file, output_folder)
                     if output_file:
@@ -297,11 +354,19 @@ class VideoProcessor:
                         failed_processes += 1
                 else:
                     failed_processes += 1
-                    
+
+            except QuotaExhaustedError:
+                print("\n" + "="*60)
+                print("API QUOTA EXHAUSTED — stopping all processing.")
+                print("Partial results (if any) have been saved.")
+                print("Wait for your quota to reset or upgrade your plan.")
+                print("="*60)
+                break
+
             except Exception as e:
                 print(f"  Unexpected error processing {video_file.name}: {e}")
                 failed_processes += 1
-            
+
             print()  # Add spacing between files
         
         # Summary

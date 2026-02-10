@@ -93,7 +93,19 @@ Edit `ocr_system_prompt.md` to adjust extraction behavior:
 | Empty output files | Check PDF isn't corrupted or password-protected |
 | Page too large | Script auto-uploads large files; no action needed |
 | Out-of-order text | Adjust reading order rules in prompt |
-| API rate limits | Built-in retry handles this; wait and re-run if persistent |
+| API rate limits (transient) | Built-in retry with backoff handles this automatically |
+| Quota exhausted (daily limit) | Pipeline stops immediately and saves partial results; wait for reset or use `--rpm` to throttle |
+
+## Rate Limiting
+
+The Gemini free tier has strict limits (5 RPM, 100 requests/day). The script handles this automatically:
+
+- **Quota exhaustion**: When daily quota is hit, the pipeline stops immediately and saves any partial results — no wasted retries
+- **Proactive throttling**: Use `--rpm` to space requests and avoid hitting limits:
+  ```bash
+  python 02_gemini_ocr_processor.py --rpm 5   # Free tier: 5 requests/minute
+  ```
+- **Transient 429s**: Retried with exponential backoff + jitter (5s base delay)
 
 ## Performance
 

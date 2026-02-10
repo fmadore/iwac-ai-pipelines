@@ -87,6 +87,63 @@ mime = get_mime_type(Path("file.mp3"))  # "audio/mpeg"
 
 ---
 
+## Rate Limiter (`rate_limiter.py`)
+
+Shared rate-limiting and quota-exhaustion utilities for Gemini API pipelines. Prevents wasting time retrying when daily quota is exhausted, and optionally throttles requests to stay under RPM limits.
+
+### Quick Start
+
+```python
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
+
+# Proactive throttling (e.g. free tier: 5 RPM)
+limiter = RateLimiter(requests_per_minute=5)
+limiter.wait()  # call before each API request
+
+# Quota detection in error handlers
+try:
+    response = client.models.generate_content(...)
+except APIError as e:
+    if is_quota_exhausted(e):
+        raise QuotaExhaustedError(str(e))  # stops pipeline immediately
+```
+
+### API Reference
+
+| Component | Description |
+|-----------|-------------|
+| `QuotaExhaustedError` | Exception signaling daily/billing quota is hit — pipeline should stop |
+| `is_quota_exhausted(error)` | Returns `True` for daily quota exhaustion (429 + quota indicators), `False` for transient rate limits |
+| `RateLimiter(rpm, logger)` | Proactive throttler; `wait()` sleeps to space requests at `60/rpm` second intervals |
+
+### Quota Detection
+
+The `is_quota_exhausted()` function distinguishes between:
+- **Transient rate limits** (per-minute) → worth retrying after a short delay
+- **Quota exhaustion** (per-day, billing) → stop immediately, retrying is pointless
+
+Detection is based on HTTP 429 status + message patterns like `"exceeded your current quota"`, `"requests_per_model_per_day"`, or status `RESOURCE_EXHAUSTED`.
+
+---
+
+## Retry Decorator (`retry.py`)
+
+Exponential backoff decorator with jitter and quota-aware passthrough.
+
+```python
+from common.retry import retry_with_backoff
+
+@retry_with_backoff(max_retries=3, base_delay=2.0)
+def call_api():
+    ...
+```
+
+Features:
+- Exponential backoff with random jitter (prevents synchronized retries)
+- `QuotaExhaustedError` is always re-raised immediately (never retried)
+
+---
+
 # LLM Provider Configuration Guide
 
 This guide explains how to use `llm_provider.py` to configure AI model behavior for different pipeline use cases.

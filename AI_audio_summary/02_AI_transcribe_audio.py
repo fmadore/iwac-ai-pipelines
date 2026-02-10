@@ -9,15 +9,18 @@ import argparse
 import os
 import time
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 
 # Add repo root to path for shared imports
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 from common.ffmpeg_utils import (
     AUDIO_FORMATS, VIDEO_FORMATS,
     get_ffmpeg_paths, setup_pydub, is_video_file, get_mime_type,
@@ -41,13 +44,14 @@ load_dotenv()
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 class AudioTranscriber:
-    def __init__(self, api_key=None, model='gemini-3-pro-preview'):
+    def __init__(self, api_key=None, model='gemini-3-pro-preview', requests_per_minute: Optional[int] = None):
         """
         Initialize the Audio Transcriber with Gemini API.
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
             model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-3-flash-preview'. Default is 'gemini-3-pro-preview'.
+            requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
@@ -58,6 +62,10 @@ class AudioTranscriber:
 
         # Initialize the Gemini client
         self.client = genai.Client(api_key=self.api_key)
+
+        # Rate limiter for proactive throttling
+        import logging
+        self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))
 
         # Track temporary converted audio files for cleanup
         self._temp_audio_files = []
@@ -189,6 +197,7 @@ class AudioTranscriber:
             try:
                 # Generate transcription using the selected model
                 # IMPORTANT: Audio part must come FIRST, then the prompt text
+                self.rate_limiter.wait()
                 response = self.client.models.generate_content(
                     model=self.model,
                     contents=[audio_part, prompt],
@@ -201,26 +210,39 @@ class AudioTranscriber:
                         safety_settings=SAFETY_SETTINGS_NONE,
                     )
                 )
-                
+
                 # Handle case where response.text is None (e.g., content blocked, empty response)
                 if response.text is None:
                     console.print(f"[yellow]⚠[/] Warning: No transcription returned for [cyan]{audio_file_path.name}[/] (response was empty)")
                     # Don't retry for empty responses - likely a content issue, not transient
                     return None
-                
+
                 return response.text.strip()
-            
-            except Exception as e:
+
+            except genai_errors.APIError as e:
+                if is_quota_exhausted(e):
+                    raise QuotaExhaustedError(str(e))
                 last_error = e
                 if attempt < max_retries - 1:
-                    # Exponential backoff: 2^attempt seconds (2s, 4s, 8s...)
-                    wait_time = 2 ** (attempt + 1)
+                    import random
+                    wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
                     console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
-                    console.print(f"[yellow]⏳[/] Retrying in {wait_time} seconds... (attempt {attempt + 1}/{max_retries})")
+                    console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                 else:
                     console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
-        
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    import random
+                    wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
+                    console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
+
         return None
     
     def save_transcription(self, transcription, audio_file_path, output_folder="Transcriptions"):
@@ -499,7 +521,7 @@ class AudioTranscriber:
                 for original_file, is_video, failed_segments, total_segments in files_to_retry:
                     console.rule(f"[dim]Retrying: {original_file.name}[/]", style="dim")
                     console.print(f"[cyan]🔄[/] Failed segments to retry: {failed_segments}")
-                    
+
                     # Convert video to audio if needed
                     if is_video:
                         audio_file = self._convert_video(original_file)
@@ -509,35 +531,40 @@ class AudioTranscriber:
                             continue
                     else:
                         audio_file = original_file
-                    
+
                     # Split the audio to get segments
                     segment_paths = self.split_audio_file(audio_file, segment_minutes=segment_minutes)
-                    
+
                     if len(segment_paths) < max(failed_segments):
                         console.print(f"[red]✗[/] Segment count mismatch. Expected at least {max(failed_segments)} segments, got {len(segment_paths)}")
                         failed_retries += len(failed_segments)
                         continue
-                    
+
                     # Retry only the failed segments
-                    for seg_num in failed_segments:
-                        segment_path = segment_paths[seg_num - 1]  # Convert to 0-indexed
-                        console.print(f"[cyan]📍[/] Retrying segment {seg_num}/{total_segments}: [bold]{segment_path.name}[/]")
-                        
-                        seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
-                        
-                        if seg_transcription:
-                            if self.update_transcription_segment(original_file, seg_num, seg_transcription, output_folder):
-                                successful_retries += 1
+                    try:
+                        for seg_num in failed_segments:
+                            segment_path = segment_paths[seg_num - 1]  # Convert to 0-indexed
+                            console.print(f"[cyan]📍[/] Retrying segment {seg_num}/{total_segments}: [bold]{segment_path.name}[/]")
+
+                            seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
+
+                            if seg_transcription:
+                                if self.update_transcription_segment(original_file, seg_num, seg_transcription, output_folder):
+                                    successful_retries += 1
+                                else:
+                                    failed_retries += 1
                             else:
+                                console.print(f"[red]✗[/] Segment {seg_num} still failed")
                                 failed_retries += 1
-                        else:
-                            console.print(f"[red]✗[/] Segment {seg_num} still failed")
-                            failed_retries += 1
-                    
+                    except QuotaExhaustedError:
+                        console.print(f"\n[red bold]API quota exhausted — stopping all processing.[/]")
+                        console.print("[red]Partial results have been saved.[/]")
+                        break
+
                     # Clean up segments
                     self.cleanup_temp_segments(audio_file, segment_paths)
                     console.print()
-                    
+
             finally:
                 self.cleanup_converted_audio()
             
@@ -600,15 +627,15 @@ class AudioTranscriber:
             for item in all_files_to_process:
                 original_file, is_video = item[0], item[1]
                 retry_info = item[2] if len(item) > 2 else None
-                
+
                 try:
                     console.rule(f"[dim]{original_file.name}[/]", style="dim")
-                    
+
                     # Handle retry mode for this file
                     if retry_info:
                         failed_segments, total_segments = retry_info
                         console.print(f"[cyan]🔄[/] Retrying {len(failed_segments)} failed segment(s): {failed_segments}")
-                        
+
                         # Convert video to audio if needed
                         if is_video:
                             audio_file = self._convert_video(original_file)
@@ -618,35 +645,35 @@ class AudioTranscriber:
                                 continue
                         else:
                             audio_file = original_file
-                        
+
                         # Split to get segments
                         segment_paths = self.split_audio_file(audio_file, segment_minutes=segment_minutes)
-                        
+
                         all_retries_successful = True
                         for seg_num in failed_segments:
                             if seg_num > len(segment_paths):
                                 console.print(f"[red]✗[/] Segment {seg_num} out of range")
                                 all_retries_successful = False
                                 continue
-                            
+
                             segment_path = segment_paths[seg_num - 1]
                             console.print(f"[cyan]📍[/] Retrying segment {seg_num}/{total_segments}: [bold]{segment_path.name}[/]")
-                            
+
                             seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
-                            
+
                             if seg_transcription:
                                 self.update_transcription_segment(original_file, seg_num, seg_transcription, output_folder)
                             else:
                                 all_retries_successful = False
-                        
+
                         self.cleanup_temp_segments(audio_file, segment_paths)
-                        
+
                         if all_retries_successful:
                             successful_transcriptions += 1
                         else:
                             failed_transcriptions += 1
                         continue
-                    
+
                     # Normal processing for new files
                     # Convert video to audio if needed
                     if is_video:
@@ -657,13 +684,13 @@ class AudioTranscriber:
                             continue
                     else:
                         audio_file = original_file
-                    
+
                     if split_segments:
                         # Split into segments (or return original if no splitting applied)
                         segment_paths = self.split_audio_file(audio_file, segment_minutes=segment_minutes)
                         combined_transcription_parts = []
                         all_segments_successful = True
-                        
+
                         for idx, segment_path in enumerate(segment_paths, start=1):
                             console.print(f"[cyan]📍[/] Processing segment {idx}/{len(segment_paths)}: [bold]{segment_path.name}[/]")
                             seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
@@ -676,7 +703,7 @@ class AudioTranscriber:
 
                         # Combine
                         transcription = "\n".join(combined_transcription_parts).strip()
-                        
+
                         # Clean up temporary segments if all were successful and we actually split the file
                         if all_segments_successful and len(segment_paths) > 1:
                             self.cleanup_temp_segments(audio_file, segment_paths)
@@ -693,12 +720,18 @@ class AudioTranscriber:
                     else:
                         failed_transcriptions += 1
 
+                except QuotaExhaustedError:
+                    console.print(f"\n[red bold]API quota exhausted — stopping all processing.[/]")
+                    console.print("[red]Partial results (if any) have been saved.[/]")
+                    console.print("[red]Wait for your quota to reset or upgrade your plan.[/]")
+                    break
+
                 except Exception as e:
                     console.print(f"[red]✗[/] Unexpected error processing [cyan]{original_file.name}[/]: {e}")
                     failed_transcriptions += 1
 
                 console.print()  # Add spacing between files
-        
+
         finally:
             # Clean up converted audio files
             self.cleanup_converted_audio()
