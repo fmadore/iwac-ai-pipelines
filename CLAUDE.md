@@ -56,9 +56,33 @@ response = llm_client.generate(system_prompt, user_prompt)
 
 **Never** instantiate `openai.OpenAI()`, `google.genai.Client()`, or `mistralai.Mistral()` directly in text scripts.
 
+### Shared Rate Limiter
+
+Multimodal pipelines **must** use `common/rate_limiter.py` for quota-aware error handling:
+
+```python
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
+
+# In __init__: create rate limiter (None = no throttling, set RPM for free tier)
+self.rate_limiter = RateLimiter(requests_per_minute=None)
+
+# Before each API call:
+self.rate_limiter.wait()
+response = client.models.generate_content(...)
+
+# In error handlers:
+except APIError as e:
+    if is_quota_exhausted(e):
+        raise QuotaExhaustedError(str(e))  # stops pipeline immediately
+```
+
+- `is_quota_exhausted()` distinguishes daily quota exhaustion (stop) from transient rate limits (retry)
+- `QuotaExhaustedError` propagates up to save partial results then halt
+- `RateLimiter` optionally throttles requests to stay under RPM limits
+
 ### Multimodal Pipelines (Exception)
 
-Audio, vision, HTR, and OCR scripts use provider clients directly because they require special capabilities not available through the shared provider. They still use `OmekaClient` for all Omeka S API access.
+Audio, vision, HTR, and OCR scripts use provider clients directly because they require special capabilities not available through the shared provider. They still use `OmekaClient` for all Omeka S API access and `RateLimiter` for quota handling.
 
 ### Model Registry
 
@@ -150,7 +174,10 @@ response = llm_client.generate_structured(system_prompt, user_prompt, response_s
 - [ ] Use `OmekaClient.from_env()` for all Omeka S API access
 - [ ] Use appropriate provider client directly for AI processing
 - [ ] Use `system_instruction` in `GenerateContentConfig` (Gemini)
-- [ ] Handle API errors with retry logic (`tenacity`)
+- [ ] Use `RateLimiter` from `common.rate_limiter` with `wait()` before each API call
+- [ ] Detect quota exhaustion with `is_quota_exhausted()` and raise `QuotaExhaustedError`
+- [ ] Catch `QuotaExhaustedError` in processing loops to save partial results and stop
+- [ ] Handle transient API errors with retry logic (exponential backoff + jitter)
 - [ ] Log selected model before processing
 - [ ] Use `rich` library for output
 
