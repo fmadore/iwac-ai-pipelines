@@ -31,7 +31,8 @@ Or process local files by placing them in `Audio/` and running step 2.
 | Mode | Output | Best For |
 |------|--------|----------|
 | **Full Transcription** | Verbatim with timestamps | Oral histories, academic research |
-| **Full Translation** | Translated to English | Multilingual recordings |
+| **Full Translation (English)** | Translated to English | Multilingual recordings |
+| **Full Translation (French)** | Translated to French | Francophone research output |
 | **Hausa Segmentation** | Segment summaries + keywords | Quick analysis, cataloging |
 
 Select mode interactively or edit prompt files in `prompts/`.
@@ -90,10 +91,17 @@ Generated using: Google gemini-3-pro-preview
 **Optional** (for audio splitting and video conversion):
 ```bash
 pip install pydub
-# Plus ffmpeg:
-# Windows: winget install Gyan.FFmpeg
-# macOS: brew install ffmpeg
-# Linux: apt install ffmpeg
+```
+
+FFmpeg must also be installed. The shared `common/ffmpeg_utils.py` module auto-discovers it via `FFMPEG_PATH`/`FFPROBE_PATH` env vars, `PATH`, or common Windows install locations. To install ffmpeg:
+
+```bash
+# Windows
+winget install Gyan.FFmpeg
+# macOS
+brew install ffmpeg
+# Linux
+apt install ffmpeg
 ```
 
 ## Configuration
@@ -121,6 +129,6 @@ Create custom transcription modes by adding `.md` files to `prompts/`:
 |---------|----------|
 | Segment failed | Use `--resume --split` to retry only failed segments |
 | pydub not installed | `pip install pydub` (required for splitting) |
-| ffmpeg not found | Install ffmpeg or set `FFMPEG_PATH` in `.env` |
+| ffmpeg not found | Install ffmpeg or set `FFMPEG_PATH`/`FFPROBE_PATH` in `.env`. See `common/ffmpeg_utils.py` for discovery logic |
 | Poor transcription quality | Try Pro model, reduce background noise |
-| Video not converting | Check ffmpeg installation and video format |
+| Video not converting | Verify ffmpeg is found (`get_ffmpeg_paths()`) and the video format is in `VIDEO_FORMATS` |

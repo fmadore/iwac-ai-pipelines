@@ -68,9 +68,7 @@ class ModelOption:
     default_reasoning_effort: str = "low"  # "low", "medium", "high"
     default_text_verbosity: str = "low"    # "low", "medium", "high"
     # Gemini-specific defaults
-    default_thinking_mode: bool = False    # Legacy, use thinking_level instead
-    default_thinking_budget: Optional[int] = None  # Legacy for 2.5 series (no longer used)
-    default_thinking_level: Optional[str] = None  # For Gemini 3: Flash="MINIMAL"/"LOW"/"MEDIUM"/"HIGH", Pro="LOW"/"HIGH"
+    default_thinking_level: Optional[str] = None  # For Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
 
 @dataclass
 class LLMConfig:
@@ -93,19 +91,17 @@ class LLMConfig:
     Example:
         # High-quality reasoning for complex NER
         config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
-        
+
         # Fast OCR with Gemini 3 Pro (low thinking)
-        config = LLMConfig(thinking_level="LOW", temperature=0.1)
-        
+        config = LLMConfig(thinking_level="low", temperature=0.1)
+
         # Fast OCR correction with Gemini 3 Flash (minimal thinking)
-        config = LLMConfig(thinking_level="MINIMAL", temperature=0.1)
+        config = LLMConfig(thinking_level="minimal", temperature=0.1)
     """
     temperature: Optional[float] = None
     reasoning_effort: Optional[str] = None
     text_verbosity: Optional[str] = None
-    thinking_mode: Optional[bool] = None
-    thinking_budget: Optional[int] = None
-    thinking_level: Optional[str] = None  # For Gemini 3 Pro: "low" or "high"
+    thinking_level: Optional[str] = None  # Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
 
 MODEL_REGISTRY: Dict[str, ModelOption] = {
     "gpt-5-mini": ModelOption(
@@ -187,15 +183,25 @@ class BaseLLMClient:
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
         self.option = option
         self.config = config or LLMConfig()
-        # Backward compatibility: support direct temperature parameter
+        # Fill in defaults from ModelOption when not explicitly set
         if self.config.temperature is None:
             self.config = LLMConfig(
                 temperature=option.default_temperature,
                 reasoning_effort=self.config.reasoning_effort,
                 text_verbosity=self.config.text_verbosity,
-                thinking_mode=self.config.thinking_mode,
-                thinking_budget=self.config.thinking_budget
+                thinking_level=self.config.thinking_level,
             )
+
+    def _get_effective_config(self, config: Optional[LLMConfig]) -> LLMConfig:
+        """Merge a per-request config with client defaults."""
+        if not config:
+            return self.config
+        return LLMConfig(
+            temperature=config.temperature if config.temperature is not None else self.config.temperature,
+            reasoning_effort=config.reasoning_effort if config.reasoning_effort is not None else self.config.reasoning_effort,
+            text_verbosity=config.text_verbosity if config.text_verbosity is not None else self.config.text_verbosity,
+            thinking_level=config.thinking_level if config.thinking_level is not None else self.config.thinking_level,
+        )
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         """Generate content with optional per-request config override.
@@ -259,18 +265,6 @@ class OpenAIResponsesClient(BaseLLMClient):
             raise RuntimeError("OPENAI_API_KEY not set")
         super().__init__(option, config)
         self._client = OpenAI()
-
-    def _get_effective_config(self, config: Optional[LLMConfig]) -> LLMConfig:
-        """Merge request config with client defaults."""
-        if not config:
-            return self.config
-        return LLMConfig(
-            temperature=config.temperature if config.temperature is not None else self.config.temperature,
-            reasoning_effort=config.reasoning_effort or self.config.reasoning_effort,
-            text_verbosity=config.text_verbosity or self.config.text_verbosity,
-            thinking_mode=config.thinking_mode if config.thinking_mode is not None else self.config.thinking_mode,
-            thinking_budget=config.thinking_budget if config.thinking_budget is not None else self.config.thinking_budget
-        )
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
@@ -391,19 +385,6 @@ class GeminiGenerateContentClient(BaseLLMClient):
             self._client = genai.Client(api_key=api_key)
         super().__init__(option, config)
 
-    def _get_effective_config(self, config: Optional[LLMConfig]) -> LLMConfig:
-        """Merge request config with client defaults."""
-        if not config:
-            return self.config
-        return LLMConfig(
-            temperature=config.temperature if config.temperature is not None else self.config.temperature,
-            reasoning_effort=config.reasoning_effort or self.config.reasoning_effort,
-            text_verbosity=config.text_verbosity or self.config.text_verbosity,
-            thinking_mode=config.thinking_mode if config.thinking_mode is not None else self.config.thinking_mode,
-            thinking_budget=config.thinking_budget if config.thinking_budget is not None else self.config.thinking_budget,
-            thinking_level=config.thinking_level or self.config.thinking_level
-        )
-
     def _build_generation_config(self, effective_config: LLMConfig) -> Any:
         """Build Gemini generation config with thinking support.
         
@@ -516,18 +497,6 @@ class MistralClient(BaseLLMClient):
             raise RuntimeError("MISTRAL_API_KEY not set")
         super().__init__(option, config)
         self._client = Mistral(api_key=api_key)
-
-    def _get_effective_config(self, config: Optional[LLMConfig]) -> LLMConfig:
-        """Merge request config with client defaults."""
-        if not config:
-            return self.config
-        return LLMConfig(
-            temperature=config.temperature if config.temperature is not None else self.config.temperature,
-            reasoning_effort=config.reasoning_effort or self.config.reasoning_effort,
-            text_verbosity=config.text_verbosity or self.config.text_verbosity,
-            thinking_mode=config.thinking_mode if config.thinking_mode is not None else self.config.thinking_mode,
-            thinking_budget=config.thinking_budget if config.thinking_budget is not None else self.config.thinking_budget
-        )
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
@@ -659,7 +628,7 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
         client = build_llm_client(option, config=config)
         
         # Fast processing with minimal thinking
-        config = LLMConfig(thinking_budget=0, temperature=0.1)
+        config = LLMConfig(thinking_level="minimal", temperature=0.1)
         client = build_llm_client(option, config=config)
     """
     # Backward compatibility: convert temperature to config
@@ -670,8 +639,7 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
             temperature=temperature,
             reasoning_effort=config.reasoning_effort,
             text_verbosity=config.text_verbosity,
-            thinking_mode=config.thinking_mode,
-            thinking_budget=config.thinking_budget
+            thinking_level=config.thinking_level,
         )
     
     if option.provider == PROVIDER_OPENAI:

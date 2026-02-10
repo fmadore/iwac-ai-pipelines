@@ -12,7 +12,6 @@ Requirements:
     - Environment variable: GEMINI_API_KEY
     - PDF files in the PDF/ directory
     - OCR system prompt in ocr_system_prompt.md
-    - PyPDF2 for page extraction
     - Shared llm_provider module for model selection
 
 Model Selection:
@@ -37,8 +36,6 @@ from typing import Optional, List, TYPE_CHECKING
 if TYPE_CHECKING:
     from rich.progress import Progress as ProgressType
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader, PdfWriter
-import io
 
 # Rich console output
 from rich.console import Console
@@ -53,6 +50,8 @@ console = Console()
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.llm_provider import get_model_option, summary_from_option, LLMConfig
+from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level, extract_text_from_response
+from common.pdf_utils import extract_pdf_page, get_pdf_page_count
 
 # Import Gemini types for PDF processing
 try:
@@ -86,7 +85,7 @@ class GeminiPDFProcessor:
     
     The system is designed for academic research and archival purposes, with emphasis on:
     - Maintaining precise reading order and layout relationships
-    - Preserving French typography and formatting
+    - Preserving language-appropriate typography and formatting
     - Handling document structure (columns, zones, captions)
     - Processing pages individually for better control and error recovery
     """
@@ -139,33 +138,13 @@ class GeminiPDFProcessor:
             "top_k": 40,
             "max_output_tokens": 65535,
             "response_mime_type": "text/plain",
-            "safety_settings": [
-                types.SafetySetting(
-                    category='HARM_CATEGORY_HARASSMENT',
-                    threshold='BLOCK_NONE'
-                ),
-                types.SafetySetting(
-                    category='HARM_CATEGORY_HATE_SPEECH',
-                    threshold='BLOCK_NONE'
-                ),
-                types.SafetySetting(
-                    category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
-                    threshold='BLOCK_NONE'
-                ),
-                types.SafetySetting(
-                    category='HARM_CATEGORY_DANGEROUS_CONTENT',
-                    threshold='BLOCK_NONE'
-                )
-            ]
+            "safety_settings": SAFETY_SETTINGS_NONE
         }
         
         # All Gemini 3 models use thinking_level (cannot be disabled)
-        # Use configured level or model default
-        thinking_level = self.llm_config.thinking_level or self.model_option.default_thinking_level
-        if thinking_level is None:
-            # Fallback based on model type: MINIMAL for Flash, LOW for Pro
-            is_pro_model = "pro" in self.model_name.lower()
-            thinking_level = "LOW" if is_pro_model else "MINIMAL"
+        thinking_level = get_thinking_level(
+            self.model_name, override=self.llm_config.thinking_level
+        )
         
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
         console.print(f"  [cyan]🧠 Thinking:[/] level='{thinking_level}' for {self.model_name}")
@@ -259,36 +238,15 @@ class GeminiPDFProcessor:
             )
 
     def _extract_text_from_response(self, response) -> str:
-        """
-        Safely extract text from response, ignoring thought traces.
-        
-        Args:
-            response: The generation response object
-            
-        Returns:
-            str: The extracted text content
-        """
-        if not response.candidates:
-            return ""
-            
-        candidate = response.candidates[0]
-        if not candidate.content or not candidate.content.parts:
-            return ""
-            
-        text_parts = []
-        for part in candidate.content.parts:
-            # Only include parts that have text (skips thought_signature etc.)
-            if hasattr(part, 'text') and part.text:
-                text_parts.append(part.text)
-                
-        return "".join(text_parts).replace('\xa0', ' ').strip()
+        """Safely extract text from response, ignoring thought traces."""
+        return extract_text_from_response(response)
     
     def _get_system_instruction(self):
         """
-        Get the specialized system instructions for French newspaper OCR.
-        
+        Get the specialized system instructions for newspaper OCR.
+
         Loads the system prompt from the ocr_system_prompt.md file for better maintainability.
-        
+
         Returns:
             str: Detailed system instruction for OCR processing
         """
@@ -301,52 +259,6 @@ class GeminiPDFProcessor:
             raise FileNotFoundError(f"OCR system prompt file not found at {prompt_file}")
         except Exception as e:
             logging.error(f"Error reading system prompt file: {e}")
-            raise
-
-    def extract_pdf_page(self, pdf_path: Path, page_number: int) -> bytes:
-        """
-        Extract a single page from a PDF as bytes.
-        
-        Args:
-            pdf_path (Path): Path to the PDF file
-            page_number (int): Page number to extract (0-indexed)
-            
-        Returns:
-            bytes: PDF bytes containing only the specified page
-        """
-        try:
-            reader = PdfReader(str(pdf_path))
-            writer = PdfWriter()
-            
-            # Add the specific page
-            writer.add_page(reader.pages[page_number])
-            
-            # Write to bytes
-            output_buffer = io.BytesIO()
-            writer.write(output_buffer)
-            output_buffer.seek(0)
-            
-            return output_buffer.getvalue()
-            
-        except Exception as e:
-            logging.error(f"Error extracting page {page_number + 1} from {pdf_path}: {e}")
-            raise
-
-    def get_pdf_page_count(self, pdf_path: Path) -> int:
-        """
-        Get the number of pages in a PDF.
-        
-        Args:
-            pdf_path (Path): Path to the PDF file
-            
-        Returns:
-            int: Number of pages in the PDF
-        """
-        try:
-            reader = PdfReader(str(pdf_path))
-            return len(reader.pages)
-        except Exception as e:
-            logging.error(f"Error reading PDF page count from {pdf_path}: {e}")
             raise
 
     def process_pdf_page_inline(self, page_bytes: bytes, page_num: int) -> Optional[str]:
@@ -604,7 +516,7 @@ class GeminiPDFProcessor:
             console.print(f"  [dim]Size:[/] {file_size_mb:.2f} MB")
             
             # Get page count
-            total_pages = self.get_pdf_page_count(pdf_path)
+            total_pages = get_pdf_page_count(pdf_path)
             console.print(f"  [dim]Pages:[/] {total_pages}")
             
             # Create output file
@@ -627,7 +539,7 @@ class GeminiPDFProcessor:
                 
                 try:
                     # Extract single page as PDF bytes
-                    page_bytes = self.extract_pdf_page(pdf_path, page_idx)
+                    page_bytes = extract_pdf_page(pdf_path, page_idx)
                     page_size_mb = len(page_bytes) / (1024 * 1024)
                     
                     # Process page (try inline first, then upload if needed)

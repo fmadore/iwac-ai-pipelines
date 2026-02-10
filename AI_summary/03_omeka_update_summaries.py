@@ -17,103 +17,51 @@ Requirements:
 """
 
 import os
-import requests
+import sys
 from tqdm import tqdm
 import logging
-
-# Load environment variables from .env if present
-from dotenv import load_dotenv
-load_dotenv()
 
 # Configure logging to track script execution and errors
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# API details from environment variables
-base_url = os.environ.get('OMEKA_BASE_URL')  # Base URL for the Omeka S API
-key_identity = os.environ.get('OMEKA_KEY_IDENTITY')  # API key identity
-key_credential = os.environ.get('OMEKA_KEY_CREDENTIAL')  # API key credential
+# Shared Omeka client
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from common.omeka_client import OmekaClient
 
 # Omeka S property configuration
 DCTERMS_ABSTRACT_PROPERTY_ID = 1  # Property ID for dcterms:abstract in Omeka S
 
 
-def get_full_item_data(item_id):
-    """
-    Retrieve complete item data from Omeka S including all properties.
-    
-    This function fetches the full item record from Omeka S, which is necessary
-    to preserve all existing data when updating the item with new summary information.
-    
-    Args:
-        item_id (str): The unique identifier of the Omeka S item
-        
-    Returns:
-        dict: Complete item data from Omeka S API, or None if item not found
-        
-    Raises:
-        requests.RequestException: If there's an error communicating with the API
-    """
-    url = f"{base_url}/items/{item_id}"
-    params = {
-        'key_identity': key_identity,
-        'key_credential': key_credential
-    }
-    headers = {'Content-Type': 'application/json'}
-    
-    try:
-        response = requests.get(url, params=params, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logging.error(f"Error fetching item {item_id}: {e}")
-        return None
-
-def update_item_summary(item_id, new_summary):
+def update_item_summary(client: OmekaClient, item_id, new_summary):
     """
     Update an Omeka S item with a new French summary in the dcterms:abstract field.
 
-    This function preserves all existing item data while adding or updating the summary.
-    It follows the Omeka S PATCH pattern to ensure data integrity.
-
     Args:
+        client: OmekaClient instance
         item_id (str): The unique identifier of the Omeka S item to update
         new_summary (str): The French summary text to add to the item
 
     Returns:
         bool: True if update was successful, False otherwise
-
-    Process:
-        1. Fetch current item data to preserve existing fields
-        2. Check if dcterms:abstract already exists
-        3. Update existing abstract or add new one
-        4. Send PATCH request with complete item data
     """
-    item_data = get_full_item_data(item_id)
+    item_data = client.get_item(int(item_id))
     if not item_data:
         logging.warning(f"No data found for item {item_id}. Skipping update.")
         return False
 
-    # Initialize item_data as an empty dictionary if it's None to prevent errors
-    if item_data is None:
-        item_data = {}
-
-    # Ensure 'dcterms:abstract' key exists as a list
     if 'dcterms:abstract' not in item_data:
         item_data['dcterms:abstract'] = []
 
-    # Check if dcterms:abstract already exists and update it
     summary_found = False
     for desc in item_data['dcterms:abstract']:
-        # Update the existing abstract if it matches the property ID
         if desc.get('property_id') == DCTERMS_ABSTRACT_PROPERTY_ID:
             desc['@value'] = new_summary
-            desc['type'] = 'literal'  # Ensure type is set
-            desc['property_label'] = 'Abstract'  # Ensure label is correct
+            desc['type'] = 'literal'
+            desc['property_label'] = 'Abstract'
             summary_found = True
             logging.info(f"Updated existing abstract for item {item_id}")
             break
 
-    # If no existing abstract with the correct property_id was found, add a new one
     if not summary_found:
         item_data['dcterms:abstract'].append({
             "type": "literal",
@@ -124,43 +72,7 @@ def update_item_summary(item_id, new_summary):
         })
         logging.info(f"Added new abstract for item {item_id}")
 
-    # Send PATCH request to update the item data
-    return _send_item_update(item_id, item_data)
-
-
-def _send_item_update(item_id, item_data):
-    """
-    Send the updated item data to Omeka S via PATCH request.
-    
-    This is a helper function that handles the actual API communication
-    to update the item in Omeka S.
-    
-    Args:
-        item_id (str): The unique identifier of the Omeka S item
-        item_data (dict): Complete item data with updates
-        
-    Returns:
-        bool: True if update was successful, False otherwise
-    """
-    url = f"{base_url}/items/{item_id}"
-    params = {
-        'key_identity': key_identity,
-        'key_credential': key_credential
-    }
-    headers = {'Content-Type': 'application/json'}
-
-    try:
-        # Send the full item_data object to preserve all existing fields
-        response = requests.patch(url, json=item_data, params=params, headers=headers)
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
-        logging.info(f"Successfully updated item {item_id} with new summary")
-        return True
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Failed to update item {item_id}: {e}")
-        # Log the response body for debugging if available
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response body: {e.response.text}")
-        return False
+    return client.update_item(int(item_id), item_data)
 
 
 def main():
@@ -184,9 +96,11 @@ def main():
     Returns:
         None: Exits with status code 0 on success, 1 on error
     """
-    # Validate required environment variables
-    if not all([base_url, key_identity, key_credential]):
-        logging.error("Missing required environment variables. Please set OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, and OMEKA_KEY_CREDENTIAL.")
+    # Initialize shared Omeka client
+    try:
+        client = OmekaClient.from_env()
+    except ValueError as e:
+        logging.error(str(e))
         return 1
 
     # Locate the summary files directory
@@ -223,7 +137,7 @@ def main():
             
             # Only proceed if summary_text is not empty
             if summary_text:
-                if update_item_summary(item_id, summary_text):
+                if update_item_summary(client, item_id, summary_text):
                     success_count += 1
                 else:
                     error_count += 1

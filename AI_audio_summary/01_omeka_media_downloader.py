@@ -20,14 +20,13 @@ Supported formats:
 
 import os
 import re
+import sys
 import logging
+import requests
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any, Set
-from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import requests
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -40,168 +39,43 @@ console = Console()
 # Script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
+# Shared Omeka client
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from common.omeka_client import OmekaClient
+
 # Supported media formats
 AUDIO_EXTENSIONS: Set[str] = {'.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma'}
 VIDEO_EXTENSIONS: Set[str] = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg', '.3gp'}
 SUPPORTED_EXTENSIONS: Set[str] = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 
-@dataclass
-class OmekaConfig:
-    """
-    Configuration container for Omeka S API credentials and settings.
-    
-    Attributes:
-        base_url (str): Base URL of the Omeka S instance
-        key_identity (str): API key identity for authentication
-        key_credential (str): API key credential for authentication
-    """
-    base_url: str
-    key_identity: str
-    key_credential: str
-
-
-class OmekaClient:
-    """
-    Client for interacting with Omeka S API.
-    
-    Handles API authentication, pagination, and data retrieval from Omeka S collections.
-    """
-    
-    def __init__(self, config: OmekaConfig):
-        """
-        Initialize the Omeka S client with configuration.
-        
-        Args:
-            config (OmekaConfig): Configuration object with API credentials
-        """
-        self.config = config
-        self.headers = {'Content-Type': 'application/json'}
-        
-        # Normalize base URL to ensure consistent API endpoint construction
-        base = config.base_url.rstrip('/')
-        if base.endswith('/api'):
-            base = base[:-4]  # Remove existing /api suffix
-        self.base_url = f"{base}/api"
-        
-    def _get_auth_params(self) -> Dict[str, str]:
-        """
-        Get authentication parameters for API requests.
-        
-        Returns:
-            Dict[str, str]: Dictionary containing authentication parameters
-        """
-        return {
-            'key_identity': self.config.key_identity,
-            'key_credential': self.config.key_credential
-        }
-        
-    def get_items(self, item_set_id: str, per_page: int = 100) -> List[Dict[str, Any]]:
-        """
-        Retrieve all items from a specific Omeka S item set.
-        
-        Handles pagination automatically to fetch all items in the collection.
-        
-        Args:
-            item_set_id (str): ID of the Omeka S item set to retrieve
-            per_page (int): Number of items to fetch per API request (default: 100)
-            
-        Returns:
-            List[Dict[str, Any]]: List of all items in the item set
-        """
-        url = f"{self.base_url}/items"
-        params = {
-            **self._get_auth_params(),
-            'item_set_id': item_set_id,
-            'per_page': per_page,
-            'page': 1
-        }
-        
-        all_items = []
-        
-        # Paginate through all items in the collection
-        while True:
-            response = requests.get(url, params=params, headers=self.headers)
-            response.raise_for_status()
-            
-            page_items = response.json()
-            if not page_items:
-                break  # No more items to fetch
-                
-            all_items.extend(page_items)
-            logging.info(f"Retrieved {len(page_items)} items from page {params['page']}")
-            
-            # Check if we've reached the last page
-            if len(page_items) < params['per_page']:
-                break
-                
-            params['page'] += 1  # Move to next page
-            
-        return all_items
-    
-    def get_item_data(self, item_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve detailed data for a specific Omeka S item.
-        
-        Args:
-            item_id (str): ID of the item to retrieve
-            
-        Returns:
-            Optional[Dict[str, Any]]: Item data or None if request fails
-            
-        Raises:
-            requests.HTTPError: If the API request fails
-        """
-        url = f"{self.base_url}/items/{item_id}"
-        response = requests.get(url, params=self._get_auth_params(), headers=self.headers)
-        response.raise_for_status()
-        return response.json()
-    
-    def get_media_data(self, media_url: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve media data from a media URL.
-        
-        Args:
-            media_url (str): URL of the media resource
-            
-        Returns:
-            Optional[Dict[str, Any]]: Media data or None if request fails
-            
-        Raises:
-            requests.HTTPError: If the API request fails
-        """
-        response = requests.get(media_url, params=self._get_auth_params(), headers=self.headers)
-        response.raise_for_status()
-        return response.json()
-
-
 class MediaDownloader:
     """
     Handles audio/video media downloading from Omeka S media attachments.
-    
+
     Processes items to find audio and video media, downloads files,
     and manages local storage with proper naming conventions.
     """
-    
+
     def __init__(self, omeka_client: OmekaClient, media_folder: Path):
         """
         Initialize the media downloader.
-        
+
         Args:
             omeka_client (OmekaClient): Configured Omeka S client
             media_folder (Path): Directory to save downloaded media files
         """
         self.client = omeka_client
         self.media_folder = media_folder
-        
+
     @staticmethod
     def is_supported_media(filename: str) -> bool:
         """
         Check if a filename has a supported audio or video extension.
-        
+
         Args:
             filename (str): Name of the file to check
-            
+
         Returns:
             bool: True if the file extension is supported, False otherwise
         """
@@ -209,15 +83,15 @@ class MediaDownloader:
             return False
         extension = Path(filename).suffix.lower()
         return extension in SUPPORTED_EXTENSIONS
-    
+
     @staticmethod
     def get_media_type(filename: str) -> str:
         """
         Determine if a file is audio or video based on its extension.
-        
+
         Args:
             filename (str): Name of the file to check
-            
+
         Returns:
             str: 'audio', 'video', or 'unknown'
         """
@@ -229,19 +103,19 @@ class MediaDownloader:
         elif extension in VIDEO_EXTENSIONS:
             return 'video'
         return 'unknown'
-        
+
     @staticmethod
     def download_file(url: str, file_path: Path, timeout: int = 300) -> Optional[Path]:
         """
         Download a media file from a URL to local storage.
-        
+
         Uses streaming to handle large files efficiently and avoid memory issues.
-        
+
         Args:
             url (str): URL of the media file to download
             file_path (Path): Local path where the file should be saved
             timeout (int): Request timeout in seconds (default: 300 for large media files)
-            
+
         Returns:
             Optional[Path]: Path to downloaded file or None if download failed
         """
@@ -249,33 +123,30 @@ class MediaDownloader:
             # Stream download to handle large files efficiently
             with requests.get(url, stream=True, timeout=timeout) as response:
                 response.raise_for_status()
-                
-                # Get file size if available for progress tracking
-                total_size = int(response.headers.get('content-length', 0))
-                
+
                 # Write file in chunks to avoid memory issues
                 with open(file_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
-                            
+
             return file_path
-            
+
         except requests.Timeout:
             logging.error(f"Timeout downloading {url}")
             return None
         except requests.RequestException as e:
             logging.error(f"Failed to download {url}: {e}")
             return None
-            
+
     @staticmethod
     def sanitize_filename(filename: str) -> str:
         """
         Sanitize a filename by removing or replacing invalid characters.
-        
+
         Args:
             filename (str): Original filename
-            
+
         Returns:
             str: Sanitized filename safe for filesystem use
         """
@@ -288,119 +159,119 @@ class MediaDownloader:
             name, ext = os.path.splitext(sanitized)
             sanitized = name[:200 - len(ext)] + ext
         return sanitized
-    
-    def create_filename(self, item_data: Dict[str, Any], media_data: Dict[str, Any], 
+
+    def create_filename(self, item_data: Dict[str, Any], media_data: Dict[str, Any],
                         index: int = 0, total_media: int = 1) -> str:
         """
         Create a filename for a media file using the original source filename from Omeka S.
-        
-        Uses the 'o:source' field (e.g., 'iwac-video-0000001-1.mp4') to preserve
-        the original naming and ordering. Falls back to item ID if source unavailable.
-        
+
+        Uses the 'o:source' field to preserve the original naming and ordering.
+        Falls back to item ID if source unavailable.
+
         Args:
             item_data (Dict[str, Any]): Omeka S item data
             media_data (Dict[str, Any]): Omeka S media data
             index (int): Index of this media file (0-based) if multiple files per item
             total_media (int): Total number of media files for this item
-            
+
         Returns:
             str: Valid filename for the media file
         """
         # Use the original source filename to preserve correct ordering
         original_source = media_data.get('o:source', '')
-        
+
         if original_source:
             return self.sanitize_filename(original_source)
-        
+
         # Fallback: use item ID and media ID if no source available
         item_id = item_data.get('o:id', 'unknown')
         media_id = media_data.get('o:id', index + 1)
-        
+
         # Determine file extension
         extension = ''
         original_url = media_data.get('o:original_url', '')
         if original_url:
             extension = Path(original_url).suffix.lower()
-        
+
         if not extension:
             media_type = media_data.get('o:media_type', '')
             if media_type.startswith('video/'):
                 extension = '.mp4'
             elif media_type.startswith('audio/'):
                 extension = '.mp3'
-        
+
         return f"{item_id}-{media_id}{extension}"
-        
+
     def process_item(self, item: Dict[str, Any]) -> Optional[Tuple[str, List[str]]]:
         """
         Process a single Omeka S item to find and download audio/video media files.
-        
+
         Args:
             item (Dict[str, Any]): Omeka S item data (basic info with o:id)
-            
+
         Returns:
             Optional[Tuple[str, List[str]]]: Tuple of (item_id, list of downloaded file paths)
                 or None if no media was found or download failed
         """
         item_id = item.get('o:id')
-        
+
         try:
             # Get detailed item data including media attachments
-            item_data = self.client.get_item_data(item_id)
+            item_data = self.client.get_item(item_id)
             media_urls = []
-            
+
             # Search through media attachments for supported audio/video files
             if 'o:media' in item_data:
                 for media in item_data['o:media']:
                     # Get detailed media data
-                    media_data = self.client.get_media_data(media['@id'])
-                    
+                    media_data = self.client.get_resource(media['@id'])
+
                     if media_data and 'o:source' in media_data:
                         source = media_data.get('o:source', '')
-                        
+
                         # Check if this media is a supported audio/video file
                         if self.is_supported_media(source):
                             # Prefer original URL if available
                             download_url = media_data.get('o:original_url')
                             if download_url:
                                 media_urls.append((download_url, media_data))
-                            
+
             if not media_urls:
                 logging.info(f"No audio/video media found for item {item_id}")
                 return None
-                
+
             # Download all media files associated with this item
             downloaded_files = []
             total_media = len(media_urls)
-            
+
             for index, (media_url, media_data) in enumerate(media_urls):
                 # Create descriptive filename
                 filename = self.create_filename(item_data, media_data, index, total_media)
                 file_path = self.media_folder / filename
-                
+
                 # Skip if file already exists
                 if file_path.exists():
                     logging.info(f"File already exists, skipping: {filename}")
                     downloaded_files.append(str(file_path))
                     continue
-                
+
                 # Get media type for logging
                 media_type = self.get_media_type(media_data.get('o:source', ''))
-                
+
                 # Attempt to download the media file
                 logging.info(f"Downloading {media_type}: {filename}")
                 downloaded_path = self.download_file(media_url, file_path)
-                
+
                 if downloaded_path:
                     downloaded_files.append(str(downloaded_path))
                     logging.info(f"Downloaded {media_type}: {downloaded_path}")
                 else:
                     logging.error(f"Failed to download: {filename}")
-                    
+
             if downloaded_files:
                 return str(item_id), downloaded_files
             return None
-            
+
         except Exception as e:
             logging.error(f"Error processing item {item_id}: {e}")
             return None
@@ -409,18 +280,16 @@ class MediaDownloader:
 def setup_logging(script_dir: Path) -> None:
     """
     Configure logging for the media download process.
-    
-    Sets up both file and console logging handlers.
-    
+
     Args:
         script_dir (Path): Directory where the log file should be created
     """
     # Create log directory if it doesn't exist
     log_dir = script_dir / 'log'
     log_dir.mkdir(exist_ok=True)
-    
+
     log_file = log_dir / 'media_download.log'
-    
+
     # Configure logging with both file and console handlers
     logging.basicConfig(
         level=logging.INFO,
@@ -432,69 +301,37 @@ def setup_logging(script_dir: Path) -> None:
     )
 
 
-def load_config() -> OmekaConfig:
-    """
-    Load configuration from environment variables.
-    
-    Returns:
-        OmekaConfig: Configuration object with API credentials
-        
-    Raises:
-        ValueError: If required environment variables are missing
-    """
-    load_dotenv()  # Load .env file
-    
-    base_url = os.getenv('OMEKA_BASE_URL', '')
-    key_identity = os.getenv('OMEKA_KEY_IDENTITY', '')
-    key_credential = os.getenv('OMEKA_KEY_CREDENTIAL', '')
-    
-    if not all([base_url, key_identity, key_credential]):
-        raise ValueError(
-            "Missing required environment variables. Please set:\n"
-            "  - OMEKA_BASE_URL\n"
-            "  - OMEKA_KEY_IDENTITY\n"
-            "  - OMEKA_KEY_CREDENTIAL"
-        )
-    
-    return OmekaConfig(
-        base_url=base_url,
-        key_identity=key_identity,
-        key_credential=key_credential
-    )
-
-
-def download_media_from_item_set(item_set_id: str, media_folder: Path, 
+def download_media_from_item_set(item_set_id: str, media_folder: Path,
                                   max_workers: int = 2) -> List[Tuple[str, List[str]]]:
     """
     Download all audio/video media from a specific Omeka S item set.
-    
+
     Args:
         item_set_id (str): ID of the Omeka S item set to process
         media_folder (Path): Directory to save downloaded media files
         max_workers (int): Maximum number of concurrent download threads (default: 2)
-        
+
     Returns:
         List[Tuple[str, List[str]]]: List of (item_id, downloaded_files) tuples
     """
     # Create media directory if it doesn't exist
     media_folder.mkdir(parents=True, exist_ok=True)
-    
-    # Initialize Omeka client and downloader
-    config = load_config()
-    client = OmekaClient(config)
+
+    # Initialize shared Omeka client and downloader
+    client = OmekaClient.from_env()
     downloader = MediaDownloader(client, media_folder)
-    
+
     # Retrieve all items from the specified item set
     with console.status(f"[cyan]Fetching items from item set {item_set_id}...[/]"):
-        items = client.get_items(item_set_id)
-    
+        items = client.get_items(int(item_set_id))
+
     if not items:
-        console.print(f"[yellow]⚠[/] No items found for item set {item_set_id}")
+        console.print(f"[yellow]No items found for item set {item_set_id}[/]")
         logging.warning(f"No items found for item set {item_set_id}")
         return []
-    
-    console.print(f"[green]✓[/] Found [cyan]{len(items)}[/] item(s) to process\n")
-        
+
+    console.print(f"[green]{chr(10003)}[/] Found [cyan]{len(items)}[/] item(s) to process\n")
+
     # Process items concurrently with thread pool
     results = []
     with Progress(
@@ -506,45 +343,44 @@ def download_media_from_item_set(item_set_id: str, media_folder: Path,
         console=console
     ) as progress:
         task = progress.add_task("[cyan]Downloading media...", total=len(items))
-        
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all download tasks
             futures = {executor.submit(downloader.process_item, item): item for item in items}
-            
+
             # Collect results with progress bar
             for future in as_completed(futures):
                 result = future.result()
                 if result:
                     results.append(result)
                 progress.update(task, advance=1)
-                
+
     return results
 
 
 def download_media_from_single_item(item_id: str, media_folder: Path) -> Optional[Tuple[str, List[str]]]:
     """
     Download all audio/video media from a single Omeka S item.
-    
+
     Args:
         item_id (str): ID of the Omeka S item to process
         media_folder (Path): Directory to save downloaded media files
-        
+
     Returns:
         Optional[Tuple[str, List[str]]]: Tuple of (item_id, downloaded_files) or None if failed
     """
     # Create media directory if it doesn't exist
     media_folder.mkdir(parents=True, exist_ok=True)
-    
-    # Initialize Omeka client and downloader
-    config = load_config()
-    client = OmekaClient(config)
+
+    # Initialize shared Omeka client and downloader
+    client = OmekaClient.from_env()
     downloader = MediaDownloader(client, media_folder)
-    
+
     console.print(f"\n[cyan]Processing item {item_id}...[/]")
-    
+
     # Create item dict in the format expected by process_item
     item = {'o:id': item_id}
-    
+
     with console.status("[cyan]Downloading media...[/]"):
         return downloader.process_item(item)
 
@@ -552,65 +388,65 @@ def download_media_from_single_item(item_id: str, media_folder: Path) -> Optiona
 def get_download_choice() -> Tuple[str, str]:
     """
     Prompt user to choose between downloading from an item set or a single item.
-    
+
     Returns:
         Tuple[str, str]: Tuple of (choice_type, id) where choice_type is 'item_set' or 'item'
     """
     # Display welcome banner
     console.print(Panel(
         "Download audio and video files from Omeka S digital collections",
-        title="🎵 Omeka S Audio/Video Media Downloader",
+        title="Omeka S Audio/Video Media Downloader",
         border_style="cyan"
     ))
-    
+
     # Display supported formats table
-    formats_table = Table(title="📁 Supported Formats", box=box.ROUNDED)
+    formats_table = Table(title="Supported Formats", box=box.ROUNDED)
     formats_table.add_column("Type", style="cyan")
     formats_table.add_column("Extensions", style="green")
     formats_table.add_row("Audio", ", ".join(sorted(AUDIO_EXTENSIONS)))
     formats_table.add_row("Video", ", ".join(sorted(VIDEO_EXTENSIONS)))
     console.print(formats_table)
-    
+
     # Display options
     console.print("\n[bold]Download Options:[/]")
     console.print("  [cyan]1.[/] Download from an item set (multiple items)")
     console.print("  [cyan]2.[/] Download from a single item")
     console.print()
-    
+
     while True:
         choice = console.input("[bold]Select option (1 or 2):[/] ").strip()
         if choice == '1':
             item_set_id = console.input("[bold]Enter the Omeka S item set ID:[/] ").strip()
             if item_set_id:
                 return 'item_set', item_set_id
-            console.print("[red]✗[/] Error: Item set ID cannot be empty.")
+            console.print("[red]Error: Item set ID cannot be empty.[/]")
         elif choice == '2':
             item_id = console.input("[bold]Enter the Omeka S item ID:[/] ").strip()
             if item_id:
                 return 'item', item_id
-            console.print("[red]✗[/] Error: Item ID cannot be empty.")
+            console.print("[red]Error: Item ID cannot be empty.[/]")
         else:
-            console.print("[red]✗[/] Invalid choice. Please enter 1 or 2.")
+            console.print("[red]Invalid choice. Please enter 1 or 2.[/]")
 
 
 def print_summary(results: List[Tuple[str, List[str]]], media_folder: Path) -> None:
     """
     Print a summary of the download results.
-    
+
     Args:
         results: List of (item_id, downloaded_files) tuples
         media_folder: Path where media files were saved
     """
     console.print()
     console.rule("[bold]Download Summary", style="cyan")
-    
+
     if not results:
-        console.print("[yellow]⚠[/] No media files were downloaded.")
+        console.print("[yellow]No media files were downloaded.[/]")
         return
-    
+
     total_files = sum(len(files) for _, files in results)
     total_items = len(results)
-    
+
     # Count by type
     audio_count = 0
     video_count = 0
@@ -621,55 +457,55 @@ def print_summary(results: List[Tuple[str, List[str]]], media_folder: Path) -> N
                 audio_count += 1
             elif ext in VIDEO_EXTENSIONS:
                 video_count += 1
-    
+
     # Create summary table
-    summary_table = Table(title="📊 Results", box=box.ROUNDED)
+    summary_table = Table(title="Results", box=box.ROUNDED)
     summary_table.add_column("Metric", style="dim")
     summary_table.add_column("Value", style="green")
     summary_table.add_row("Items with media", str(total_items))
     summary_table.add_row("Total files downloaded", str(total_files))
     if audio_count:
-        summary_table.add_row("Audio files", f"🎵 {audio_count}")
+        summary_table.add_row("Audio files", str(audio_count))
     if video_count:
-        summary_table.add_row("Video files", f"🎬 {video_count}")
+        summary_table.add_row("Video files", str(video_count))
     summary_table.add_row("Output folder", str(media_folder))
     console.print(summary_table)
-    
+
     # Create files table
-    files_table = Table(title="📁 Downloaded Files", box=box.ROUNDED)
+    files_table = Table(title="Downloaded Files", box=box.ROUNDED)
     files_table.add_column("Item ID", style="cyan")
     files_table.add_column("Filename", style="green")
     files_table.add_column("Type", style="dim")
-    
+
     for item_id, files in results:
         for file_path in files:
             filename = Path(file_path).name
             ext = Path(file_path).suffix.lower()
-            media_type = "🎵 Audio" if ext in AUDIO_EXTENSIONS else "🎬 Video"
+            media_type = "Audio" if ext in AUDIO_EXTENSIONS else "Video"
             files_table.add_row(str(item_id), filename, media_type)
-    
+
     console.print(files_table)
 
 
 def main():
     """
     Main function to run the audio/video media download script.
-    
+
     Prompts user for download type (item set or single item) and processes accordingly.
     """
     # Initialize logging
     setup_logging(SCRIPT_DIR)
-    
+
     # Set up media storage directory
     media_folder = SCRIPT_DIR / "Audio"
-    
+
     try:
         # Get user choice
         choice_type, target_id = get_download_choice()
-        
+
         # Display configuration
         console.print()
-        config_table = Table(title="⚙️ Configuration", box=box.ROUNDED)
+        config_table = Table(title="Configuration", box=box.ROUNDED)
         config_table.add_column("Setting", style="dim")
         config_table.add_column("Value", style="green")
         config_table.add_row("Mode", "Item Set" if choice_type == 'item_set' else "Single Item")
@@ -677,28 +513,28 @@ def main():
         config_table.add_row("Output Folder", str(media_folder))
         console.print(config_table)
         console.print()
-        
+
         # Process based on choice
         if choice_type == 'item_set':
             results = download_media_from_item_set(target_id, media_folder, max_workers=2)
         else:
             result = download_media_from_single_item(target_id, media_folder)
             results = [result] if result else []
-        
+
         # Print summary
         print_summary(results, media_folder)
-        
-        console.print(f"\n[green]✓[/] Download complete. Total items with media: [cyan]{len(results)}[/]")
+
+        console.print(f"\n[green]{chr(10003)}[/] Download complete. Total items with media: [cyan]{len(results)}[/]")
         logging.info(f"Download complete. Total items with media: {len(results)}")
-        
+
     except ValueError as e:
-        console.print(f"\n[red]✗ Configuration Error:[/] {e}")
+        console.print(f"\n[red]Configuration Error:[/] {e}")
         logging.error(f"Configuration error: {e}")
     except KeyboardInterrupt:
-        console.print("\n\n[yellow]⚠[/] Download cancelled by user.")
+        console.print("\n\n[yellow]Download cancelled by user.[/]")
         logging.info("Download cancelled by user")
     except Exception as e:
-        console.print(f"\n[red]✗ Unexpected error:[/] {e}")
+        console.print(f"\n[red]Unexpected error:[/] {e}")
         logging.exception(f"Unexpected error: {e}")
 
 

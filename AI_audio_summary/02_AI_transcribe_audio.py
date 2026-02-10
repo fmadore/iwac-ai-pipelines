@@ -6,17 +6,25 @@ Video files are automatically converted to audio before transcription.
 """
 
 import argparse
-import mimetypes
 import os
-import subprocess
-import tempfile
 import time
 from pathlib import Path
-from shutil import which
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
+# Add repo root to path for shared imports
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent.parent))
+from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
+from common.ffmpeg_utils import (
+    AUDIO_FORMATS, VIDEO_FORMATS,
+    get_ffmpeg_paths, setup_pydub, is_video_file, get_mime_type,
+    convert_video_to_audio, split_audio, cleanup_files,
+    sanitize_stem, has_unsafe_path_chars,
+)
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -32,36 +40,11 @@ load_dotenv()
 # Script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
-# Add ffmpeg to PATH if specified in environment variables
-if os.environ.get("FFMPEG_PATH"):
-    ffmpeg_dir = os.path.dirname(os.environ.get("FFMPEG_PATH"))
-    if ffmpeg_dir not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
-
-# Configure pydub before any import to suppress warnings
-AudioSegment = None
-if os.environ.get("FFMPEG_PATH") or os.environ.get("FFPROBE_PATH"):
-    # Set environment variables that pydub will check during import
-    if os.environ.get("FFMPEG_PATH") and not os.environ.get("PATH_TO_FFMPEG"):
-        os.environ["PATH_TO_FFMPEG"] = os.path.dirname(os.environ.get("FFMPEG_PATH"))
-
-try:
-    from pydub import AudioSegment
-    from pydub.utils import which as pydub_which
-    # Override pydub's ffmpeg detection
-    if os.environ.get("FFMPEG_PATH"):
-        AudioSegment.converter = os.environ.get("FFMPEG_PATH")
-        AudioSegment.ffmpeg = os.environ.get("FFMPEG_PATH")
-    if os.environ.get("FFPROBE_PATH"):
-        AudioSegment.ffprobe = os.environ.get("FFPROBE_PATH")
-except ImportError:  # pragma: no cover
-    AudioSegment = None
-
 class AudioTranscriber:
     def __init__(self, api_key=None, model='gemini-3-pro-preview'):
         """
         Initialize the Audio Transcriber with Gemini API.
-        
+
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
             model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-3-flash-preview'. Default is 'gemini-3-pro-preview'.
@@ -69,264 +52,50 @@ class AudioTranscriber:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not found in .env file or environment variables")
-        
+
         # Store the model choice
         self.model = model
-        
+
         # Initialize the Gemini client
         self.client = genai.Client(api_key=self.api_key)
-        
-        # Supported audio formats
-        self.supported_formats = {
-            '.mp3': 'audio/mpeg',
-            '.wav': 'audio/wav',
-            '.m4a': 'audio/mp4',
-            '.flac': 'audio/flac',
-            '.ogg': 'audio/ogg',
-            '.webm': 'audio/webm',
-            '.mp4': 'audio/mp4',
-            '.aac': 'audio/aac'
-        }
-        
-        # Supported video formats (will be converted to audio)
-        self.video_formats = {
-            '.mp4': 'video/mp4',
-            '.mkv': 'video/x-matroska',
-            '.avi': 'video/x-msvideo',
-            '.mov': 'video/quicktime',
-            '.wmv': 'video/x-ms-wmv',
-            '.flv': 'video/x-flv',
-            '.webm': 'video/webm',
-            '.m4v': 'video/x-m4v',
-            '.mpeg': 'video/mpeg',
-            '.mpg': 'video/mpeg',
-            '.3gp': 'video/3gpp'
-        }
-        
+
         # Track temporary converted audio files for cleanup
         self._temp_audio_files = []
-        
+
         # Default transcription prompt (fallback)
         self.default_prompt = """
-        Please transcribe the audio content accurately. 
+        Please transcribe the audio content accurately.
         Include proper punctuation and formatting.
         If there are multiple speakers, indicate speaker changes.
         Provide a clear, readable transcription of the spoken content.
         """
-        
+
         # Load transcription prompt from file or user selection
         self.transcription_prompt, self.auto_split = self.select_prompt()
-        
-        # Internal flag for ffmpeg availability
-        self._ffmpeg_checked = False
-        self._ffmpeg_available = False
 
-    def ensure_ffmpeg(self):
-        """Ensure ffmpeg and ffprobe are discoverable for pydub.
+    def _convert_video(self, video_file_path, output_format='mp3'):
+        """Convert a video file to audio, tracking the result for cleanup.
 
-        Attempts to locate executables on PATH. If found, assigns them
-        to AudioSegment.* attributes so pydub can use them. This runs once.
+        Delegates to ``convert_video_to_audio`` from ``common.ffmpeg_utils``.
         """
-        if self._ffmpeg_checked or not AudioSegment:
-            return self._ffmpeg_available
-
-        self._ffmpeg_checked = True
-        # 1. Environment variables override
-        ffmpeg_path = os.environ.get("FFMPEG_PATH")
-        ffprobe_path = os.environ.get("FFPROBE_PATH")
-
-        def normalize_candidate(p):
-            if not p:
-                return None
-            p = p.strip().strip('"')
-            path_obj = Path(p)
-            if path_obj.is_dir():
-                # Append executable name for directory input
-                exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-                return str(path_obj / exe)
-            return str(path_obj)
-
-        ffmpeg_path = normalize_candidate(ffmpeg_path)
-        ffprobe_path = normalize_candidate(ffprobe_path)
-
-        # 2. PATH lookup if not provided via env
-        if not ffmpeg_path:
-            ffmpeg_path = which("ffmpeg") or which("ffmpeg.exe")
-        if not ffprobe_path:
-            ffprobe_path = which("ffprobe") or which("ffprobe.exe")
-
-        # Common Windows install locations to probe if not on PATH
-        if not ffmpeg_path:
-            common_dirs = [
-                r"C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
-                r"C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe",
-                r"C:\\ffmpeg\\bin\\ffmpeg.exe",
-            ]
-            for candidate in common_dirs:
-                if Path(candidate).exists():
-                    ffmpeg_path = candidate
-                    break
-
-        if not ffprobe_path:
-            common_probe = [
-                r"C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe",
-                r"C:\\Program Files (x86)\\ffmpeg\\bin\\ffprobe.exe",
-                r"C:\\ffmpeg\\bin\\ffprobe.exe",
-            ]
-            for candidate in common_probe:
-                if Path(candidate).exists():
-                    ffprobe_path = candidate
-                    break
-
-        if ffmpeg_path:
-            AudioSegment.converter = ffmpeg_path
-            AudioSegment.ffmpeg = ffmpeg_path
-        if ffprobe_path:
-            AudioSegment.ffprobe = ffprobe_path
-
-        self._ffmpeg_available = bool(ffmpeg_path and ffprobe_path)
-
-        if not self._ffmpeg_available:
-            console.print("[yellow]⚠[/] Warning: ffmpeg/ffprobe not fully available. Splitting may fail.")
-            if not ffmpeg_path:
-                console.print("  [dim]- ffmpeg not found. Set FFMPEG_PATH in .env or install via 'winget install Gyan.FFmpeg'.[/]")
-            if not ffprobe_path:
-                console.print("  [dim]- ffprobe not found. Set FFPROBE_PATH in .env (usually same folder as ffmpeg).[/]")
-        else:
-            console.print(f"[green]✓[/] Detected ffmpeg: [cyan]{ffmpeg_path}[/]")
-            console.print(f"[green]✓[/] Detected ffprobe: [cyan]{ffprobe_path}[/]")
-            if os.environ.get("FFMPEG_PATH") or os.environ.get("FFPROBE_PATH"):
-                console.print("[dim](Using paths from environment variables)[/]")
-        return self._ffmpeg_available
-    
-    def is_video_file(self, file_path):
-        """
-        Check if a file is a video file based on its extension and MIME type.
-        
-        Args:
-            file_path (Path): Path to the file
-            
-        Returns:
-            bool: True if the file is a video file
-        """
-        extension = file_path.suffix.lower()
-        
-        # Check by extension first
-        if extension in self.video_formats:
-            return True
-        
-        # Use mimetypes as fallback
-        mime_type, _ = mimetypes.guess_type(str(file_path))
-        if mime_type and mime_type.startswith('video/'):
-            return True
-        
-        return False
-    
-    def convert_video_to_audio(self, video_file_path, output_format='mp3'):
-        """
-        Convert a video file to audio using ffmpeg.
-        
-        Args:
-            video_file_path (Path): Path to the video file
-            output_format (str): Output audio format (default: mp3)
-            
-        Returns:
-            Path: Path to the converted audio file, or None if conversion failed
-        """
-        if not self.ensure_ffmpeg():
-            console.print(f"[red]✗[/] Cannot convert video '[cyan]{video_file_path.name}[/]': ffmpeg not available")
-            return None
-        
-        try:
-            # Create temp directory for converted audio files
-            temp_dir = SCRIPT_DIR / "temp_converted_audio"
-            temp_dir.mkdir(exist_ok=True)
-            
-            # Create output filename
-            output_filename = f"{video_file_path.stem}_audio.{output_format}"
-            output_path = temp_dir / output_filename
-            
-            # Get ffmpeg path
-            ffmpeg_path = getattr(AudioSegment, 'converter', None) or which("ffmpeg") or "ffmpeg"
-            
-            console.print(f"[cyan]🎬[/] Converting video to audio: [bold]{video_file_path.name}[/] → [green]{output_filename}[/]")
-            
-            # Build ffmpeg command
-            # -i: input file
-            # -vn: no video
-            # -acodec: audio codec (libmp3lame for mp3, copy for m4a)
-            # -ab: audio bitrate
-            # -y: overwrite output file
-            if output_format == 'mp3':
-                cmd = [
-                    ffmpeg_path,
-                    '-i', str(video_file_path),
-                    '-vn',
-                    '-acodec', 'libmp3lame',
-                    '-ab', '192k',
-                    '-ar', '44100',
-                    '-y',
-                    str(output_path)
-                ]
-            else:
-                # For other formats, let ffmpeg choose the codec
-                cmd = [
-                    ffmpeg_path,
-                    '-i', str(video_file_path),
-                    '-vn',
-                    '-ab', '192k',
-                    '-y',
-                    str(output_path)
-                ]
-            
-            # Run ffmpeg
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=3600  # 1 hour timeout for very long videos
-            )
-            
-            if result.returncode != 0:
-                console.print(f"[red]✗[/] Error converting video: {result.stderr}")
-                return None
-            
-            if output_path.exists():
-                console.print(f"[green]✓[/] Video converted successfully: [cyan]{output_path.name}[/]")
-                self._temp_audio_files.append(output_path)
-                return output_path
-            else:
-                console.print(f"[red]✗[/] Conversion failed: output file not created")
-                return None
-                
-        except subprocess.TimeoutExpired:
-            console.print(f"[red]✗[/] Video conversion timed out for [cyan]{video_file_path.name}[/]")
-            return None
-        except Exception as e:
-            console.print(f"[red]✗[/] Error converting video [cyan]{video_file_path.name}[/]: {e}")
-            return None
-    
-    def cleanup_converted_audio(self):
-        """
-        Clean up temporary converted audio files.
-        """
-        for temp_file in self._temp_audio_files:
-            try:
-                if temp_file.exists():
-                    temp_file.unlink()
-                    console.print(f"[dim]🧹 Cleaned up converted audio: {temp_file.name}[/]")
-            except Exception as e:
-                console.print(f"[yellow]⚠[/] Warning: Could not clean up {temp_file}: {e}")
-        
-        self._temp_audio_files.clear()
-        
-        # Clean up temp directory if empty
         temp_dir = SCRIPT_DIR / "temp_converted_audio"
-        if temp_dir.exists() and temp_dir.is_dir():
-            try:
-                temp_dir.rmdir()
-            except OSError:
-                pass  # Directory not empty
+        console.print(f"[cyan]🎬[/] Converting video to audio: [bold]{video_file_path.name}[/]")
+        result = convert_video_to_audio(video_file_path, temp_dir, output_format)
+        if result:
+            console.print(f"[green]✓[/] Video converted: [cyan]{result.name}[/]")
+            self._temp_audio_files.append(result)
+        else:
+            console.print(f"[red]✗[/] Cannot convert video '[cyan]{video_file_path.name}[/]'")
+        return result
+
+    def cleanup_converted_audio(self):
+        """Clean up temporary converted audio files."""
+        if self._temp_audio_files:
+            cleanup_files(self._temp_audio_files, remove_parents=True)
+            for f in self._temp_audio_files:
+                if not f.exists():
+                    console.print(f"[dim]🧹 Cleaned up converted audio: {f.name}[/]")
+            self._temp_audio_files.clear()
     
     def get_audio_files(self, audio_folder="Audio"):
         """
@@ -346,14 +115,23 @@ class AudioTranscriber:
             return []
         
         media_files = []
+        skipped = []
         for file_path in audio_path.iterdir():
             if file_path.is_file():
                 extension = file_path.suffix.lower()
-                if extension in self.supported_formats:
-                    media_files.append((file_path, False))  # Audio file
-                elif extension in self.video_formats:
-                    media_files.append((file_path, True))   # Video file
-        
+                if extension in AUDIO_FORMATS or extension in VIDEO_FORMATS:
+                    if has_unsafe_path_chars(file_path.name):
+                        skipped.append(file_path)
+                        continue
+                    is_video = extension in VIDEO_FORMATS
+                    media_files.append((file_path, is_video))
+
+        if skipped:
+            console.print(f"\n[yellow]⚠[/] Skipped [bold]{len(skipped)}[/] file(s) with characters that break ffmpeg ([cyan]' \" < > | * ?[/]):")
+            for f in skipped:
+                console.print(f"  [dim]- {f.name}[/]")
+            console.print("[yellow]  → Please rename these files to remove the problematic characters and try again.[/]\n")
+
         return sorted(media_files, key=lambda x: x[0])
     
     def prepare_audio_for_api(self, audio_file_path):
@@ -369,15 +147,8 @@ class AudioTranscriber:
         try:
             with open(audio_file_path, 'rb') as audio_file:
                 audio_bytes = audio_file.read()
-            
-            # Get MIME type
-            file_extension = audio_file_path.suffix.lower()
-            mime_type = self.supported_formats.get(file_extension)
-            
-            if not mime_type:
-                # Fallback to mimetypes module
-                mime_type, _ = mimetypes.guess_type(str(audio_file_path))
-            
+
+            mime_type = get_mime_type(audio_file_path)
             return audio_bytes, mime_type
         
         except Exception as e:
@@ -422,8 +193,12 @@ class AudioTranscriber:
                     model=self.model,
                     contents=[audio_part, prompt],
                     config=types.GenerateContentConfig(
-                        temperature=0.1,  # Low temperature for more consistent transcription
+                        temperature=0.1,
                         max_output_tokens=65536,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level=get_thinking_level(self.model)
+                        ),
+                        safety_settings=SAFETY_SETTINGS_NONE,
                     )
                 )
                 
@@ -481,8 +256,11 @@ class AudioTranscriber:
             return None
     
     def split_audio_file(self, audio_file_path, segment_minutes=10, temp_root="temp_segments"):
-        """
-        Split an audio file into fixed-length segments.
+        """Split an audio file into fixed-length segments.
+
+        Checks for existing segments from a previous run first (resume support),
+        then delegates the actual splitting to ``split_audio`` from
+        ``common.ffmpeg_utils``.
 
         Args:
             audio_file_path (Path): Path to original audio file
@@ -497,56 +275,15 @@ class AudioTranscriber:
         if existing_segments:
             console.print(f"[green]✓[/] Found [bold]{len(existing_segments)}[/] existing segment(s) for '[cyan]{audio_file_path.name}[/]'")
             return existing_segments
-        
-        if not AudioSegment:
-            console.print(f"[yellow]⚠[/] pydub not installed; skipping splitting for [cyan]{audio_file_path.name}[/]")
-            return [audio_file_path]
 
-        try:
-            # Ensure ffmpeg tools available
-            if not self.ensure_ffmpeg():
-                console.print(f"[yellow]⚠[/] ffmpeg not configured; skipping splitting for [cyan]{audio_file_path.name}[/]")
-                return [audio_file_path]
+        output_dir = SCRIPT_DIR / temp_root / sanitize_stem(audio_file_path.stem)
+        segments = split_audio(audio_file_path, output_dir, segment_minutes)
 
-            segment_ms = segment_minutes * 60 * 1000
-            audio = AudioSegment.from_file(audio_file_path)
-            if len(audio) <= segment_ms:
-                # No need to split
-                return [audio_file_path]
-
-            # Prepare temp directory relative to script directory
-            parent_dir = SCRIPT_DIR / temp_root / audio_file_path.stem
-            parent_dir.mkdir(parents=True, exist_ok=True)
-
-            segments = []
-            for i, start in enumerate(range(0, len(audio), segment_ms), start=1):
-                end = min(start + segment_ms, len(audio))
-                chunk = audio[start:end]
-                segment_filename = f"segment_{i:02d}{audio_file_path.suffix}"
-                segment_path = parent_dir / segment_filename
-                
-                # Map file extensions to ffmpeg format names
-                file_ext = audio_file_path.suffix.lstrip('.').lower()
-                format_mapping = {
-                    'm4a': 'mp4',
-                    'mp4': 'mp4',
-                    'mp3': 'mp3',
-                    'wav': 'wav',
-                    'flac': 'flac',
-                    'ogg': 'ogg',
-                    'webm': 'webm',
-                    'aac': 'aac'
-                }
-                export_format = format_mapping.get(file_ext, file_ext)
-                
-                chunk.export(segment_path, format=export_format)
-                segments.append(segment_path)
-
+        if len(segments) > 1:
             console.print(f"[green]✓[/] Split '[cyan]{audio_file_path.name}[/]' into [bold]{len(segments)}[/] segment(s) of up to {segment_minutes} minutes each.")
-            return segments
-        except Exception as e:
-            console.print(f"[red]✗[/] Error splitting [cyan]{audio_file_path.name}[/]: {e}. Proceeding without splitting.")
-            return [audio_file_path]
+        elif segments == [audio_file_path]:
+            pass  # no split needed or failed — logged by split_audio
+        return segments
 
     def find_existing_segments(self, audio_file_path: Path, temp_root: str = "temp_segments") -> list:
         """
@@ -561,7 +298,7 @@ class AudioTranscriber:
         """
         import re
         
-        segment_dir = SCRIPT_DIR / temp_root / audio_file_path.stem
+        segment_dir = SCRIPT_DIR / temp_root / sanitize_stem(audio_file_path.stem)
         
         if not segment_dir.exists() or not segment_dir.is_dir():
             return []
@@ -585,46 +322,22 @@ class AudioTranscriber:
         return [path for _, path in segments]
 
     def cleanup_temp_segments(self, original_audio_file, segment_paths, temp_root="temp_segments"):
-        """
-        Clean up temporary segment files and directories after successful transcription.
-        
+        """Clean up temporary segment files and directories after transcription.
+
         Args:
             original_audio_file (Path): Path to the original audio file
             segment_paths (list[Path]): List of segment file paths that were created
             temp_root (str): Root temp directory for segments
         """
-        try:
-            # Only clean up if we actually created segments (not just returned original)
-            if len(segment_paths) == 1 and segment_paths[0] == original_audio_file:
-                return
-            
-            # Remove individual segment files
-            for segment_path in segment_paths:
-                if segment_path.exists() and segment_path != original_audio_file:
-                    segment_path.unlink()
-                    console.print(f"[dim]🧹 Cleaned up segment: {segment_path.name}[/]")
-            
-            # Remove the segment directory if it's empty
-            segment_dir = SCRIPT_DIR / temp_root / original_audio_file.stem
-            if segment_dir.exists() and segment_dir.is_dir():
-                try:
-                    segment_dir.rmdir()  # Only removes if empty
-                    console.print(f"[dim]🧹 Cleaned up directory: {segment_dir}[/]")
-                except OSError:
-                    # Directory not empty, leave it
-                    pass
-            
-            # Clean up root temp directory if it's empty
-            temp_root_path = SCRIPT_DIR / temp_root
-            if temp_root_path.exists() and temp_root_path.is_dir():
-                try:
-                    temp_root_path.rmdir()  # Only removes if empty
-                except OSError:
-                    # Directory not empty, leave it
-                    pass
-                    
-        except Exception as e:
-            console.print(f"[yellow]⚠[/] Warning: Could not clean up temporary files: {e}")
+        # Only clean up if we actually created segments (not just returned original)
+        if len(segment_paths) == 1 and segment_paths[0] == original_audio_file:
+            return
+
+        to_remove = [p for p in segment_paths if p != original_audio_file]
+        cleanup_files(to_remove, remove_parents=True)
+        for p in to_remove:
+            if not p.exists():
+                console.print(f"[dim]🧹 Cleaned up segment: {p.name}[/]")
 
     def check_existing_transcription(self, original_file: Path, output_folder: str = "Transcriptions") -> tuple:
         """
@@ -728,8 +441,8 @@ class AudioTranscriber:
         
         if not media_files:
             console.print("[yellow]⚠[/] No supported audio or video files found in the Audio folder.")
-            console.print(f"[dim]Supported audio formats: {', '.join(self.supported_formats.keys())}[/]")
-            console.print(f"[dim]Supported video formats: {', '.join(self.video_formats.keys())}[/]")
+            console.print(f"[dim]Supported audio formats: {', '.join(AUDIO_FORMATS.keys())}[/]")
+            console.print(f"[dim]Supported video formats: {', '.join(VIDEO_FORMATS.keys())}[/]")
             return
         
         # Check for files needing processing
@@ -789,7 +502,7 @@ class AudioTranscriber:
                     
                     # Convert video to audio if needed
                     if is_video:
-                        audio_file = self.convert_video_to_audio(original_file)
+                        audio_file = self._convert_video(original_file)
                         if not audio_file:
                             console.print(f"[yellow]⚠[/] Skipping [cyan]{original_file.name}[/]: video conversion failed")
                             failed_retries += len(failed_segments)
@@ -898,7 +611,7 @@ class AudioTranscriber:
                         
                         # Convert video to audio if needed
                         if is_video:
-                            audio_file = self.convert_video_to_audio(original_file)
+                            audio_file = self._convert_video(original_file)
                             if not audio_file:
                                 console.print(f"[yellow]⚠[/] Skipping [cyan]{original_file.name}[/]: video conversion failed")
                                 failed_transcriptions += 1
@@ -937,7 +650,7 @@ class AudioTranscriber:
                     # Normal processing for new files
                     # Convert video to audio if needed
                     if is_video:
-                        audio_file = self.convert_video_to_audio(original_file)
+                        audio_file = self._convert_video(original_file)
                         if not audio_file:
                             console.print(f"[yellow]⚠[/] Skipping [cyan]{original_file.name}[/]: video conversion failed")
                             failed_transcriptions += 1
@@ -1246,25 +959,32 @@ def main():
         # Initialize transcriber (prompt chosen interactively)
         transcriber = AudioTranscriber(model=selected_model)
 
+        # Check pydub + ffmpeg availability once
+        _pydub_ready = setup_pydub()
+        paths = get_ffmpeg_paths()
+        if paths:
+            console.print(f"[green]✓[/] Detected ffmpeg: [cyan]{paths.ffmpeg}[/]")
+            console.print(f"[green]✓[/] Detected ffprobe: [cyan]{paths.ffprobe}[/]")
+
         # Determine if splitting should be used
         if args.split:
             # CLI flag takes precedence
             split_segments = True
-            if not AudioSegment:
-                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub'. Install via 'pip install pydub' and ensure ffmpeg is available. Proceeding without splitting.")
+            if not _pydub_ready:
+                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub' and ffmpeg. Proceeding without splitting.")
                 split_segments = False
         elif transcriber.auto_split:
             # Auto-split is enabled for this prompt
             split_segments = True
-            if not AudioSegment:
-                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub'. Install via 'pip install pydub' and ensure ffmpeg is available. Proceeding without splitting.")
+            if not _pydub_ready:
+                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub' and ffmpeg. Proceeding without splitting.")
                 split_segments = False
         else:
             # Ask user if they want to split audio into 10-minute segments
             split_choice = console.input("\n[bold]Split audio into 10-minute segments for improved accuracy? (y/N):[/] ").strip().lower()
             split_segments = split_choice in {"y", "yes"}
-            if split_segments and not AudioSegment:
-                console.print("[yellow]⚠[/] You chose to split audio, but 'pydub' is not installed. Install via 'pip install pydub' and ensure ffmpeg is available on PATH. Proceeding without splitting.")
+            if split_segments and not _pydub_ready:
+                console.print("[yellow]⚠[/] You chose to split audio, but 'pydub' or ffmpeg is not available. Proceeding without splitting.")
                 split_segments = False
 
         # Display configuration

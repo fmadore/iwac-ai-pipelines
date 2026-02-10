@@ -10,7 +10,6 @@ Supports:
 """
 
 import argparse
-import mimetypes
 import os
 import time
 from pathlib import Path
@@ -18,6 +17,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
+# Add repo root to path for shared imports
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent.parent))
+from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
+from common.ffmpeg_utils import VIDEO_FORMATS, get_mime_type
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -45,20 +50,6 @@ class VideoProcessor:
         
         # Initialize the Gemini client
         self.client = genai.Client(api_key=self.api_key)
-        
-        # Supported video formats (as per Gemini API documentation)
-        self.supported_formats = {
-            '.mp4': 'video/mp4',
-            '.mpeg': 'video/mpeg',
-            '.mov': 'video/mov',
-            '.avi': 'video/avi',
-            '.flv': 'video/x-flv',
-            '.mpg': 'video/mpg',
-            '.webm': 'video/webm',
-            '.wmv': 'video/wmv',
-            '.3gpp': 'video/3gpp',
-            '.3gp': 'video/3gpp',
-        }
         
         # Default prompt (fallback)
         self.default_prompt = """
@@ -90,29 +81,10 @@ class VideoProcessor:
         
         video_files = []
         for file_path in video_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in self.supported_formats:
+            if file_path.is_file() and file_path.suffix.lower() in VIDEO_FORMATS:
                 video_files.append(file_path)
         
         return sorted(video_files)
-    
-    def get_mime_type(self, video_file_path):
-        """
-        Get the MIME type for a video file.
-        
-        Args:
-            video_file_path (Path): Path to the video file
-            
-        Returns:
-            str: MIME type or None if unsupported
-        """
-        file_extension = video_file_path.suffix.lower()
-        mime_type = self.supported_formats.get(file_extension)
-        
-        if not mime_type:
-            # Fallback to mimetypes module
-            mime_type, _ = mimetypes.guess_type(str(video_file_path))
-        
-        return mime_type
     
     def upload_video_file(self, video_file_path):
         """
@@ -157,7 +129,7 @@ class VideoProcessor:
             with open(video_file_path, 'rb') as f:
                 video_bytes = f.read()
             
-            mime_type = self.get_mime_type(video_file_path)
+            mime_type = get_mime_type(video_file_path)
             if not mime_type:
                 print(f"  Unsupported video format: {video_file_path.suffix}")
                 return None
@@ -176,6 +148,10 @@ class VideoProcessor:
                 config=types.GenerateContentConfig(
                     temperature=0.2,
                     max_output_tokens=65536,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=get_thinking_level(self.model)
+                    ),
+                    safety_settings=SAFETY_SETTINGS_NONE,
                 )
             )
             
@@ -208,6 +184,10 @@ class VideoProcessor:
                 config=types.GenerateContentConfig(
                     temperature=0.2,
                     max_output_tokens=65536,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=get_thinking_level(self.model)
+                    ),
+                    safety_settings=SAFETY_SETTINGS_NONE,
                 )
             )
             
@@ -293,7 +273,7 @@ class VideoProcessor:
         
         if not video_files:
             print("No supported video files found in the video folder.")
-            print(f"Supported formats: {', '.join(self.supported_formats.keys())}")
+            print(f"Supported formats: {', '.join(VIDEO_FORMATS.keys())}")
             return
         
         print(f"Found {len(video_files)} video file(s) to process:")

@@ -1,6 +1,95 @@
+# Shared Utilities
+
+This directory contains shared modules used across all pipelines.
+
+## Omeka S Client (`omeka_client.py`)
+
+Authenticated client for the Omeka S REST API with automatic retry and pagination.
+
+### Quick Start
+
+```python
+from common.omeka_client import OmekaClient
+
+client = OmekaClient.from_env()  # Reads OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
+items = client.get_items(item_set_id=123)
+item = client.get_item(456)
+client.update_item(456, item_data)
+```
+
+### API Reference
+
+| Method | Description |
+|--------|-------------|
+| `OmekaClient.from_env()` | Create client from `.env` variables |
+| `get_items(item_set_id)` | Fetch all items in a set (handles pagination) |
+| `get_item(item_id)` | Fetch a single item by ID |
+| `get_item_set(item_set_id)` | Fetch item set metadata |
+| `update_item(item_id, data)` | PATCH an item (returns `True`/`False`) |
+| `get_resource(url)` | GET any Omeka S resource URL |
+
+The client includes:
+- **Automatic retry** on transient errors (429, 500-504) with exponential backoff
+- **Automatic pagination** — `get_items()` fetches all pages transparently
+- **Environment-based configuration** via `python-dotenv`
+
+### Environment Variables
+
+```bash
+OMEKA_BASE_URL=https://your-instance.com/api
+OMEKA_KEY_IDENTITY=your_key_identity
+OMEKA_KEY_CREDENTIAL=your_key_credential
+```
+
+---
+
+## FFmpeg Utilities (`ffmpeg_utils.py`)
+
+Shared FFmpeg discovery, pydub configuration, video/audio format constants, conversion, splitting, and cleanup helpers for multimodal pipelines.
+
+### Quick Start
+
+```python
+from common.ffmpeg_utils import (
+    AUDIO_FORMATS, VIDEO_FORMATS,
+    get_ffmpeg_paths, setup_pydub, is_video_file, get_mime_type,
+    convert_video_to_audio, split_audio, cleanup_files,
+)
+
+# Discover ffmpeg/ffprobe (cached after first call)
+paths = get_ffmpeg_paths()  # FFmpegPaths(ffmpeg, ffprobe) or None
+
+# Configure pydub to use discovered paths
+if setup_pydub():
+    segments = split_audio(audio_path, output_dir, segment_minutes=10)
+
+# Convert video to audio
+audio = convert_video_to_audio(video_path, output_dir)
+
+# Unified MIME type lookup (audio + video + mimetypes fallback)
+mime = get_mime_type(Path("file.mp3"))  # "audio/mpeg"
+```
+
+### API Reference
+
+| Function / Constant | Description |
+|---------------------|-------------|
+| `AUDIO_FORMATS` | `dict[str, str]` — 8 audio extension-to-MIME mappings |
+| `VIDEO_FORMATS` | `dict[str, str]` — 12 video extension-to-MIME mappings |
+| `AUDIO_EXPORT_FORMAT_MAP` | `dict[str, str]` — pydub export format names |
+| `get_ffmpeg_paths()` | Discover ffmpeg/ffprobe; returns `FFmpegPaths` namedtuple or `None` |
+| `setup_pydub()` | Import pydub and configure it with discovered paths; returns `bool` |
+| `is_video_file(path)` | Check extension against `VIDEO_FORMATS` + mimetypes fallback |
+| `get_mime_type(path)` | Lookup in `AUDIO_FORMATS` + `VIDEO_FORMATS` + mimetypes fallback |
+| `convert_video_to_audio(video, out_dir)` | ffmpeg subprocess call; returns output `Path` or `None` |
+| `split_audio(audio, out_dir, minutes)` | pydub-based splitting; returns `[audio]` on failure |
+| `cleanup_files(paths, remove_parents)` | Delete files and optionally empty parent directories |
+
+---
+
 # LLM Provider Configuration Guide
 
-This guide explains how to use the enhanced `llm_provider.py` to configure AI model behavior for different pipeline use cases.
+This guide explains how to use `llm_provider.py` to configure AI model behavior for different pipeline use cases.
 
 ## Overview
 

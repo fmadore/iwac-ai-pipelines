@@ -56,26 +56,27 @@ Author: [Your name]
 Date: August 2025
 """
 
+import csv
+import os
+import sys
+import re
+import unicodedata
 from typing import Dict, List, Tuple
-from dotenv import load_dotenv
 from collections import Counter, defaultdict
+from difflib import SequenceMatcher
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich import box
-import csv
-import os
-import requests
-import unicodedata
-from difflib import SequenceMatcher
-import re
 
 # Initialize rich console
 console = Console()
 
-# Load environment variables
-load_dotenv()
+# Shared Omeka client
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from common.omeka_client import OmekaClient
 
 """------------------------------------------------------------------------------
 CONFIGURATION CONSTANTS (Tunable)
@@ -133,33 +134,6 @@ TAG_SUBJECT_AND_TOPIC = "subject_and_topic"
 # API pagination
 API_PER_PAGE = 100
 
-
-def make_api_request(endpoint: str, params: Dict = None) -> Dict:
-    """
-    Make authenticated API request to Omeka S.
-    
-    Args:
-        endpoint: API endpoint (e.g., 'items', 'item_sets')
-        params: Additional query parameters
-        
-    Returns:
-        JSON response from the API
-        
-    Raises:
-        HTTPError: If the API request fails
-    """
-    base_url = os.getenv('OMEKA_BASE_URL')
-    url = f"{base_url}/{endpoint}"
-    
-    params = params or {}
-    params.update({
-        'key_identity': os.getenv('OMEKA_KEY_IDENTITY'),
-        'key_credential': os.getenv('OMEKA_KEY_CREDENTIAL')
-    })
-    
-    response = requests.get(url, params=params)
-    response.raise_for_status()
-    return response.json()
 
 def _strip_diacritics(text: str) -> str:
     """
@@ -222,19 +196,20 @@ def normalize_location_name(name: str) -> str:
     compact = text_no_diacritics.replace('-', '').replace(' ', '')
     return compact
 
-def build_authority_dict(item_set_ids: List[str], authority_type: str = "authority") -> Tuple[Dict[str, str], Dict[str, List[str]], Dict[str, Dict[str, str]]]:
+def build_authority_dict(client: OmekaClient, item_set_ids: List[str], authority_type: str = "authority") -> Tuple[Dict[str, str], Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     """Build dictionary of authority terms from specified item sets and identify ambiguous terms.
-    
+
     Args:
+        client: OmekaClient instance
         item_set_ids: List of Omeka item set IDs to fetch authorities from
         authority_type: Label for progress display (e.g., "SPATIAL", "SUBJECT")
-    
+
     Returns:
         - authority_dict: mapping from normalized names to item IDs
         - ambiguous_terms_dict: mapping from names to multiple item IDs
         - authority_metadata: mapping from item IDs to their metadata (original titles, alternatives)
     """
-    
+
     potential_lookups: List[tuple[str, str]] = []
     authority_metadata: Dict[str, Dict[str, str]] = {}
 
@@ -247,26 +222,20 @@ def build_authority_dict(item_set_ids: List[str], authority_type: str = "authori
         console=console
     ) as progress:
         task = progress.add_task(f"[cyan]Building {authority_type} authority dictionary...", total=None)
-        
+
         for item_set_id in item_set_ids:
-            page = 1
             progress.update(task, description=f"[cyan]Fetching from item set {item_set_id}...")
-            
-            while True:
-                try:
-                    items = make_api_request('items', {
-                        'item_set_id': item_set_id,
-                        'page': page,
-                        'per_page': API_PER_PAGE
-                    })
-                except requests.exceptions.HTTPError as e:
-                    console.print(f"[red]✗[/] HTTP error {e.response.status_code} for item_set_id {item_set_id}, page {page}")
-                    break 
-                
-                if not items:
-                    break
-                
-                for item in items:
+
+            try:
+                all_items = client.get_items(int(item_set_id))
+            except Exception as e:
+                console.print(f"[red]✗[/] Error fetching item set {item_set_id}: {e}")
+                continue
+
+            if not all_items:
+                continue
+
+            for item in all_items:
                     item_id = str(item['o:id'])
                     
                     metadata = {
@@ -299,10 +268,6 @@ def build_authority_dict(item_set_ids: List[str], authority_type: str = "authori
                         for variant in {lower_variant, normalized_title, diacritic_stripped_spaced}:
                             if variant:
                                 potential_lookups.append((variant, item_id))
-                
-                if len(items) < API_PER_PAGE:
-                    break
-                page += 1
 
     # Process lookups to identify authorities and ambiguities
     name_to_ids_map = defaultdict(set)
@@ -768,16 +733,17 @@ def find_input_csv(output_dir: str) -> str | None:
 
 
 def run_spatial_reconciliation(
+    client: OmekaClient,
     initial_csv_path: str,
     initial_csv_base: str,
     final_reconciled_csv_path: str
 ) -> Tuple[str, Dict[str, Dict[str, str]]]:
     """Run spatial entity reconciliation and return the output path and metadata."""
     console.rule("[bold cyan]Step 1: Spatial Reconciliation")
-    
+
     # Build spatial authority dictionary
     spatial_authority_dict, spatial_ambiguous_dict, spatial_metadata = build_authority_dict(
-        SPATIAL_AUTHORITY_ITEM_SETS, "SPATIAL"
+        client, SPATIAL_AUTHORITY_ITEM_SETS, "SPATIAL"
     )
     display_authority_stats(spatial_authority_dict, spatial_ambiguous_dict, "Spatial/Location")
     
@@ -802,24 +768,25 @@ def run_spatial_reconciliation(
 
 
 def run_subject_topic_reconciliation(
+    client: OmekaClient,
     current_input_path: str,
     initial_csv_base: str,
     final_reconciled_csv_path: str
 ) -> Tuple[str, Dict[str, Dict[str, str]]]:
     """Run combined subject and topic entity reconciliation."""
     console.rule("[bold cyan]Step 2: Subject & Topic Reconciliation")
-    
+
     # Build subject authority dictionary
     console.print("\n[dim]Building subject authorities...[/]")
     subject_authority_dict, subject_ambiguous_dict, subject_metadata = build_authority_dict(
-        SUBJECT_AUTHORITY_ITEM_SETS, "SUBJECT"
+        client, SUBJECT_AUTHORITY_ITEM_SETS, "SUBJECT"
     )
     display_authority_stats(subject_authority_dict, subject_ambiguous_dict, "Subject")
-    
+
     # Build topic authority dictionary
     console.print("\n[dim]Building topic authorities...[/]")
     topic_authority_dict, topic_ambiguous_dict, topic_metadata = build_authority_dict(
-        TOPIC_AUTHORITY_ITEM_SETS, "TOPIC"
+        client, TOPIC_AUTHORITY_ITEM_SETS, "TOPIC"
     )
     display_authority_stats(topic_authority_dict, topic_ambiguous_dict, "Topic")
     
@@ -920,7 +887,10 @@ def main():
             title="🔗 Omeka S NER Reconciliation",
             border_style="cyan"
         ))
-        
+
+        # Initialize shared Omeka client
+        client = OmekaClient.from_env()
+
         # Setup and file discovery
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_dir = os.path.join(script_dir, "output")
@@ -948,13 +918,13 @@ def main():
 
         # Step 1: Spatial Reconciliation
         reconciled_after_spatial_path, spatial_metadata = run_spatial_reconciliation(
-            initial_csv_path, initial_csv_base, final_reconciled_csv_path
+            client, initial_csv_path, initial_csv_base, final_reconciled_csv_path
         )
         console.print()
 
         # Step 2: Subject and Topic Reconciliation
         final_reconciled_path, combined_metadata = run_subject_topic_reconciliation(
-            reconciled_after_spatial_path, initial_csv_base, final_reconciled_csv_path
+            client, reconciled_after_spatial_path, initial_csv_base, final_reconciled_csv_path
         )
         console.print()
 
@@ -970,10 +940,8 @@ def main():
             border_style="green"
         ))
         
-    except requests.exceptions.HTTPError as http_err:
-        console.print(f"[red]✗[/] HTTP error during API request: {http_err}")
-        if http_err.response:
-            console.print(f"[dim]Response: {http_err.response.text[:200]}...[/]")
+    except ValueError as val_err:
+        console.print(f"[red]✗[/] Configuration error: {val_err}")
     except FileNotFoundError as fnf_err:
         console.print(f"[red]✗[/] File not found: {fnf_err}")
     except Exception as e:

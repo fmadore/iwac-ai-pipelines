@@ -70,8 +70,8 @@ OMEKA_KEY_IDENTITY=your_key_identity
 OMEKA_KEY_CREDENTIAL=your_key_credential
 
 # AI APIs (at least one required)
-GEMINI_API_KEY=your_gemini_api_key      # or GOOGLE_API_KEY
-OPENAI_API_KEY=your_openai_api_key      # or CHATGPT
+GEMINI_API_KEY=your_gemini_api_key
+OPENAI_API_KEY=your_openai_api_key
 MISTRAL_API_KEY=your_mistral_api_key
 ```
 
@@ -142,14 +142,24 @@ Results are cached in `AI_sentiment_analysis/cache/sentiment_cache.json`. The ca
 
 ## AI Models Used
 
-| Model | Provider | Notes |
-|-------|----------|-------|
-| `gemini-3-flash-preview` | Google | Gemini 3 Flash Preview with thinking_level support |
-| `gpt-5-mini` | OpenAI | GPT-5 Mini with structured output support |
-| `ministral-14b-2512` | Mistral | Ministral 14B (2025-12) with structured output |
+All three models are configured via the shared LLM provider (`common/llm_provider.py`) using `generate_structured()` for guaranteed schema-compliant outputs:
+
+| Registry Key | Provider | Model ID | Notes |
+|-------------|----------|----------|-------|
+| `gemini-flash` | Google | `gemini-3-flash-preview` | Gemini 3 Flash with thinking_level support |
+| `gpt-5-mini` | OpenAI | `gpt-5-mini` | GPT-5 Mini with structured output support |
+| `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 14B with structured output |
+
+## Architecture
+
+This pipeline uses two shared utilities:
+- **`common/omeka_client.py`** — Authenticated Omeka S API access with retry logic
+- **`common/llm_provider.py`** — Unified LLM interface with native structured outputs
+
+A single generic `analyze_with_model()` function handles all three providers, replacing the previous per-provider analysis functions. Models run concurrently via `ThreadPoolExecutor`.
 
 ## Dependencies
 
 ```bash
-pip install requests python-dotenv pydantic rich google-genai openai mistralai
+pip install pydantic rich google-genai openai mistralai python-dotenv requests
 ```

@@ -47,10 +47,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Callable
 from functools import partial
 
-import requests
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
-from ratelimit import limits, sleep_and_retry
 from pydantic import BaseModel, Field
 
 # Rich console for beautiful output
@@ -67,6 +65,7 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
+from common.omeka_client import OmekaClient  # noqa: E402
 from common.llm_provider import (  # noqa: E402
     BaseLLMClient,
     ModelOption,
@@ -89,10 +88,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # Constants & Types
 # ---------------------------------------------------------------------------
-CALLS_PER_MINUTE = 60
-ONE_MINUTE = 60
 BATCH_SIZE = 10
-DEFAULT_TIMEOUT = 30
 
 class NERResult(BaseModel):
     """Pydantic model for NER structured output.
@@ -108,13 +104,8 @@ class NERResult(BaseModel):
 class Config(BaseModel):
     """Configuration for NER processing."""
     model_config = {"arbitrary_types_allowed": True}
-    
-    omeka_base_url: str
-    omeka_key_identity: str
-    omeka_key_credential: str
+
     batch_size: int = BATCH_SIZE
-    max_retries: int = 3
-    timeout: int = DEFAULT_TIMEOUT
     model_option: Any = None  # ModelOption type
     llm_config: Any = None    # LLMConfig type
 
@@ -124,22 +115,8 @@ LOWER_PREFIXES = {"el", "van", "de", "von", "der", "den", "hadj", "ben", "ibn", 
 # Config & Prompt
 # ---------------------------------------------------------------------------
 
-def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE, max_retries: int = 3,
-                timeout: int = DEFAULT_TIMEOUT) -> Config:
-    required = {
-        'OMEKA_BASE_URL': 'omeka_base_url',
-        'OMEKA_KEY_IDENTITY': 'omeka_key_identity',
-        'OMEKA_KEY_CREDENTIAL': 'omeka_key_credential',
-    }
-    cfg: Dict[str, Any] = {}
+def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Config:
     missing = []
-    for env_var, key in required.items():
-        val = os.getenv(env_var)
-        if not val:
-            missing.append(env_var)
-        else:
-            cfg[key] = val
-    # Provider specific checks
     if model_option.provider == PROVIDER_OPENAI and not os.getenv('OPENAI_API_KEY'):
         missing.append('OPENAI_API_KEY')
     if model_option.provider == PROVIDER_GEMINI:
@@ -149,7 +126,7 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE, max_ret
         missing.append('MISTRAL_API_KEY')
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
-    
+
     # NER-specific LLM configuration for accurate metadata extraction
     llm_config = LLMConfig(
         reasoning_effort="medium",      # OpenAI: balanced reasoning (cost-effective)
@@ -157,15 +134,12 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE, max_ret
         thinking_budget=500,            # Gemini: moderate thinking (cost-effective)
         temperature=0.2                 # Gemini: consistent, low-variance results
     )
-    
-    cfg.update({
-        'batch_size': batch_size,
-        'max_retries': max_retries,
-        'timeout': timeout,
-        'model_option': model_option,
-        'llm_config': llm_config,
-    })
-    return Config(**cfg)  # type: ignore
+
+    return Config(
+        batch_size=batch_size,
+        model_option=model_option,
+        llm_config=llm_config,
+    )
 
 def load_ner_prompt() -> str:
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -173,58 +147,12 @@ def load_ner_prompt() -> str:
     with open(path, 'r', encoding='utf-8') as f:
         return f.read()
 
-# ---------------------------------------------------------------------------
-# Omeka Helpers
-# ---------------------------------------------------------------------------
-@sleep_and_retry
-@limits(calls=CALLS_PER_MINUTE, period=ONE_MINUTE)
-def make_api_request(endpoint: str, params: Optional[Dict[str, Any]] = None, *,
-                     max_retries: int = 3, timeout: int = DEFAULT_TIMEOUT) -> Optional[Any]:
-    base_url = os.getenv('OMEKA_BASE_URL')
-    if not base_url:
-        raise ValueError("OMEKA_BASE_URL not set")
-    url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    params = params.copy() if params else {}
-    params.update({
-        'key_identity': os.getenv('OMEKA_KEY_IDENTITY'),
-        'key_credential': os.getenv('OMEKA_KEY_CREDENTIAL')
-    })
-    for attempt in range(1, max_retries + 1):
-        try:
-            resp = requests.get(url, params=params, timeout=timeout)
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning(f"Request {url} failed with status {resp.status_code} attempt {attempt}/{max_retries}")
-        except requests.RequestException as e:
-            logger.warning(f"Request exception attempt {attempt}/{max_retries}: {e}")
-        if attempt == max_retries:
-            logger.error(f"Max retries reached for {url}")
-            return None
-    return None
-
-def get_items_from_set(item_set_id: str, *, max_retries: int, timeout: int) -> List[Dict[str, Any]]:
-    items: List[Dict[str, Any]] = []
-    page = 1
-    while True:
-        data = make_api_request('items', {
-            'item_set_id': item_set_id,
-            'page': page,
-            'per_page': 100
-        }, max_retries=max_retries, timeout=timeout)
-        if data is None or not data:
-            break
-        items.extend(data)
-        if len(data) < 100:
-            break
-        page += 1
-    return items
-
-def get_items_from_multiple_sets(item_set_ids: List[str], *, max_retries: int, timeout: int) -> List[Dict[str, Any]]:
+def get_items_from_multiple_sets(client: OmekaClient, item_set_ids: List[str]) -> List[Dict[str, Any]]:
     """Get items from multiple item sets and combine them into a single list."""
     all_items: List[Dict[str, Any]] = []
     for item_set_id in item_set_ids:
         with console.status(f"[cyan]Fetching items from set {item_set_id}...", spinner="dots"):
-            items = get_items_from_set(item_set_id, max_retries=max_retries, timeout=timeout)
+            items = client.get_items(int(item_set_id))
         console.print(f"  [green]✓[/] Set {item_set_id}: [bold]{len(items)}[/] items")
         logger.info(f"Found {len(items)} items in set {item_set_id}")
         all_items.extend(items)
@@ -372,8 +300,8 @@ class ProcessingStats:
 # Spatial Coverage
 # ---------------------------------------------------------------------------
 
-def get_item_set_spatial_coverage(item_set_id: str, *, timeout: int) -> str:
-    data = make_api_request(f'item_sets/{item_set_id}', timeout=timeout)
+def get_item_set_spatial_coverage(client: OmekaClient, item_set_id: str) -> str:
+    data = client.get_item_set(int(item_set_id))
     if not data:
         return ''
     values = data.get('dcterms:spatial', [])
@@ -383,10 +311,10 @@ def get_item_set_spatial_coverage(item_set_id: str, *, timeout: int) -> str:
             return val.strip()
     return ''
 
-def get_combined_spatial_coverage(item_set_ids: List[str], *, timeout: int) -> Optional[str]:
+def get_combined_spatial_coverage(client: OmekaClient, item_set_ids: List[str]) -> Optional[str]:
     """Get spatial coverage from multiple item sets. Returns the first non-empty one found."""
     for item_set_id in item_set_ids:
-        coverage = get_item_set_spatial_coverage(item_set_id, timeout=timeout)
+        coverage = get_item_set_spatial_coverage(client, item_set_id)
         if coverage:
             logger.info(f"Using spatial coverage from set {item_set_id}: {coverage}")
             return coverage
@@ -396,7 +324,7 @@ def get_combined_spatial_coverage(item_set_ids: List[str], *, timeout: int) -> O
 # Processing Functions
 # ---------------------------------------------------------------------------
 async def process_item_async(item: Dict[str, Any], writer: csv.DictWriter, stats: ProcessingStats,
-                             spatial_filter: Optional[str], timeout: int, ner_fn: Callable[[str], NERResult],
+                             spatial_filter: Optional[str], ner_fn: Callable[[str], NERResult],
                              progress: Progress, task_id) -> None:
     try:
         row = {
@@ -425,7 +353,7 @@ async def process_item_async(item: Dict[str, Any], writer: csv.DictWriter, stats
                        description=f"[cyan]NER extraction[/] [green]✓{stats.successful_items}[/] [red]✗{stats.failed_items}[/] [dim]○{stats.empty_content_items}[/]")
 
 def process_items_batch(items: List[Dict[str, Any]], writer: csv.DictWriter, stats: ProcessingStats,
-                        spatial_filter: Optional[str], timeout: int, ner_fn: Callable[[str], NERResult],
+                        spatial_filter: Optional[str], ner_fn: Callable[[str], NERResult],
                         progress: Progress, task_id) -> None:
     for item in items:
         try:
@@ -453,13 +381,13 @@ def process_items_batch(items: List[Dict[str, Any]], writer: csv.DictWriter, sta
                        description=f"[cyan]NER extraction[/] [green]✓{stats.successful_items}[/] [red]✗{stats.failed_items}[/] [dim]○{stats.empty_content_items}[/]")
 
 async def process_items_async(items: List[Dict[str, Any]], output_csv: str, stats: ProcessingStats,
-                              spatial_filter: Optional[str], batch_size: int, timeout: int,
+                              spatial_filter: Optional[str], batch_size: int,
                               ner_fn: Callable[[str], NERResult], progress: Progress, task_id) -> None:
     fieldnames = ['o:id', 'Title', 'bibo:content', 'Subject AI', 'Spatial AI']
     semaphore = asyncio.Semaphore(batch_size)
     async def worker(item: Dict[str, Any], writer: csv.DictWriter):
         async with semaphore:
-            await process_item_async(item, writer, stats, spatial_filter, timeout, ner_fn, progress, task_id)
+            await process_item_async(item, writer, stats, spatial_filter, ner_fn, progress, task_id)
     with open(output_csv, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -506,8 +434,6 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="NER extraction for Omeka S metadata (OpenAI, Gemini, or Mistral)")
     parser.add_argument("--item-set-id", type=str, help="Item set ID(s) to process (comma-separated)")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Batch size (default {BATCH_SIZE})")
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"Timeout seconds (default {DEFAULT_TIMEOUT})")
-    parser.add_argument("--max-retries", type=int, default=3, help="Max retries for Omeka requests")
     parser.add_argument("--async", action="store_true", help="Use async processing")
     parser.add_argument("--output-dir", type=str, help="Directory for output CSV")
     parser.add_argument(
@@ -541,9 +467,11 @@ async def async_main(args) -> None:
     console.print(Panel(intro_text, title="🔍 NER Extraction", border_style="cyan", padding=(1, 2)))
     
     model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "mistral-large", "ministral-14b"])
-    config = load_config(model_option=model_option, batch_size=args.batch_size, max_retries=args.max_retries,
-                         timeout=args.timeout)
-    
+    config = load_config(model_option=model_option, batch_size=args.batch_size)
+
+    # Initialize shared Omeka client
+    client = OmekaClient.from_env()
+
     # Display configuration table
     config_table = Table(title="🤖 Configuration", box=box.ROUNDED, show_header=True, header_style="bold cyan")
     config_table.add_column("Setting", style="dim")
@@ -555,18 +483,18 @@ async def async_main(args) -> None:
     config_table.add_row("Thinking Budget", str(config.llm_config.thinking_budget) if config.llm_config.thinking_budget else "default")
     console.print(config_table)
     console.print()
-    
+
     logger.info(f"Using AI model: {summary_from_option(model_option)}")
     llm_client = build_llm_client(model_option, config=config.llm_config)
     item_set_ids = _collect_item_sets(args)
-    
+
     console.print(f"[cyan]📂 Item sets:[/] {', '.join(item_set_ids)}")
-    
-    spatial_filter = get_combined_spatial_coverage(item_set_ids, timeout=config.timeout)
+
+    spatial_filter = get_combined_spatial_coverage(client, item_set_ids)
     if spatial_filter:
         console.print(f"[cyan]🌍 Spatial filter:[/] {spatial_filter}")
-    
-    items = get_items_from_multiple_sets(item_set_ids, max_retries=config.max_retries, timeout=config.timeout)
+
+    items = get_items_from_multiple_sets(client, item_set_ids)
     if not items:
         console.print("[yellow]⚠[/] No items found.")
         return
@@ -593,7 +521,7 @@ async def async_main(args) -> None:
     ) as progress:
         task_id = progress.add_task("[cyan]NER extraction[/]", total=stats.total_items)
         await process_items_async(items, output_csv, stats, spatial_filter, config.batch_size,
-                                  config.timeout, ner_fn, progress, task_id)
+                                  ner_fn, progress, task_id)
     
     summarize(stats, output_csv)
 
@@ -611,9 +539,11 @@ def main() -> None:
     console.print(Panel(intro_text, title="🔍 NER Extraction", border_style="cyan", padding=(1, 2)))
     
     model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "mistral-large", "ministral-14b"])
-    config = load_config(model_option=model_option, batch_size=args.batch_size, max_retries=args.max_retries,
-                         timeout=args.timeout)
-    
+    config = load_config(model_option=model_option, batch_size=args.batch_size)
+
+    # Initialize shared Omeka client
+    client = OmekaClient.from_env()
+
     # Display configuration table
     config_table = Table(title="🤖 Configuration", box=box.ROUNDED, show_header=True, header_style="bold cyan")
     config_table.add_column("Setting", style="dim")
@@ -625,18 +555,18 @@ def main() -> None:
     config_table.add_row("Thinking Budget", str(config.llm_config.thinking_budget) if config.llm_config.thinking_budget else "default")
     console.print(config_table)
     console.print()
-    
+
     logger.info(f"Using AI model: {summary_from_option(model_option)}")
     llm_client = build_llm_client(model_option, config=config.llm_config)
     item_set_ids = _collect_item_sets(args)
-    
+
     console.print(f"[cyan]📂 Item sets:[/] {', '.join(item_set_ids)}")
-    
-    spatial_filter = get_combined_spatial_coverage(item_set_ids, timeout=config.timeout)
+
+    spatial_filter = get_combined_spatial_coverage(client, item_set_ids)
     if spatial_filter:
         console.print(f"[cyan]🌍 Spatial filter:[/] {spatial_filter}")
-    
-    items = get_items_from_multiple_sets(item_set_ids, max_retries=config.max_retries, timeout=config.timeout)
+
+    items = get_items_from_multiple_sets(client, item_set_ids)
     if not items:
         console.print("[yellow]⚠[/] No items found.")
         return
@@ -667,7 +597,7 @@ def main() -> None:
             transient=False
         ) as progress:
             task_id = progress.add_task("[cyan]NER extraction[/]", total=stats.total_items)
-            process_items_batch(items, writer, stats, spatial_filter, config.timeout, ner_fn, progress, task_id)
+            process_items_batch(items, writer, stats, spatial_filter, ner_fn, progress, task_id)
     
     summarize(stats, output_csv)
 

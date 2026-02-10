@@ -95,13 +95,13 @@ These tools were built for IWAC but can be modified for other collections:
 
 - **Prompts** are stored as `.md` files in each pipeline directory and can be edited for different contexts, languages, or document types
 - **Pipelines** are modular and can be used independently
-- **The shared LLM provider** (`common/llm_provider.py`) centralizes model configuration
+- **Shared utilities** (`common/`) centralize Omeka S API access (`omeka_client.py`) and model configuration (`llm_provider.py`)
 
 The approach assumes you have digitized materials and need to make them searchable. It is designed for institutions and researchers managing substantial digital collections with limited resources.
 
 ## Documentation
 
-- [LLM Provider Configuration](common/README.md) — Model selection and configuration options
+- [Shared Utilities](common/README.md) — OmekaClient and LLM provider configuration
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Full dataset
 - Individual pipeline directories contain their own documentation
 

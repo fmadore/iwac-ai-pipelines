@@ -75,12 +75,8 @@ Notes
 import os
 import re
 import sys
-import json
-from datetime import datetime
 from typing import Dict, Any, List, Optional, Union, Tuple
 
-import requests
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -89,6 +85,10 @@ from rich import box
 
 # Initialize rich console for styled output
 console = Console()
+
+# Shared Omeka client
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from common.omeka_client import OmekaClient
 
 # Lightweight aliases to make intent clearer when reading types
 JSONObj = Dict[str, Any]
@@ -169,59 +169,6 @@ def normalize_md_whitespace(text: str) -> str:
     text = re.sub(r"(\n[\t ]*){3,}", "\n\n", text)
     # Remove leading/trailing blank lines
     return text.strip()
-
-
-def load_env() -> Dict[str, str]:
-    """Load Omeka credentials from .env and validate presence.
-
-    Required keys in .env:
-        - OMEKA_BASE_URL
-        - OMEKA_KEY_IDENTITY
-        - OMEKA_KEY_CREDENTIAL
-
-    Returns:
-        A dict with keys: {"base", "kid", "kcr"}.
-
-    Side effects:
-        Exits the program with code 1 if any required variables are missing.
-    """
-    load_dotenv()
-    base = os.getenv("OMEKA_BASE_URL")
-    kid = os.getenv("OMEKA_KEY_IDENTITY")
-    kcr = os.getenv("OMEKA_KEY_CREDENTIAL")
-    missing = [k for k, v in {
-        "OMEKA_BASE_URL": base,
-        "OMEKA_KEY_IDENTITY": kid,
-        "OMEKA_KEY_CREDENTIAL": kcr,
-    }.items() if not v]
-    if missing:
-        console.print(f"[red]✗[/] Missing required environment variables: {', '.join(missing)}")
-        console.print("[dim]Create a .env file with: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL[/]")
-        sys.exit(1)
-    return {"base": base.rstrip("/"), "kid": kid, "kcr": kcr}
-
-
-def get_json(url: str, params: Dict[str, str]) -> Optional[JSONLike]:
-    """Perform a GET request to the Omeka API and parse the JSON response.
-
-    This is a wrapper around requests.get() that handles common errors and
-    provides consistent error reporting. Used for all Omeka API calls.
-
-    Args:
-        url: Complete Omeka API URL (e.g., "https://example.org/api/items/123").
-        params: Query parameters including authentication credentials.
-
-    Returns:
-        Parsed JSON response (dict or list) on success, or None if any error occurs
-        (network issues, HTTP errors, invalid JSON, etc.).
-    """
-    try:
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        console.print(f"[red]✗[/] Error fetching {url}: {e}")
-        return None
 
 
 def extract_first_value(prop: Any) -> Optional[str]:
@@ -309,7 +256,7 @@ def extract_country_from_item_set(item_set: JSONObj) -> Optional[str]:
 _item_set_country_cache: Dict[str, Optional[str]] = {}
 
 
-def extract_article_country(article: JSONObj, env: Dict[str, str]) -> Optional[str]:
+def extract_article_country(article: JSONObj, client: OmekaClient) -> Optional[str]:
     """Extract the country from an article's item set's dcterms:spatial field.
 
     Fetches the article's item set from Omeka and looks up its Spatial Coverage field.
@@ -317,7 +264,7 @@ def extract_article_country(article: JSONObj, env: Dict[str, str]) -> Optional[s
 
     Args:
         article: Omeka JSON object representing a bibo:Article item.
-        env: Environment dict from load_env() with API credentials.
+        client: OmekaClient instance.
 
     Returns:
         The country name from the item set's spatial coverage, or None if not found.
@@ -326,12 +273,12 @@ def extract_article_country(article: JSONObj, env: Dict[str, str]) -> Optional[s
     item_set_list = article.get("o:item_set")
     if not isinstance(item_set_list, list) or not item_set_list:
         return None
-    
+
     # Get the first item set's ID
     first_set = item_set_list[0]
     if not isinstance(first_set, dict):
         return None
-    
+
     # Get item set ID from o:id or @id
     set_id = first_set.get("o:id")
     if set_id:
@@ -339,32 +286,29 @@ def extract_article_country(article: JSONObj, env: Dict[str, str]) -> Optional[s
     else:
         set_id_url = first_set.get("@id")
         if set_id_url:
-            # Parse ID from URL like "https://islam.zmo.de/api/item_sets/2185"
-            import re
             m = re.search(r"/item_sets/(\d+)$", set_id_url)
             set_id = m.group(1) if m else None
-    
+
     if not set_id:
         return None
-    
+
     # Check cache first
     if set_id in _item_set_country_cache:
         return _item_set_country_cache[set_id]
-    
+
     # Fetch the item set
-    item_set = fetch_item_set(env, set_id)
+    item_set = client.get_item_set(int(set_id))
     if not item_set:
         _item_set_country_cache[set_id] = None
         return None
-    
+
     # Extract country from item set's spatial coverage
     country = extract_country_from_item_set(item_set)
     _item_set_country_cache[set_id] = country
     return country
-    return country
 
 
-def format_article(article: JSONObj, env: Optional[Dict[str, str]] = None, country: Optional[str] = None) -> str:
+def format_article(article: JSONObj, client: Optional[OmekaClient] = None, country: Optional[str] = None) -> str:
     """Convert a single newspaper article into NotebookLM-friendly Markdown format.
 
     Creates a standardized Markdown block for each article with:
@@ -379,7 +323,7 @@ def format_article(article: JSONObj, env: Optional[Dict[str, str]] = None, count
     Args:
         article: Omeka JSON object representing a bibo:Article with fields like
                 o:title, dcterms:date, dcterms:publisher, bibo:content.
-        env: Optional environment dict from load_env() (kept for backward compatibility).
+        client: Optional OmekaClient instance for fetching article country.
         country: Optional country name to include in metadata. If not provided,
                  will attempt to extract from publisher's spatial coverage.
 
@@ -404,9 +348,9 @@ def format_article(article: JSONObj, env: Optional[Dict[str, str]] = None, count
     publishers = extract_publishers(article)
     publisher_str = "; ".join(publishers) if publishers else "Inconnu"
     
-    # Use provided country, or try to extract from article's item set if env is provided
-    if not country and env:
-        country = extract_article_country(article, env)
+    # Use provided country, or try to extract from article's item set if client is provided
+    if not country and client:
+        country = extract_article_country(article, client)
 
     lines = [f"# {title}"]
     lines.append(f"**Journal :** {publisher_str}")
@@ -423,23 +367,17 @@ def format_article(article: JSONObj, env: Optional[Dict[str, str]] = None, count
     return "\n".join(lines)
 
 
-def fetch_item(env: Dict[str, str], item_id: str) -> Optional[JSONObj]:
+def fetch_item(client: OmekaClient, item_id: str) -> Optional[JSONObj]:
     """Fetch a single Item by ID.
 
     Args:
-        env: Environment dict from load_env().
+        client: OmekaClient instance.
         item_id: Numeric string Item ID.
 
     Returns:
         The item JSON or None.
     """
-    url = f"{env['base']}/items/{item_id}"
-    params = {
-        "key_identity": env["kid"],
-        "key_credential": env["kcr"],
-    }
-    data = get_json(url, params)
-    return data if isinstance(data, dict) else None
+    return client.get_item(int(item_id))
 
 
 def parse_id_from_at_id(at_id: str) -> Optional[str]:
@@ -465,67 +403,47 @@ def parse_id_from_at_id(at_id: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def fetch_resource(env: Dict[str, str], resource_id: str) -> Optional[JSONObj]:
+def fetch_resource(client: OmekaClient, resource_id: str) -> Optional[JSONObj]:
     """Fetch a generic resource by ID via the '/resources' endpoint.
 
     Useful when reverse links use '/api/resources/<id>' rather than '/items'.
     """
-    url = f"{env['base']}/resources/{resource_id}"
-    params = {
-        "key_identity": env["kid"],
-        "key_credential": env["kcr"],
-    }
-    data = get_json(url, params)
-    return data if isinstance(data, dict) else None
+    url = f"{client.base_url}/resources/{resource_id}"
+    return client.get_resource(url)
 
 
-def fetch_item_or_resource(env: Dict[str, str], id_str: str) -> Optional[JSONObj]:
+def fetch_item_or_resource(client: OmekaClient, id_str: str) -> Optional[JSONObj]:
     """Try fetching an Item by ID, with fallback to the generic Resource endpoint.
 
-    Some Omeka installations use different endpoints for the same content.
-    This function tries the more specific /items endpoint first, then falls back
-    to the generic /resources endpoint if that fails.
-
     Args:
-        env: Environment dict containing API credentials and base URL.
+        client: OmekaClient instance.
         id_str: Numeric ID as a string.
 
     Returns:
         The JSON object for the item/resource, or None if both endpoints fail.
     """
-    it = fetch_item(env, id_str)
+    it = fetch_item(client, id_str)
     if isinstance(it, dict):
         return it
-    return fetch_resource(env, id_str)
+    return fetch_resource(client, id_str)
 
 
-def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tuple[Optional[JSONObj], List[JSONObj]]:
+def fetch_articles_with_subject(client: OmekaClient, subject_item_id: str) -> Tuple[Optional[JSONObj], List[JSONObj]]:
     """Find all newspaper articles that reference a specific subject/topic item.
 
     This function implements "reverse lookup" - given a subject authority record
     (like a person, place, or topic), it finds all articles that cite it via
     dcterms:subject relationships.
 
-    How it works:
-    1. Fetch the subject item to access its @reverse.dcterms:subject property
-    2. This property lists all items that reference this subject
-    3. For each reference, fetch the full item record
-    4. Filter to keep only bibo:Article and bibo:Issue items
-    5. Return both the original subject and the filtered articles
-
     Args:
-        env: Environment dict containing API credentials.
+        client: OmekaClient instance.
         subject_item_id: Numeric ID of the subject authority item.
 
     Returns:
         Tuple of (subject_item_json_or_None, [list_of_article_items]).
         The subject will be None if not found; articles list may be empty.
-        
-    Example use case:
-        If item 12345 represents "Burkina Faso" as a place authority,
-        this will find all newspaper articles about Burkina Faso.
     """
-    subject_item = fetch_item(env, subject_item_id)
+    subject_item = fetch_item(client, subject_item_id)
     if not subject_item:
         return None, []
 
@@ -589,7 +507,7 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
             seen_ids.add(rid)
             
             # Fetch the full item record to get complete content and confirm type
-            item = fetch_item_or_resource(env, rid)
+            item = fetch_item_or_resource(client, rid)
             if not isinstance(item, dict):
                 fetch_fail += 1
                 progress.update(task, advance=1)
@@ -615,79 +533,35 @@ def fetch_articles_with_subject(env: Dict[str, str], subject_item_id: str) -> Tu
     return subject_item, article_items
 
 
-def fetch_item_set(env: Dict[str, str], set_id: str) -> Optional[JSONObj]:
+def fetch_item_set(client: OmekaClient, set_id: str) -> Optional[JSONObj]:
     """Fetch a single Item Set resource by ID.
 
     Args:
-        env: Environment dict from load_env().
+        client: OmekaClient instance.
         set_id: Numeric string ID for the item set.
 
     Returns:
         The item set JSON object, or None if not found.
     """
-    url = f"{env['base']}/item_sets/{set_id}"
-    params = {
-        "key_identity": env["kid"],
-        "key_credential": env["kcr"],
-    }
-    data = get_json(url, params)
-    return data if isinstance(data, dict) else None
+    return client.get_item_set(int(set_id))
 
 
-def fetch_items_in_set(env: Dict[str, str], set_id: str, per_page: int = 100) -> List[JSONObj]:
-    """Fetch all items that belong to a specific Omeka Item Set using pagination.
-
-    Item Sets in Omeka can contain hundreds or thousands of items, so we need
-    to paginate through the results. This function handles the pagination
-    automatically and returns all items in one list.
+def fetch_items_in_set(client: OmekaClient, set_id: str) -> List[JSONObj]:
+    """Fetch all items that belong to a specific Omeka Item Set.
 
     Args:
-        env: Environment dict containing API credentials from load_env().
+        client: OmekaClient instance.
         set_id: Numeric string ID for the target item set.
-        per_page: Number of items to request per API call (default 100).
 
     Returns:
-        Complete list of item JSON objects from the set. May be empty if
-        the set doesn't exist or contains no items.
-        
-    Note:
-        This can be memory-intensive for very large sets. Consider adding
-        a streaming/callback approach for sets with 10,000+ items.
+        Complete list of item JSON objects from the set.
     """
-    base_items_url = f"{env['base']}/items"
-    all_items: List[JSONObj] = []
-    page = 1
-    
-    # Paginate through all items in the set with spinner
-    with console.status("[cyan]Fetching items from set...[/]", spinner="dots") as status:
-        while True:
-            params = {
-                "key_identity": env["kid"],
-                "key_credential": env["kcr"],
-                "item_set_id": set_id,
-                "per_page": str(per_page),
-                "page": str(page),
-            }
-            data = get_json(base_items_url, params)
-            
-            # Stop if we get no data or an error
-            if not isinstance(data, list) or not data:
-                break
-                
-            # Filter to ensure we only get dict objects (valid items)
-            page_items = [d for d in data if isinstance(d, dict)]
-            all_items.extend(page_items)
-            status.update(f"[cyan]Fetching items from set... [dim](page {page}, {len(all_items)} items)[/]")
-            
-            # If we got fewer items than requested, we've reached the end
-            if len(page_items) < per_page:
-                break
-            page += 1
-    return all_items
+    with console.status("[cyan]Fetching items from set...[/]", spinner="dots"):
+        return client.get_items(int(set_id))
 
 
 def process_item_set(
-    env: Dict[str, str],
+    client: OmekaClient,
     set_id: str,
     out_dir: str,
     max_items_per_file: int,
@@ -696,15 +570,8 @@ def process_item_set(
 ) -> Tuple[int, List[str]]:
     """Process a single Item Set: fetch items, filter for articles, and export to file(s).
 
-    This is the main processing function for Item Set-based exports. It:
-    1. Fetches the Item Set metadata to get its title
-    2. Retrieves all items in the set (with pagination)
-    3. Filters for newspaper articles (bibo:Article type only, excludes bibo:Issue)
-    4. Exports articles to Markdown file(s), splitting if needed for size limits
-    5. Organizes output by country if specified
-
     Args:
-        env: Loaded environment dict with API credentials and base URL.
+        client: OmekaClient instance.
         set_id: The Omeka Item Set ID to process (as string).
         out_dir: Base output directory for generated files.
         max_items_per_file: Maximum articles per file before auto-splitting.
@@ -713,13 +580,9 @@ def process_item_set(
 
     Returns:
         Tuple of (total_article_count, [list_of_written_file_paths]).
-        
-    Example:
-        If set_id "12345" contains 500 articles and max_items_per_file is 250,
-        this will create two files: "newspaper_name_part1.md" and "newspaper_name_part2.md"
     """
     # Fetch the Item Set metadata to get its human-readable title
-    item_set = fetch_item_set(env, set_id)
+    item_set = fetch_item_set(client, set_id)
     if not item_set:
         console.print(f"[yellow]⚠[/] Skipping Item Set {set_id}: not found or inaccessible.")
         return 0, []
@@ -736,7 +599,7 @@ def process_item_set(
     console.print(f"{prefix}Processing Item Set {set_id}: [bold]{set_title}[/]")
     
     # Fetch all items in this set
-    items = fetch_items_in_set(env, set_id, per_page=100)
+    items = fetch_items_in_set(client, set_id)
     console.print(f"  [dim]Found {len(items)} items. Filtering for articles...[/]")
 
     # Filter for newspaper articles only (exclude bibo:Issue which are full newspaper editions)
@@ -774,20 +637,20 @@ def process_item_set(
     if total_articles <= max_items_per_file:
         # Small collection: write all articles to a single file
         out_path = os.path.join(target_dir, f"{file_stub}_articles.{file_ext}")
-        write_articles_to_file(articles, out_path, header_title, env=env, country=country)
+        write_articles_to_file(articles, out_path, header_title, client=client, country=country)
         written_files.append(out_path)
         console.print(f"  [green]✓[/] Wrote {total_articles} articles → [dim]{os.path.basename(out_path)}[/]")
     else:
         # Large collection: split into multiple files to stay within NotebookLM limits
         num_parts = (total_articles + max_items_per_file - 1) // max_items_per_file
         console.print(f"  [cyan]ℹ[/] Splitting {total_articles} articles into {num_parts} parts...")
-        
+
         for part_num in range(1, num_parts + 1):
             start_idx = (part_num - 1) * max_items_per_file
             end_idx = min(start_idx + max_items_per_file, total_articles)
             part_articles = articles[start_idx:end_idx]
             out_path = os.path.join(target_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
-            write_articles_to_file(part_articles, out_path, header_title, part_num, env=env, country=country)
+            write_articles_to_file(part_articles, out_path, header_title, part_num, client=client, country=country)
             written_files.append(out_path)
             console.print(f"    Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
@@ -795,7 +658,7 @@ def process_item_set(
 
 
 def process_subject_items(
-    env: Dict[str, str],
+    client: OmekaClient,
     subject_item_id: str,
     out_dir: str,
     max_items_per_file: int,
@@ -803,11 +666,8 @@ def process_subject_items(
 ) -> Tuple[int, List[str]]:
     """Process reverse-linked items for a given subject Item ID and export to file(s).
 
-    Articles are grouped by publisher (newspaper) into separate files.
-    Each publisher's articles are written to a file named after the subject and publisher.
-
     Args:
-        env: Loaded env dict.
+        client: OmekaClient instance.
         subject_item_id: Item ID used as dcterms:subject by articles.
         out_dir: Output directory.
         max_items_per_file: Max articles per file before splitting.
@@ -817,7 +677,7 @@ def process_subject_items(
         (article_count, [written_files])
     """
     console.print(f"[cyan]ℹ[/] Looking up subject Item {subject_item_id}...")
-    subject, articles = fetch_articles_with_subject(env, subject_item_id)
+    subject, articles = fetch_articles_with_subject(client, subject_item_id)
     if not subject:
         console.print(f"[red]✗[/] Subject item {subject_item_id} not found or inaccessible.")
         return 0, []
@@ -866,7 +726,7 @@ def process_subject_items(
         
         if pub_count <= max_items_per_file:
             out_path = os.path.join(subject_dir, f"{file_stub}_articles.{file_ext}")
-            write_articles_to_file(pub_articles, out_path, header_title, env=env)
+            write_articles_to_file(pub_articles, out_path, header_title, client=client)
             written.append(out_path)
             console.print(f"[green]✓[/] {publisher_name}: {pub_count} articles → [dim]{os.path.basename(out_path)}[/]")
         else:
@@ -877,7 +737,7 @@ def process_subject_items(
                 end_idx = min(start_idx + max_items_per_file, pub_count)
                 part_articles = pub_articles[start_idx:end_idx]
                 out_path = os.path.join(subject_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
-                write_articles_to_file(part_articles, out_path, header_title, part_num, env=env)
+                write_articles_to_file(part_articles, out_path, header_title, part_num, client=client)
                 written.append(out_path)
                 console.print(f"  Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
@@ -889,22 +749,22 @@ def write_articles_to_file(
     file_path: str,
     header_title: str,
     part_num: int = None,
-    env: Optional[Dict[str, str]] = None,
+    client: Optional[OmekaClient] = None,
     country: Optional[str] = None,
 ) -> None:
     """Write a batch of articles to a single Markdown file (no top header).
-    
+
     Args:
         articles: List of article JSON objects to write.
         file_path: Full path to the output file.
         header_title: Unused (kept for backward compatibility).
         part_num: Part number for multi-part exports (unused in content).
-        env: Environment dict from load_env() for fetching publisher country.
+        client: OmekaClient instance for fetching publisher country.
         country: Optional country name to include in all articles' metadata.
     """
     with open(file_path, "w", encoding="utf-8") as f:
         for art in articles:
-            f.write(format_article(art, env, country))
+            f.write(format_article(art, client, country))
 
 
 def main():
@@ -938,7 +798,11 @@ def main():
         border_style="cyan"
     ))
     
-    env = load_env()
+    try:
+        client = OmekaClient.from_env()
+    except ValueError as e:
+        console.print(f"[red]✗[/] {e}")
+        sys.exit(1)
 
     # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
     MAX_ITEMS_PER_FILE = 250
@@ -1025,7 +889,7 @@ def main():
                 if not isinstance(sid, str) or not sid.isdigit():
                     console.print(f"[yellow]⚠[/] Skipping invalid Item Set ID '{sid}' for {country}.")
                     continue
-                count, files = process_item_set(env, sid, out_dir, MAX_ITEMS_PER_FILE, country_label=country, file_ext=file_ext)
+                count, files = process_item_set(client, sid, out_dir, MAX_ITEMS_PER_FILE, country_label=country, file_ext=file_ext)
                 grand_total += count
                 all_written.extend(files)
 
@@ -1049,7 +913,7 @@ def main():
     # Mode 3: Export articles that reference a specific subject authority
     if subject_item_id:
         console.rule("[bold cyan]Subject-based Export[/]")
-        count, files = process_subject_items(env, subject_item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
+        count, files = process_subject_items(client, subject_item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
         if files:
             console.print(Panel(
                 f"[green]✓[/] Exported [bold]{count}[/] articles to {len(files)} file(s)",
@@ -1065,7 +929,7 @@ def main():
     # Mode 2: Export a single Item Set by its ID
     assert single_set_id is not None
     console.rule("[bold cyan]Single Item Set Export[/]")
-    count, files = process_item_set(env, single_set_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
+    count, files = process_item_set(client, single_set_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
     if files:
         console.print(Panel(
             f"[green]✓[/] Exported [bold]{count}[/] articles to {len(files)} file(s)",

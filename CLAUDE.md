@@ -25,6 +25,22 @@ python 01_NER_AI.py --item-set-id 123 --model gpt-5-mini --async --batch-size 20
 
 ## Architecture
 
+### Shared Omeka Client
+
+**All** pipelines accessing Omeka S **must** use `common/omeka_client.py`:
+
+```python
+from common.omeka_client import OmekaClient
+
+client = OmekaClient.from_env()
+items = client.get_items(item_set_id=123)
+item = client.get_item(456)
+client.update_item(456, data)
+item_set = client.get_item_set(789)
+```
+
+**Never** use raw `requests.get/patch` with Omeka credentials directly in pipeline scripts.
+
 ### Shared LLM Provider Pattern
 
 Text-only pipelines **must** route through `common/llm_provider.py`:
@@ -42,7 +58,7 @@ response = llm_client.generate(system_prompt, user_prompt)
 
 ### Multimodal Pipelines (Exception)
 
-Audio, vision, HTR, and OCR scripts use provider clients directly because they require special capabilities not available through the shared provider.
+Audio, vision, HTR, and OCR scripts use provider clients directly because they require special capabilities not available through the shared provider. They still use `OmekaClient` for all Omeka S API access.
 
 ### Model Registry
 
@@ -65,11 +81,12 @@ Aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `mistral` → `
 
 ## Pipeline Categories
 
-### Text-Only Pipelines (use shared `llm_provider.py`)
+### Text-Only Pipelines (use shared `llm_provider.py` + `omeka_client.py`)
 - `AI_summary/` — French document summarization
 - `AI_NER/` — Named entity recognition with authority reconciliation
 - `AI_ocr_correction/` — OCR error correction (plain text or ALTO XML)
-- `NotebookLM/` — Export to Google NotebookLM
+- `AI_sentiment_analysis/` — Sentiment analysis with all 3 providers concurrently
+- `NotebookLM/` — Export to Google NotebookLM (OmekaClient only, no LLM)
 
 ### Multimodal Pipelines (use provider APIs directly)
 - `AI_audio_summary/` — Audio/video transcription (Gemini multimodal)
@@ -120,6 +137,7 @@ response = llm_client.generate_structured(system_prompt, user_prompt, response_s
 ## Checklists for New Scripts
 
 ### Text-Only Scripts
+- [ ] Use `OmekaClient.from_env()` for all Omeka S API access
 - [ ] Import from `common.llm_provider`: `build_llm_client`, `get_model_option`, `LLMConfig`, `summary_from_option`
 - [ ] Provide `--model` flag with `choices=[...]` or use `allowed_keys`
 - [ ] Create task-appropriate `LLMConfig`
@@ -129,7 +147,8 @@ response = llm_client.generate_structured(system_prompt, user_prompt, response_s
 - [ ] Use `rich` library for output
 
 ### Multimodal Scripts
-- [ ] Use appropriate provider client directly
+- [ ] Use `OmekaClient.from_env()` for all Omeka S API access
+- [ ] Use appropriate provider client directly for AI processing
 - [ ] Use `system_instruction` in `GenerateContentConfig` (Gemini)
 - [ ] Handle API errors with retry logic (`tenacity`)
 - [ ] Log selected model before processing

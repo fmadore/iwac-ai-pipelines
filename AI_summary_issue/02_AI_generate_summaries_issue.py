@@ -44,14 +44,11 @@ Usage:
 
 import os
 import sys
-import io
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader, PdfWriter
 from pydantic import BaseModel, Field
 
 # Rich console for beautiful output
@@ -74,6 +71,9 @@ from common.llm_provider import (  # noqa: E402
     get_model_option,
     summary_from_option,
 )
+from common.gemini_utils import get_thinking_level  # noqa: E402
+from common.pdf_utils import extract_pdf_page, get_pdf_page_count  # noqa: E402
+from common.retry import retry_with_backoff  # noqa: E402
 
 # ------------------------------------------------------------------
 # Pydantic Models for Structured Outputs
@@ -118,10 +118,8 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 load_dotenv()
 
-# Retry configuration
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
-RETRY_BACKOFF = 2  # multiplier for exponential backoff
 
 # ------------------------------------------------------------------
 # Prompt Loading
@@ -187,87 +185,9 @@ def get_model_pair() -> Tuple[ModelOption, ModelOption]:
     return step1_option, step2_option
 
 # ------------------------------------------------------------------
-# PDF Page Extraction (PyPDF2)
-# ------------------------------------------------------------------
-def extract_pdf_page(pdf_path: Path, page_number: int) -> bytes:
-    """
-    Extract a single page from a PDF as bytes.
-    
-    Args:
-        pdf_path: Path to the PDF file
-        page_number: Page number to extract (0-indexed)
-        
-    Returns:
-        PDF bytes containing only the specified page
-    """
-    try:
-        reader = PdfReader(str(pdf_path))
-        writer = PdfWriter()
-        
-        # Add the specific page
-        writer.add_page(reader.pages[page_number])
-        
-        # Write to bytes
-        output_buffer = io.BytesIO()
-        writer.write(output_buffer)
-        output_buffer.seek(0)
-        
-        return output_buffer.getvalue()
-        
-    except Exception as e:
-        logging.error(f"Error extracting page {page_number + 1} from {pdf_path}: {e}")
-        raise
-
-def get_pdf_page_count(pdf_path: Path) -> int:
-    """
-    Get the number of pages in a PDF.
-    
-    Args:
-        pdf_path: Path to the PDF file
-        
-    Returns:
-        Number of pages in the PDF
-    """
-    try:
-        reader = PdfReader(str(pdf_path))
-        return len(reader.pages)
-    except Exception as e:
-        logging.error(f"Error reading PDF page count from {pdf_path}: {e}")
-        raise
-
-# ------------------------------------------------------------------
 # AI Generation Functions with Retry
 # ------------------------------------------------------------------
-def retry_on_error(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY):
-    """
-    Decorator for automatic retry on error.
-    
-    Args:
-        max_retries: Maximum number of attempts
-        delay: Initial delay between attempts (with exponential backoff)
-    """
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            current_delay = delay
-            
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        logging.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {current_delay}s...")
-                        time.sleep(current_delay)
-                        current_delay *= RETRY_BACKOFF
-                    else:
-                        logging.error(f"All {max_retries} attempts failed.")
-            
-            raise last_exception
-        return wrapper
-    return decorator
-
-@retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
+@retry_with_backoff(max_retries=MAX_RETRIES, base_delay=RETRY_DELAY)
 def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: bytes, 
                         page_num: int, config: types.GenerateContentConfig) -> Optional[PageExtraction]:
     """
@@ -320,7 +240,7 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
         logging.error(f"Generation error for page {page_num}: {e}")
         raise  # Let the retry decorator handle it
 
-@retry_on_error(max_retries=MAX_RETRIES, delay=RETRY_DELAY)
+@retry_with_backoff(max_retries=MAX_RETRIES, base_delay=RETRY_DELAY)
 def generate_consolidation_with_gemini(client: genai.Client, model_name: str,
                                       user_content: str, config: types.GenerateContentConfig) -> Optional[MagazineIndex]:
     """
@@ -445,17 +365,12 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
         "response_schema": PageExtraction,  # Pydantic model for structured output
     }
     
-    # Handle thinking config - all Gemini 3 models use thinking_level
-    thinking_level = llm_config.thinking_level or model_option.default_thinking_level
-    if thinking_level is None:
-        # Default based on model type: MINIMAL for Flash, LOW for Pro
-        is_pro_model = "pro" in model_option.model.lower()
-        thinking_level = "LOW" if is_pro_model else "MINIMAL"
+    thinking_level = get_thinking_level(model_option.model, override=llm_config.thinking_level)
     config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
     logging.info(f"Using Gemini 3 with thinking_level={thinking_level}")
-    
+
     gen_config = types.GenerateContentConfig(**config_kwargs)
-    
+
     console.print(f"\n[bold cyan]Step 1:[/] Processing {total_pages} pages with [green]{model_name}[/]")
     console.print("[dim]Using structured outputs (JSON schema)[/]")
     logging.info(f"Step 1: Processing {total_pages} pages with {model_name} (structured output)...")
@@ -624,14 +539,9 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
         "response_schema": MagazineIndex,  # Pydantic model for structured output
     }
     
-    # Handle thinking config - all Gemini 3 models use thinking_level
-    thinking_level = llm_config.thinking_level or model_option.default_thinking_level
-    if thinking_level is None:
-        # Default based on model type: MINIMAL for Flash, LOW for Pro
-        is_pro_model = "pro" in model_option.model.lower()
-        thinking_level = "LOW" if is_pro_model else "MINIMAL"
+    thinking_level = get_thinking_level(model_option.model, override=llm_config.thinking_level)
     config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
-    
+
     gen_config = types.GenerateContentConfig(**config_kwargs)
     
     # Generate consolidation with automatic retry

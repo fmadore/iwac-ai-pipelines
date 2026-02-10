@@ -27,25 +27,20 @@ Environment Variables
 OMEKA_BASE_URL        Base URL for Omeka S API
 OMEKA_KEY_IDENTITY    API key identity
 OMEKA_KEY_CREDENTIAL  API key credential
-GOOGLE_API_KEY        Google Gemini API key
+GEMINI_API_KEY        Google Gemini API key
 OPENAI_API_KEY        OpenAI API key
 MISTRAL_API_KEY       Mistral API key
 """
 import os
+import sys
 import json
 import time
 import argparse
 import logging
-import asyncio
 import concurrent.futures
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
-from datetime import datetime
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 # Rich for beautiful console output
@@ -54,28 +49,13 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich.logging import RichHandler
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Prompt
 from rich import box
 
-# Google GenAI SDK
-try:
-    from google import genai
-    from google.genai import types
-    from google.genai import errors as genai_errors
-except ImportError:
-    genai = None
-
-# OpenAI SDK
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
-
-# Mistral AI SDK
-try:
-    from mistralai import Mistral
-except ImportError:
-    Mistral = None
+# Shared Omeka client and LLM provider
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from common.omeka_client import OmekaClient
+from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
 
 # Global Rich console
 console = Console()
@@ -84,10 +64,12 @@ console = Console()
 # CONFIGURATION
 # ============================================================================
 
-# AI Model names
-GEMINI_MODEL_NAME = "gemini-3-flash-preview"
-CHATGPT_MODEL_NAME = "gpt-5-mini"
-MISTRAL_MODEL_NAME = "ministral-14b-2512"
+# Model registry keys for the 3 concurrent models
+MODEL_KEYS = {
+    "gemini": "gemini-flash",
+    "chatgpt": "gpt-5-mini",
+    "mistral": "ministral-14b",
+}
 
 # Cache file names
 CACHE_DIR_NAME = "cache"
@@ -237,79 +219,6 @@ def create_user_prompt(article_text: str) -> str:
 # OMEKA S API FUNCTIONS
 # ============================================================================
 
-def create_session() -> requests.Session:
-    """Create a requests session with retry logic."""
-    session = requests.Session()
-    retries = Retry(
-        total=5,
-        backoff_factor=0.5,
-        status_forcelist=[500, 502, 503, 504]
-    )
-    session.mount('https://', HTTPAdapter(max_retries=retries))
-    session.mount('http://', HTTPAdapter(max_retries=retries))
-    return session
-
-
-def fetch_items_from_omeka(
-    item_set_ids: List[int],
-    base_url: str,
-    key_identity: str,
-    key_credential: str,
-    logger: logging.Logger
-) -> List[Dict[str, Any]]:
-    """
-    Fetch all items from specified Omeka S item sets.
-
-    Args:
-        item_set_ids: List of item set IDs to fetch from
-        base_url: Omeka S API base URL
-        key_identity: API key identity
-        key_credential: API key credential
-        logger: Logger instance
-
-    Returns:
-        List of item dictionaries
-    """
-    session = create_session()
-    all_items = []
-
-    for item_set_id in item_set_ids:
-        logger.info(f"Fetching items from item set {item_set_id}...")
-        page = 1
-        per_page = 100
-
-        while True:
-            url = f"{base_url}/items"
-            params = {
-                'key_identity': key_identity,
-                'key_credential': key_credential,
-                'item_set_id': item_set_id,
-                'per_page': per_page,
-                'page': page
-            }
-
-            try:
-                response = session.get(url, params=params, timeout=30)
-                response.raise_for_status()
-                page_items = response.json()
-
-                if not page_items:
-                    break
-
-                all_items.extend(page_items)
-                logger.debug(f"  Page {page}: {len(page_items)} items")
-
-                if len(page_items) < per_page:
-                    break
-
-                page += 1
-
-            except requests.RequestException as e:
-                logger.error(f"Error fetching items from set {item_set_id}, page {page}: {e}")
-                break
-
-    return all_items
-
 
 def get_item_content(item: Dict[str, Any]) -> str:
     """Extract bibo:content text from an Omeka item."""
@@ -353,53 +262,25 @@ def has_existing_sentiment(item: Dict[str, Any], available_models: List[str]) ->
     return True
 
 
-def get_full_item_data(
-    item_id: int,
-    base_url: str,
-    key_identity: str,
-    key_credential: str
-) -> Optional[Dict[str, Any]]:
-    """Fetch complete item data from Omeka S."""
-    url = f"{base_url}/items/{item_id}"
-    params = {
-        'key_identity': key_identity,
-        'key_credential': key_credential
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        console.print(f"[red]Error fetching item {item_id}:[/] {e}")
-        return None
-
-
-
-
 def update_item_sentiment(
+    client: OmekaClient,
     item_id: int,
     sentiment_data: Dict[str, Dict[str, Any]],
-    base_url: str,
-    key_identity: str,
-    key_credential: str,
     logger: logging.Logger
 ) -> bool:
     """
     Update an Omeka S item with sentiment analysis results from all models.
 
     Args:
+        client: OmekaClient instance
         item_id: Omeka item ID
         sentiment_data: Dictionary with model names as keys and sentiment results as values
-        base_url: Omeka S API base URL
-        key_identity: API key identity
-        key_credential: API key credential
         logger: Logger instance
 
     Returns:
         True if update successful, False otherwise
     """
-    item_data = get_full_item_data(item_id, base_url, key_identity, key_credential)
+    item_data = client.get_item(item_id)
     if not item_data:
         return False
 
@@ -484,42 +365,29 @@ def update_item_sentiment(
     if not modified:
         return True  # Nothing to update
 
-    # Send PATCH request
-    url = f"{base_url}/items/{item_id}"
-    params = {
-        'key_identity': key_identity,
-        'key_credential': key_credential
-    }
-    headers = {'Content-Type': 'application/json'}
-
-    try:
-        response = requests.patch(url, json=item_data, params=params, headers=headers, timeout=60)
-        response.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        logger.error(f"Failed to update item {item_id}: {e}")
-        return False
+    return client.update_item(item_id, item_data)
 
 
 # ============================================================================
 # AI ANALYSIS FUNCTIONS
 # ============================================================================
 
-def analyze_with_gemini(
+def analyze_with_model(
+    llm_client: BaseLLMClient,
     text: str,
-    api_key: str,
     system_prompt: str,
+    model_label: str,
     logger: logging.Logger,
     max_retries: int = 3
 ) -> Dict[str, Any]:
-    """Analyze text using Google Gemini API."""
+    """Analyze text using any LLM provider via the shared provider."""
     default_error = {
         "centralite_islam_musulmans": "ERREUR_ANALYSE",
-        "centralite_justification": "Erreur lors de l'analyse Gemini.",
+        "centralite_justification": f"Erreur lors de l'analyse {model_label}.",
         "subjectivite_score": None,
-        "subjectivite_justification": "Erreur lors de l'analyse Gemini.",
+        "subjectivite_justification": f"Erreur lors de l'analyse {model_label}.",
         "polarite": "ERREUR_ANALYSE",
-        "polarite_justification": "Erreur lors de l'analyse Gemini.",
+        "polarite_justification": f"Erreur lors de l'analyse {model_label}.",
         "analysis_error": "Unknown error"
     }
 
@@ -534,217 +402,51 @@ def analyze_with_gemini(
             "analysis_error": "Empty text"
         }
 
-    if genai is None:
-        return {**default_error, "analysis_error": "Gemini SDK not installed"}
-
-    try:
-        client = genai.Client(api_key=api_key)
-    except Exception as e:
-        return {**default_error, "analysis_error": f"Client init error: {e}"}
-
     user_prompt = create_user_prompt(text)
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        response_mime_type="application/json",
-        response_schema=SentimentAnalysisOutput,
-        temperature=0.2,
-    )
 
     for attempt in range(max_retries):
         try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL_NAME,
-                contents=user_prompt,
-                config=config
+            result = llm_client.generate_structured(
+                system_prompt, user_prompt, SentimentAnalysisOutput
             )
-
-            if response.parsed:
-                return {**response.parsed.model_dump(), "analysis_error": None}
-
-            if response.text:
-                data = json.loads(response.text)
-                validated = SentimentAnalysisOutput(**data)
-                return {**validated.model_dump(), "analysis_error": None}
-
+            return {**result.model_dump(), "analysis_error": None}
         except Exception as e:
-            logger.debug(f"Gemini attempt {attempt + 1} failed: {e}")
+            logger.debug(f"{model_label} attempt {attempt + 1} failed: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
 
     return {**default_error, "analysis_error": "Max retries exceeded"}
 
 
-def analyze_with_chatgpt(
-    text: str,
-    api_key: str,
-    system_prompt: str,
-    logger: logging.Logger,
-    max_retries: int = 3
-) -> Dict[str, Any]:
-    """Analyze text using OpenAI ChatGPT API."""
-    default_error = {
-        "centralite_islam_musulmans": "ERREUR_ANALYSE",
-        "centralite_justification": "Erreur lors de l'analyse ChatGPT.",
-        "subjectivite_score": None,
-        "subjectivite_justification": "Erreur lors de l'analyse ChatGPT.",
-        "polarite": "ERREUR_ANALYSE",
-        "polarite_justification": "Erreur lors de l'analyse ChatGPT.",
-        "analysis_error": "Unknown error"
-    }
-
-    if not text or not text.strip():
-        return {
-            **default_error,
-            "centralite_islam_musulmans": "Non abordé",
-            "centralite_justification": "Texte non fourni ou vide.",
-            "subjectivite_justification": "Non applicable - texte vide.",
-            "polarite": "Non applicable",
-            "polarite_justification": "Non applicable - texte vide.",
-            "analysis_error": "Empty text"
-        }
-
-    if OpenAI is None:
-        return {**default_error, "analysis_error": "OpenAI SDK not installed"}
-
-    try:
-        client = OpenAI(api_key=api_key)
-    except Exception as e:
-        return {**default_error, "analysis_error": f"Client init error: {e}"}
-
-    user_prompt = create_user_prompt(text)
-
-    for attempt in range(max_retries):
-        try:
-            completion = client.chat.completions.parse(
-                model=CHATGPT_MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format=SentimentAnalysisOutput
-            )
-
-            message = completion.choices[0].message
-
-            if message.refusal:
-                logger.warning(f"ChatGPT refused: {message.refusal}")
-                continue
-
-            if message.parsed:
-                return {**message.parsed.model_dump(), "analysis_error": None}
-
-        except Exception as e:
-            logger.debug(f"ChatGPT attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-
-    return {**default_error, "analysis_error": "Max retries exceeded"}
-
-
-def analyze_with_mistral(
-    text: str,
-    api_key: str,
-    system_prompt: str,
-    logger: logging.Logger,
-    max_retries: int = 3
-) -> Dict[str, Any]:
-    """Analyze text using Mistral AI API."""
-    default_error = {
-        "centralite_islam_musulmans": "ERREUR_ANALYSE",
-        "centralite_justification": "Erreur lors de l'analyse Mistral.",
-        "subjectivite_score": None,
-        "subjectivite_justification": "Erreur lors de l'analyse Mistral.",
-        "polarite": "ERREUR_ANALYSE",
-        "polarite_justification": "Erreur lors de l'analyse Mistral.",
-        "analysis_error": "Unknown error"
-    }
-
-    if not text or not text.strip():
-        return {
-            **default_error,
-            "centralite_islam_musulmans": "Non abordé",
-            "centralite_justification": "Texte non fourni ou vide.",
-            "subjectivite_justification": "Non applicable - texte vide.",
-            "polarite": "Non applicable",
-            "polarite_justification": "Non applicable - texte vide.",
-            "analysis_error": "Empty text"
-        }
-
-    if Mistral is None:
-        return {**default_error, "analysis_error": "Mistral SDK not installed"}
-
-    try:
-        client = Mistral(api_key=api_key)
-    except Exception as e:
-        return {**default_error, "analysis_error": f"Client init error: {e}"}
-
-    user_prompt = create_user_prompt(text)
-
-    for attempt in range(max_retries):
-        try:
-            completion = client.chat.complete(
-                model=MISTRAL_MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "sentiment_analysis",
-                        "schema": SentimentAnalysisOutput.model_json_schema(),
-                        "strict": True
-                    }
-                },
-                max_tokens=512,
-                temperature=0.2
-            )
-
-            message = completion.choices[0].message
-
-            if message.content:
-                data = json.loads(message.content)
-                validated = SentimentAnalysisOutput(**data)
-                return {**validated.model_dump(), "analysis_error": None}
-
-        except Exception as e:
-            logger.debug(f"Mistral attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-
-    return {**default_error, "analysis_error": "Max retries exceeded"}
+# Display labels for each model key
+MODEL_LABELS = {
+    "gemini": "Gemini",
+    "chatgpt": "ChatGPT",
+    "mistral": "Mistral",
+}
 
 
 def analyze_with_all_models(
     text: str,
-    api_keys: Dict[str, str],
+    llm_clients: Dict[str, BaseLLMClient],
     system_prompt: str,
     logger: logging.Logger
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Run sentiment analysis with all 3 models concurrently.
+    Run sentiment analysis with all available models concurrently.
 
     Returns:
         Dictionary with model names as keys and results as values
     """
     results = {}
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(llm_clients)) as executor:
         futures = {}
 
-        if api_keys.get("gemini"):
-            futures["gemini"] = executor.submit(
-                analyze_with_gemini, text, api_keys["gemini"], system_prompt, logger
-            )
-
-        if api_keys.get("chatgpt"):
-            futures["chatgpt"] = executor.submit(
-                analyze_with_chatgpt, text, api_keys["chatgpt"], system_prompt, logger
-            )
-
-        if api_keys.get("mistral"):
-            futures["mistral"] = executor.submit(
-                analyze_with_mistral, text, api_keys["mistral"], system_prompt, logger
+        for model_name, llm_client in llm_clients.items():
+            label = MODEL_LABELS.get(model_name, model_name.capitalize())
+            futures[model_name] = executor.submit(
+                analyze_with_model, llm_client, text, system_prompt, label, logger
             )
 
         for model_name, future in futures.items():
@@ -829,16 +531,7 @@ def main():
         border_style="cyan"
     ))
 
-    # Load environment variables
     script_dir = Path(__file__).resolve().parent
-    project_root = script_dir.parent
-    dotenv_path = project_root / ".env"
-
-    if dotenv_path.exists():
-        load_dotenv(dotenv_path=dotenv_path)
-        console.print(f"[green]✓[/] Environment loaded from {dotenv_path}")
-    else:
-        console.print(f"[yellow]![/] No .env file found at {dotenv_path}")
 
     # Parse arguments
     parser = argparse.ArgumentParser(
@@ -874,27 +567,27 @@ def main():
         console.print("[red]✗[/] Invalid item set ID format")
         return
 
-    # Validate Omeka credentials
-    omeka_base_url = os.getenv("OMEKA_BASE_URL")
-    omeka_key_identity = os.getenv("OMEKA_KEY_IDENTITY")
-    omeka_key_credential = os.getenv("OMEKA_KEY_CREDENTIAL")
-
-    if not all([omeka_base_url, omeka_key_identity, omeka_key_credential]):
-        console.print("[red]✗[/] Missing Omeka S API credentials")
-        console.print("[dim]Required: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL[/]")
+    # Initialize Omeka client
+    try:
+        omeka_client = OmekaClient.from_env()
+    except ValueError as e:
+        console.print(f"[red]✗[/] {e}")
         return
 
-    # Collect API keys
-    api_keys = {
-        "gemini": os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
-        "chatgpt": os.getenv("OPENAI_API_KEY") or os.getenv("CHATGPT"),
-        "mistral": os.getenv("MISTRAL_API_KEY"),
-    }
+    # Build LLM clients for each model
+    llm_clients: Dict[str, BaseLLMClient] = {}
+    config = LLMConfig(temperature=0.2)
+    for model_name, model_key in MODEL_KEYS.items():
+        try:
+            option = get_model_option(model_key)
+            llm_clients[model_name] = build_llm_client(option, config=config)
+        except (RuntimeError, ValueError):
+            logger.debug(f"{model_name} not available (SDK or API key missing)")
 
-    available_models = [k for k, v in api_keys.items() if v]
+    available_models = list(llm_clients.keys())
 
     if not available_models:
-        console.print("[red]✗[/] No AI API keys found")
+        console.print("[red]✗[/] No AI models available")
         console.print("[dim]Required: At least one of GEMINI_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY[/]")
         return
 
@@ -903,7 +596,7 @@ def main():
     config_table.add_column("Setting", style="dim")
     config_table.add_column("Value", style="green")
     config_table.add_row("Item Set IDs", ", ".join(map(str, item_set_ids)))
-    config_table.add_row("Omeka URL", omeka_base_url)
+    config_table.add_row("Omeka URL", omeka_client.base_url)
     config_table.add_row("Available Models", ", ".join(available_models))
     config_table.add_row("Skip Update", "Yes" if args.skip_update else "No")
     config_table.add_row("Force Re-analyze", "Yes" if args.force_reanalyze else "No")
@@ -923,13 +616,10 @@ def main():
 
     # Fetch items from Omeka
     console.print("[cyan]Fetching items from Omeka S...[/]")
-    items = fetch_items_from_omeka(
-        item_set_ids,
-        omeka_base_url,
-        omeka_key_identity,
-        omeka_key_credential,
-        logger
-    )
+    items = []
+    for item_set_id in item_set_ids:
+        logger.info(f"Fetching items from item set {item_set_id}...")
+        items.extend(omeka_client.get_items(item_set_id))
 
     if not items:
         console.print("[yellow]![/] No items found in the specified item set(s)")
@@ -1005,7 +695,7 @@ def main():
                 else:
                     # Re-analyze if cache has errors
                     sentiment_results = analyze_with_all_models(
-                        content, api_keys, system_prompt, logger
+                        content, llm_clients, system_prompt, logger
                     )
                     cache_data[cache_key] = sentiment_results
                     stats["analyzed"] += 1
@@ -1013,7 +703,7 @@ def main():
             else:
                 # Analyze with all models
                 sentiment_results = analyze_with_all_models(
-                    content, api_keys, system_prompt, logger
+                    content, llm_clients, system_prompt, logger
                 )
                 cache_data[cache_key] = sentiment_results
                 stats["analyzed"] += 1
@@ -1022,11 +712,9 @@ def main():
             # Update Omeka if not skipped
             if not args.skip_update:
                 success = update_item_sentiment(
+                    omeka_client,
                     item_id,
                     sentiment_results,
-                    omeka_base_url,
-                    omeka_key_identity,
-                    omeka_key_credential,
                     logger
                 )
                 if success:

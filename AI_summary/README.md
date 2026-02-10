@@ -42,7 +42,7 @@ All models produce comparable summary quality for this task.
 
 ## Output
 
-Summaries are saved to `Summaries_FR_TXT/` as `.txt` files, then uploaded to the `bibo:shortDescription` field in Omeka S.
+Summaries are saved to `Summaries_FR_TXT/` as `.txt` files, then uploaded to the `dcterms:abstract` field in Omeka S.
 
 ## Limitations
 

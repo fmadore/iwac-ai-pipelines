@@ -12,7 +12,6 @@ Requirements:
     - Environment variable: GEMINI_API_KEY
     - PDF files in the PDF/ directory
     - HTR system prompt files (htr_system_prompt_french.md, htr_system_prompt_arabic.md, etc.)
-    - PyPDF2 for page extraction
 """
 
 import os
@@ -23,8 +22,12 @@ from typing import Optional
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader, PdfWriter
-import io
+
+# Add repo root to path for shared imports
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
+from common.pdf_utils import extract_pdf_page, get_pdf_page_count
 
 # Set up logging configuration for tracking HTR operations and errors
 # Save log file in a dedicated log directory
@@ -73,45 +76,18 @@ class GeminiHTR:
     def _setup_generation_config(self):
         """
         Configure generation parameters for optimal HTR performance.
-        
-        The configuration focuses on:
-        - Lower temperature for more consistent output
-        - High top_p and top_k for reliable text recognition
-        - Sufficient output tokens for long documents
-        - Model-appropriate thinking budget
-        
+
         Returns:
             types.GenerateContentConfig: Configured generation config
         """
-        # Gemini 3 uses thinking_level: "low" (Pro min), "minimal" (Flash only), "medium", "high"
-        if "pro" in self.model_name.lower():
-            thinking_level = "low"  # Minimum for Gemini 3 Pro
-        else:
-            thinking_level = "minimal"  # Minimum for Gemini 3 Flash
+        thinking_level = get_thinking_level(self.model_name)
         print(f"🧠 Using thinking level '{thinking_level}' for {self.model_name}")
 
         return types.GenerateContentConfig(
-            max_output_tokens=65535,  # Support for long documents
-            response_mime_type="text/plain",  # Ensure text output
+            max_output_tokens=65535,
+            response_mime_type="text/plain",
             thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
-            safety_settings=[
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                ),
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                ),
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                ),
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                )
-            ]
+            safety_settings=SAFETY_SETTINGS_NONE,
         )
     
     def _get_system_instruction(self):
@@ -148,52 +124,6 @@ class GeminiHTR:
             logging.error(f"Error reading system prompt file: {e}")
             raise
     
-    def extract_pdf_page(self, pdf_path: Path, page_number: int) -> bytes:
-        """
-        Extract a single page from a PDF as bytes.
-        
-        Args:
-            pdf_path (Path): Path to the PDF file
-            page_number (int): Page number to extract (0-indexed)
-            
-        Returns:
-            bytes: PDF bytes containing only the specified page
-        """
-        try:
-            reader = PdfReader(str(pdf_path))
-            writer = PdfWriter()
-            
-            # Add the specific page
-            writer.add_page(reader.pages[page_number])
-            
-            # Write to bytes
-            output_buffer = io.BytesIO()
-            writer.write(output_buffer)
-            output_buffer.seek(0)
-            
-            return output_buffer.getvalue()
-            
-        except Exception as e:
-            logging.error(f"Error extracting page {page_number + 1} from {pdf_path}: {e}")
-            raise
-
-    def get_pdf_page_count(self, pdf_path: Path) -> int:
-        """
-        Get the number of pages in a PDF.
-        
-        Args:
-            pdf_path (Path): Path to the PDF file
-            
-        Returns:
-            int: Number of pages in the PDF
-        """
-        try:
-            reader = PdfReader(str(pdf_path))
-            return len(reader.pages)
-        except Exception as e:
-            logging.error(f"Error reading PDF page count from {pdf_path}: {e}")
-            raise
-
     def process_pdf_page_inline(self, page_bytes: bytes, page_num: int) -> Optional[str]:
         """
         Process a single PDF page inline by sending bytes directly.
@@ -466,7 +396,7 @@ class GeminiHTR:
             
             # Get page count
             print("\n🔄 Reading PDF structure...")
-            total_pages = self.get_pdf_page_count(pdf_path)
+            total_pages = get_pdf_page_count(pdf_path)
             print(f"✅ PDF has {total_pages} pages")
             
             # Create output file
@@ -489,7 +419,7 @@ class GeminiHTR:
                     try:
                         # Extract single page as PDF bytes
                         print(f"  └─ 📄 Extracting page {page_num}...")
-                        page_bytes = self.extract_pdf_page(pdf_path, page_idx)
+                        page_bytes = extract_pdf_page(pdf_path, page_idx)
                         page_size_mb = len(page_bytes) / (1024 * 1024)
                         
                         # Process page (try inline first, then upload if needed)
