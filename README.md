@@ -18,7 +18,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **OCR Correction** | Fix errors in machine-generated text, including ALTO XML with coordinate preservation |
 | **Named Entity Recognition** | Extract people, places, organizations with authority reconciliation |
 | **Summarization** | Generate French summaries for document discovery |
-| **Audio Transcription** | Transcribe interviews and oral histories, including Hausa content |
+| **Audio Transcription** | Transcribe interviews and oral histories using Gemini or Voxtral (with speaker diarization) |
 | **Video Processing** | Summarize or transcribe video with visual descriptions |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
@@ -87,7 +87,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 |----------|-----|-------|
 | OpenAI | `gpt-5-mini`, `gpt-5.1` | Text pipelines only |
 | Gemini | `gemini-flash`, `gemini-pro` | Text and multimodal |
-| Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR endpoint |
+| Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
 
 ## Adapting for Other Projects
 
@@ -107,7 +107,7 @@ The approach assumes you have digitized materials and need to make them searchab
 
 ## Related Resources
 
-- [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) — The archive
+- [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) — The digital collection
 - [IWAC Dashboard](https://fmadore.github.io/IWAC-Dashboard/) — Interactive exploration interface
 - [AI-NER-Validator](https://github.com/fmadore/AI-NER-Validator) — Web app for reviewing and validating NER results
 - [Leibniz-Zentrum Moderner Orient](https://www.zmo.de/en) — Host institution

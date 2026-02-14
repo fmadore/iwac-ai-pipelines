@@ -6,6 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 IWAC AI Pipelines is a collection of AI-powered document processing workflows for the Islam West Africa Collection (IWAC) — a digital archive of 14,500+ items. The project automates OCR extraction, text correction, summarization, named entity recognition, transcription, and handwritten text recognition using multiple LLM providers (Gemini, OpenAI, Mistral).
 
+## Virtual Environment
+
+**Always** use the project virtual environment at `.venv/` when running scripts or installing packages:
+
+```bash
+.venv\Scripts\activate   # Windows
+# or
+.venv/bin/activate       # Linux/macOS
+```
+
+When running commands via CLI, use `.venv\Scripts\python` (or `.venv/bin/python`) directly if the venv is not already activated.
+
 ## Running Pipelines
 
 Each AI pipeline follows a numbered script pattern. Run scripts sequentially within each directory:
@@ -80,9 +92,13 @@ except APIError as e:
 - `QuotaExhaustedError` propagates up to save partial results then halt
 - `RateLimiter` optionally throttles requests to stay under RPM limits
 
+### Shared Retry Decorator
+
+`common/retry.py` provides `retry_with_backoff` for wrapping functions with exponential backoff. Automatically skips retry on `QuotaExhaustedError`.
+
 ### Multimodal Pipelines (Exception)
 
-Audio, vision, HTR, and OCR scripts use provider clients directly because they require special capabilities not available through the shared provider. They still use `OmekaClient` for all Omeka S API access and `RateLimiter` for quota handling.
+Audio, vision, HTR, and OCR scripts use provider clients directly because they require special capabilities not available through the shared provider. Pipelines with Omeka download/upload steps use `OmekaClient`; standalone processors (HTR, video) operate on local files only. All multimodal scripts use `RateLimiter` for quota handling.
 
 ### Model Registry
 
@@ -113,10 +129,10 @@ Aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `mistral` → `
 - `NotebookLM/` — Export to Google NotebookLM (OmekaClient only, no LLM)
 
 ### Multimodal Pipelines (use provider APIs directly)
-- `AI_audio_summary/` — Audio/video transcription (Gemini multimodal)
-- `AI_htr_extraction/` — Handwritten text recognition (Gemini vision)
+- `AI_audio_summary/` — Audio/video transcription (Gemini multimodal or Mistral Voxtral)
+- `AI_htr_extraction/` — Handwritten text recognition (Gemini vision, standalone processor)
 - `AI_ocr_extraction/` — PDF OCR (Gemini native PDF or Mistral Document AI)
-- `AI_video_summary/` — Video processing with visual descriptions
+- `AI_video_summary/` — Video processing with visual descriptions (standalone processor)
 - `AI_summary_issue/` — Magazine article extraction (Gemini/Mistral structured outputs)
 
 ## Environment Configuration
@@ -171,7 +187,7 @@ response = llm_client.generate_structured(system_prompt, user_prompt, response_s
 - [ ] Use `rich` library for output
 
 ### Multimodal Scripts
-- [ ] Use `OmekaClient.from_env()` for all Omeka S API access
+- [ ] Use `OmekaClient.from_env()` for Omeka S API access (in download/upload steps; standalone processors like HTR and video skip this)
 - [ ] Use appropriate provider client directly for AI processing
 - [ ] Use `system_instruction` in `GenerateContentConfig` (Gemini)
 - [ ] Use `RateLimiter` from `common.rate_limiter` with `wait()` before each API call

@@ -78,3 +78,4 @@ NotebookLM/extracted_articles/
 .cache/
 .pytest_cache/
 AI_sentiment_analysis/cache/sentiment_cache.json
+nul

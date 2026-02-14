@@ -19,7 +19,7 @@ The script extracts individual pages from each PDF and sends them directly to Ge
 1. Place PDF files in the `PDF/` folder
 2. Run the script:
    ```bash
-   python 02_gemini_htr_processor.py
+   python gemini_htr_processor.py
    ```
 3. Select language mode (French, Arabic, or Multilingual)
 4. Select model (Flash or Pro)

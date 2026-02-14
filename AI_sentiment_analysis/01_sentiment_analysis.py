@@ -184,8 +184,7 @@ class SentimentAnalysisOutput(BaseModel):
     centralite_justification: str = Field(description="Courte justification en 1 phrase sur la centralité de l'islam/des musulmans")
     subjectivite_score: Optional[int] = Field(
         default=None,
-        description="Score de subjectivité de 1 à 5, ou null si le sujet n'est pas abordé",
-        ge=1, le=5
+        description="Score de subjectivité de 1 à 5 (entier), ou null si le sujet n'est pas abordé",
     )
     subjectivite_justification: str = Field(description="Justification en 1-2 phrases pour le score de subjectivité")
     polarite: Literal[
