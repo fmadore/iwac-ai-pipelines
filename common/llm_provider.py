@@ -132,7 +132,7 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         model=DEFAULT_GEMINI_PRO,
         label="Gemini 3.0 Pro",
         description="Google Gemini 3.0 Pro — highest quality",
-        default_thinking_level="low"  # Gemini 3 Pro uses thinking_level, not thinking_budget
+        default_thinking_level="LOW"  # Gemini 3 Pro: LOW or HIGH only
     ),
     "mistral-large": ModelOption(
         key="mistral-large",
@@ -406,6 +406,8 @@ class GeminiGenerateContentClient(BaseLLMClient):
                 is_pro_model = "pro" in self.option.model.lower()
                 thinking_level = "LOW" if is_pro_model else "MINIMAL"
             
+            # Normalize to uppercase for SDK compatibility (scripts can pass any case)
+            thinking_level = thinking_level.upper()
             thinking_config = genai_types.ThinkingConfig(thinking_level=thinking_level)
             gen_config_kwargs["thinking_config"] = thinking_config
             LOGGER.debug(f"Gemini 3 request with thinking_level={thinking_level}, temperature={temp}")

@@ -131,8 +131,8 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Conf
     llm_config = LLMConfig(
         reasoning_effort="medium",      # OpenAI: balanced reasoning (cost-effective)
         text_verbosity="medium",        # OpenAI: detailed entity context
-        thinking_budget=500,            # Gemini: moderate thinking (cost-effective)
-        temperature=0.2                 # Gemini: consistent, low-variance results
+        thinking_level="minimal",        # Gemini 3: minimal thinking sufficient for NER extraction
+        temperature=0.2                 # Gemini/Mistral: consistent, low-variance results
     )
 
     return Config(
@@ -479,8 +479,10 @@ async def async_main(args) -> None:
     config_table.add_row("Model", summary_from_option(model_option))
     config_table.add_row("Mode", "[yellow]Async[/]")
     config_table.add_row("Batch Size", str(config.batch_size))
-    config_table.add_row("Reasoning Effort", config.llm_config.reasoning_effort or "default")
-    config_table.add_row("Thinking Budget", str(config.llm_config.thinking_budget) if config.llm_config.thinking_budget else "default")
+    if model_option.provider == "openai":
+        config_table.add_row("Reasoning Effort", config.llm_config.reasoning_effort or "default")
+    elif model_option.provider == "gemini":
+        config_table.add_row("Thinking Level", config.llm_config.thinking_level or "default")
     console.print(config_table)
     console.print()
 
@@ -551,8 +553,10 @@ def main() -> None:
     config_table.add_row("Model", summary_from_option(model_option))
     config_table.add_row("Mode", "Sync")
     config_table.add_row("Batch Size", str(config.batch_size))
-    config_table.add_row("Reasoning Effort", config.llm_config.reasoning_effort or "default")
-    config_table.add_row("Thinking Budget", str(config.llm_config.thinking_budget) if config.llm_config.thinking_budget else "default")
+    if model_option.provider == "openai":
+        config_table.add_row("Reasoning Effort", config.llm_config.reasoning_effort or "default")
+    elif model_option.provider == "gemini":
+        config_table.add_row("Thinking Level", config.llm_config.thinking_level or "default")
     console.print(config_table)
     console.print()
 
