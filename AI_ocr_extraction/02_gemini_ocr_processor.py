@@ -125,7 +125,7 @@ class GeminiPDFProcessor:
         - Model-appropriate thinking configuration:
           - All Gemini 3 models use thinking_level (cannot be disabled)
           - Gemini 3 Flash: "MINIMAL", "LOW", "MEDIUM", or "HIGH"
-          - Gemini 3 Pro: "LOW" or "HIGH" only
+          - Gemini 3.1 Pro: "LOW" or "HIGH" only
         
         Returns:
             types.GenerateContentConfig: Configured generation config

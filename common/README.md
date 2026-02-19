@@ -154,7 +154,7 @@ The `LLMConfig` class allows individual scripts to customize AI behavior without
 
 - **OpenAI**: `reasoning_effort` and `text_verbosity`
 - **Gemini 3 Flash**: `temperature` and `thinking_level` ("minimal", "low", "medium", or "high")
-- **Gemini 3 Pro**: `temperature` and `thinking_level` ("low" or "high")
+- **Gemini 3.1 Pro**: `temperature` and `thinking_level` ("low" or "high")
 - **Mistral**: `temperature`
 
 ## Available Models
@@ -166,7 +166,7 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gpt-5-mini` | OpenAI | `gpt-5-mini` | ChatGPT (GPT-5 mini) | Cost-optimized, fast |
 | `gpt-5.1` | OpenAI | `gpt-5.1` | ChatGPT (GPT-5.1 full) | Flagship model |
 | `gemini-flash` | Gemini | `gemini-3-flash-preview` | Gemini 3 Flash | Fast, cost-effective |
-| `gemini-pro` | Gemini | `gemini-3-pro-preview` | Gemini 3.0 Pro | Highest quality |
+| `gemini-pro` | Gemini | `gemini-3.1-pro-preview` | Gemini 3.1 Pro | Highest quality |
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |
 
@@ -282,7 +282,7 @@ Both Gemini 3 models use `thinking_level` to control how much reasoning the mode
 | `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness (lower = more consistent) |
 | `thinking_level` | `str` | `"minimal"` | `"minimal"` = fastest, least reasoning<br>`"low"` / `"medium"` = balanced<br>`"high"` = deepest reasoning |
 
-#### Gemini 3 Pro
+#### Gemini 3.1 Pro
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -294,7 +294,7 @@ Both Gemini 3 models use `thinking_level` to control how much reasoning the mode
 | Model | Thinking Levels | Default | Best For |
 |-------|----------------|---------|----------|
 | Gemini 3 Flash | `"minimal"`, `"low"`, `"medium"`, `"high"` | `"minimal"` | Fast processing, bulk tasks |
-| Gemini 3 Pro | `"low"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
+| Gemini 3.1 Pro | `"low"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
 
 ### Mistral Parameters
 
@@ -461,7 +461,7 @@ if __name__ == "__main__":
 1. **Choose the right effort level**: Don't use `"high"` reasoning for simple tasks — it's slower and more expensive
 2. **Match thinking to model**:
    - Gemini 3 Flash: `"minimal"` for fast tasks, `"low"`/`"medium"` for balanced work, `"high"` for complex analysis
-   - Gemini 3 Pro: `"low"` for fast tasks, `"high"` for complex analysis
+   - Gemini 3.1 Pro: `"low"` for fast tasks, `"high"` for complex analysis
 3. **Use low temperature for consistency**: OCR, classification, and extraction benefit from `temperature=0.0-0.2`
 4. **Use higher temperature for creativity**: Summaries and generation can use `temperature=0.3-0.7`
 5. **Log your config**: Always log the configuration used for reproducibility

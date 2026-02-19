@@ -45,13 +45,13 @@ MP4, MPEG, MOV, AVI, FLV, MPG, WebM, WMV, 3GPP
 | Model | Speed | Quality | Best For |
 |-------|-------|---------|----------|
 | `gemini-3-flash-preview` | Faster | Good | Summaries, shorter videos |
-| `gemini-3-pro-preview` | Slower | Higher | Detailed transcription, complex scenes |
+| `gemini-3.1-pro-preview` | Slower | Higher | Detailed transcription, complex scenes |
 
 ## Output Format
 
 ```
 Video Processing Output: example_video.mp4
-Generated using: Google gemini-3-pro-preview
+Generated using: Google gemini-3.1-pro-preview
 ============================================================
 
 [Summary or transcript content...]

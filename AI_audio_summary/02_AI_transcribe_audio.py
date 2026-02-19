@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Audio Transcription Script using Google Gemini 3.0 Pro
+Audio Transcription Script using Google Gemini 3.1 Pro
 Transcribes audio and video files from the Audio folder and saves them as text files.
 Video files are automatically converted to audio before transcription.
 """
@@ -44,13 +44,13 @@ load_dotenv()
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 class AudioTranscriber:
-    def __init__(self, api_key=None, model='gemini-3-pro-preview', requests_per_minute: Optional[int] = None):
+    def __init__(self, api_key=None, model='gemini-3.1-pro-preview', requests_per_minute: Optional[int] = None):
         """
         Initialize the Audio Transcriber with Gemini API.
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-3-pro-preview' or 'gemini-3-flash-preview'. Default is 'gemini-3-pro-preview'.
+            model (str, optional): Model to use. Either 'gemini-3.1-pro-preview' or 'gemini-3-flash-preview'. Default is 'gemini-3.1-pro-preview'.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
@@ -165,7 +165,7 @@ class AudioTranscriber:
     
     def transcribe_audio(self, audio_file_path, custom_prompt=None, max_retries=3):
         """
-        Transcribe a single audio file using Gemini 3.0 Pro with retry mechanism.
+        Transcribe a single audio file using Gemini 3.1 Pro with retry mechanism.
         
         Args:
             audio_file_path (Path): Path to the audio file
@@ -915,7 +915,7 @@ def parse_args():
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-3-pro-preview", "gemini-3-flash-preview"],
+        choices=["gemini-3.1-pro-preview", "gemini-3-flash-preview"],
         default=None,
         help="Model to use for transcription (default: interactive selection)"
     )
@@ -956,15 +956,15 @@ def select_model_interactive():
     models_table.add_column("#", style="cyan", justify="right")
     models_table.add_column("Model", style="green")
     models_table.add_column("Description", style="dim")
-    models_table.add_row("1", "gemini-3-pro-preview", "Higher quality, slower")
+    models_table.add_row("1", "gemini-3.1-pro-preview", "Higher quality, slower")
     models_table.add_row("2", "gemini-3-flash-preview", "Faster, good quality")
     console.print(models_table)
-    
-    model_choice = console.input("\n[bold]Select a model (1 or 2) or press Enter for default (gemini-3-pro-preview):[/] ").strip()
-    
+
+    model_choice = console.input("\n[bold]Select a model (1 or 2) or press Enter for default (gemini-3.1-pro-preview):[/] ").strip()
+
     if model_choice == '2':
         return 'gemini-3-flash-preview'
-    return 'gemini-3-pro-preview'
+    return 'gemini-3.1-pro-preview'
 
 
 def main():

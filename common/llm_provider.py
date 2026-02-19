@@ -52,7 +52,7 @@ PROVIDER_MISTRAL = "mistral"
 DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 OPENAI_FULL_MODEL = "gpt-5.1"
 DEFAULT_GEMINI_FLASH = "gemini-3-flash-preview"
-DEFAULT_GEMINI_PRO = "gemini-3-pro-preview"
+DEFAULT_GEMINI_PRO = "gemini-3.1-pro-preview"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
 
@@ -92,7 +92,7 @@ class LLMConfig:
         # High-quality reasoning for complex NER
         config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
 
-        # Fast OCR with Gemini 3 Pro (low thinking)
+        # Fast OCR with Gemini 3.1 Pro (low thinking)
         config = LLMConfig(thinking_level="low", temperature=0.1)
 
         # Fast OCR correction with Gemini 3 Flash (minimal thinking)
@@ -130,9 +130,9 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         key="gemini-pro",
         provider=PROVIDER_GEMINI,
         model=DEFAULT_GEMINI_PRO,
-        label="Gemini 3.0 Pro",
-        description="Google Gemini 3.0 Pro — highest quality",
-        default_thinking_level="LOW"  # Gemini 3 Pro: LOW or HIGH only
+        label="Gemini 3.1 Pro",
+        description="Google Gemini 3.1 Pro — highest quality",
+        default_thinking_level="LOW"  # Gemini 3.1 Pro: LOW or HIGH only
     ),
     "mistral-large": ModelOption(
         key="mistral-large",
@@ -167,6 +167,7 @@ MODEL_ALIASES = {
     "openai-5.1": "gpt-5.1",  # Legacy key name
     "gemini-3-flash-preview": "gemini-flash",
     "gemini-3-pro-preview": "gemini-pro",
+    "gemini-3.1-pro-preview": "gemini-pro",
     # Mistral aliases
     "mistral": "mistral-large",
     "mistral-large-latest": "mistral-large",

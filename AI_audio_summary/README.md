@@ -69,7 +69,7 @@ Select mode interactively or edit prompt files in `prompts/`.
 | Model | Speed | Quality | Cost |
 |-------|-------|---------|------|
 | `gemini-3-flash-preview` | Faster | Good | ~$0.50-2/hour |
-| `gemini-3-pro-preview` | Slower | Higher | ~$5-15/hour |
+| `gemini-3.1-pro-preview` | Slower | Higher | ~$5-15/hour |
 
 Use Flash for clear recordings, Pro for noisy audio or multiple speakers.
 
@@ -103,7 +103,7 @@ No splitting needed — Voxtral handles up to 3 hours per request natively.
 
 ```
 Transcription of: interview_2024.mp3
-Generated using: Google gemini-3-pro-preview
+Generated using: Google gemini-3.1-pro-preview
 ==================================================
 
 [00:00:01] Speaker 1: Welcome to today's interview...

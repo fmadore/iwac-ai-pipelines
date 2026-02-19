@@ -4,7 +4,7 @@ This script implements a two-step pipeline to extract and consolidate articles
 from an Islamic magazine using Gemini's native PDF understanding with structured outputs.
 
 Supported models:
-- Gemini 3 Pro (step 1) - High-quality extraction with thinking_level
+- Gemini 3.1 Pro (step 1) - High-quality extraction with thinking_level
 - Gemini 3 Flash (step 2) - Fast consolidation with thinking_level
 
 Step 1: Page-by-page extraction (high-performance model)

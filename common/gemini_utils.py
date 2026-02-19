@@ -52,7 +52,7 @@ def get_thinking_level(model_name: str, override: Optional[str] = None) -> str:
     """Return the appropriate thinking level for a Gemini 3 model.
 
     Args:
-        model_name: The full model ID (e.g. ``gemini-3-pro-preview``).
+        model_name: The full model ID (e.g. ``gemini-3.1-pro-preview``).
         override: An explicit level to use instead of the default.
             Returned as-is when provided.
 
