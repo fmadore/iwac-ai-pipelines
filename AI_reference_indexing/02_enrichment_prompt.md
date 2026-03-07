@@ -18,7 +18,8 @@ Assign **5 to 8** thematic subject keywords per document.
 6. **Do not use `Islam` or `Musulmans` as keywords.** The entire IWAC collection is about Islam and Muslims in West Africa — these terms add no discriminating value. Use more specific terms instead (e.g., `Tidjaniyya`, `Wahhabisme`, `Pratiques religieuses`, `Confréries`).
 7. **Avoid redundancy**: do not assign both a broad term and its narrower form (e.g., don't use both `Réforme religieuse` and `Wahhabisme` if the text is specifically about Wahhabism).
 8. **Events**: include specific named events when prominent in the text (e.g., `Tabaski`, `Mawlid`).
-9. **Thematic coverage**: try to capture the main topics — who (persons, groups), what (themes, events), and context (political, social, religious).
+9. **Geographic features are spatial, not subject**: named places like parks (`Parc national du W`, `Parc national de la Pendjari`), regions (`Sahel`), lakes, rivers, etc. belong in `Spatial AI`, not `Subject AI`. Only assign them as subjects if the document is specifically *about* that place as a concept, not merely mentioning it as a location.
+10. **Thematic coverage**: try to capture the main topics — who (persons, groups), what (themes, events), and context (political, social, religious).
 
 ### Examples of good subject terms
 
@@ -46,6 +47,15 @@ Assign geographic locations that are **mentioned in or clearly implied by** the 
 - `Bamako|Tombouctou|Mali`
 - `Abidjan|Bouaké|Côte d'Ivoire`
 - `Niamey|Niger`
+
+## Existing Keywords
+
+Some items already have subject and/or spatial keywords assigned. When existing keywords are provided:
+
+1. **Do not duplicate them** — never assign a keyword that is already present.
+2. **Complement, don't replace** — your new keywords should fill gaps in thematic or geographic coverage, not repeat what's already there.
+3. **Maintain coherence** — ensure your new keywords are consistent with the existing ones. If existing keywords point to a specific thematic angle (e.g., existing subject `Tidjaniyya` suggests the document focuses on that brotherhood), your additions should be coherent with that focus rather than contradicting it.
+4. **Adjust quantity** — if an item already has 4 subject keywords, you only need to add 1–4 more to reach the 5–8 target, not a full set of 5–8 new ones.
 
 ## Output Format
 

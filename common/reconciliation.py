@@ -19,7 +19,11 @@ Usage:
 import csv
 import os
 import re
+import sys
 import unicodedata
+
+# Increase CSV field size limit to handle large bibo:content fields
+csv.field_size_limit(10 * 1024 * 1024)
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 from typing import Dict, List, Tuple
@@ -37,6 +41,9 @@ from rich.progress import (
 from rich import box
 
 from common.omeka_client import OmekaClient
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
 
 console = Console()
 

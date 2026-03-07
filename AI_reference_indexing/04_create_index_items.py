@@ -5,11 +5,17 @@ Batch-create new authority items in Omeka S from reviewed unreconciled terms.
 The user reviews the unreconciled CSV (from step 3) and adds an "Action" column
 with values "create" or "skip". This script creates Omeka items for "create" rows.
 
+Each authority type has its own item set, resource template, and resource class:
+  - subject (topics)   → item set 1,   template 3, class 244
+  - spatial            → item set 268, template 6, class 9
+  - association (orgs) → item set 854, template 7, class 96
+  - individu (people)  → item set 266, template 5, class 94
+  - event              → item set 2,   template 2, class 54
+
 Usage:
-    python 04_create_index_items.py --input-csv output/items_enriched_..._unreconciled_subject.csv \\
-                                    --item-set-id 854 --type subject
-    python 04_create_index_items.py --input-csv output/items_enriched_..._unreconciled_spatial.csv \\
-                                    --item-set-id 268 --type spatial
+    python 04_create_index_items.py --input-csv output/..._unreconciled_subject.csv --type subject
+    python 04_create_index_items.py --input-csv output/..._unreconciled_spatial.csv --type spatial
+    python 04_create_index_items.py --input-csv output/..._unreconciled_subject.csv --type association
 """
 from __future__ import annotations
 
@@ -28,6 +34,9 @@ from rich.progress import (
 )
 from rich import box
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 console = Console()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,11 +48,28 @@ from common.omeka_client import OmekaClient  # noqa: E402
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
+# Authority type → (item_set_id, resource_template_id, resource_class_id)
+AUTHORITY_TYPE_CONFIG = {
+    "subject":     {"item_set": 1,   "resource_template": 3, "resource_class": 244},
+    "spatial":     {"item_set": 268, "resource_template": 6, "resource_class": 9},
+    "association": {"item_set": 854, "resource_template": 7, "resource_class": 96},
+    "individu":    {"item_set": 266, "resource_template": 5, "resource_class": 94},
+    "event":       {"item_set": 2,   "resource_template": 2, "resource_class": 54},
+}
 
-def build_item_payload(term: str, item_set_id: int) -> dict:
-    """Build the Omeka S JSON payload for a new authority item."""
+
+def build_item_payload(term: str, authority_type: str) -> dict:
+    """Build the Omeka S JSON payload for a new authority item.
+
+    Uses the correct item set, resource template, and resource class
+    based on the authority type. All authority items also get
+    dcterms:type → "Notice d'autorité" (linked item 67568, customvocab:6).
+    """
+    config = AUTHORITY_TYPE_CONFIG[authority_type]
     return {
-        "o:item_set": [{"o:id": item_set_id}],
+        "o:item_set": [{"o:id": config["item_set"]}],
+        "o:resource_class": {"o:id": config["resource_class"]},
+        "o:resource_template": {"o:id": config["resource_template"]},
         "dcterms:title": [
             {
                 "type": "literal",
@@ -53,15 +79,31 @@ def build_item_payload(term: str, item_set_id: int) -> dict:
                 "@value": term,
             }
         ],
+        "dcterms:type": [
+            {
+                "type": "customvocab:6",
+                "property_id": 8,
+                "property_label": "Type",
+                "is_public": True,
+                "@id": "https://islam.zmo.de/api/items/67568",
+                "value_resource_id": 67568,
+                "value_resource_name": "items",
+            }
+        ],
     }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Create new index items from reviewed unreconciled CSV")
     parser.add_argument("--input-csv", required=True, help="Path to reviewed unreconciled CSV with Action column")
-    parser.add_argument("--item-set-id", required=True, type=int, help="Target authority item set ID")
-    parser.add_argument("--type", required=True, choices=["subject", "spatial"], help="Type of authority")
+    parser.add_argument(
+        "--type", required=True,
+        choices=list(AUTHORITY_TYPE_CONFIG.keys()),
+        help="Authority type (determines item set, resource template, and class)",
+    )
     args = parser.parse_args()
+
+    type_config = AUTHORITY_TYPE_CONFIG[args.type]
 
     console.print(Panel(
         "[bold]Reference Indexing — Step 4[/bold]\n"
@@ -94,8 +136,10 @@ def main():
     config_table.add_column("Setting", style="dim")
     config_table.add_column("Value", style="green")
     config_table.add_row("Input file", os.path.basename(args.input_csv))
-    config_table.add_row("Target item set", str(args.item_set_id))
     config_table.add_row("Type", args.type)
+    config_table.add_row("Target item set", str(type_config["item_set"]))
+    config_table.add_row("Resource template", str(type_config["resource_template"]))
+    config_table.add_row("Resource class", str(type_config["resource_class"]))
     config_table.add_row("Terms to create", str(len(to_create)))
     config_table.add_row("Terms to skip", str(len(to_skip)))
     config_table.add_row("No action specified", str(len(rows) - len(to_create) - len(to_skip)))
@@ -119,7 +163,7 @@ def main():
 
         for row in to_create:
             term = row["Unreconciled Value"].strip()
-            payload = build_item_payload(term, args.item_set_id)
+            payload = build_item_payload(term, args.type)
             result = client.create_item(payload)
 
             if result:
@@ -157,7 +201,7 @@ def main():
 
     console.print()
     console.print(Panel(
-        f"[green]✓[/] Created [cyan]{len(created)}[/] new {args.type} authority items in set {args.item_set_id}",
+        f"[green]✓[/] Created [cyan]{len(created)}[/] new {args.type} authority items in set {type_config['item_set']}",
         title="Step 4 Complete",
         border_style="green",
     ))

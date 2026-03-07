@@ -11,23 +11,26 @@ Assign `Subject AI` (5–8 thematic keywords) and `Spatial AI` (geographic locat
 
 Run `AI_reference_indexing/01_fetch_references.py` first to produce:
 - `AI_reference_indexing/output/items_*.csv` — items with `bibo:content`
-- `AI_reference_indexing/output/index_subject.csv` — subject/topic authority terms
-- `AI_reference_indexing/output/index_spatial.csv` — spatial authority terms
+
+Authority index CSVs are also exported but are **only used by Python reconciliation** (Step 3), not by the AI enrichment step.
 
 ## Workflow
 
 1. Read the keyword assignment rules from `AI_reference_indexing/02_enrichment_prompt.md`.
 
-2. Read authority indices to learn the existing vocabulary. Exclude individuals (item set 266) to keep context manageable — focus on subject/topic terms. Persons can still be assigned as keywords; reconciliation handles matching.
+2. Find the latest `items_*.csv` in `AI_reference_indexing/output/` (exclude `_enriched` files). Also read `index_subject.csv` and `index_spatial.csv` **only to build an ID→title lookup** (do NOT load the full indices into sub-agent context).
 
-3. Find the latest `items_*.csv` in `AI_reference_indexing/output/` (exclude `_enriched` files).
+3. Process items using **one sub-agent per item** (Agent tool, `subagent_type=general-purpose`). Each sub-agent receives:
+   - The enrichment prompt
+   - The item's title and `bibo:content`
+   - The item's **existing keywords resolved to human-readable names** (look up `Existing Subject IDs` and `Existing Spatial IDs` in the ID→title maps built from step 2)
 
-4. For each item:
+   This keeps each agent's context clean and enables parallel processing.
    - **Skip** if `bibo:content` is empty.
    - **Skip** if both `Existing Subject IDs` and `Existing Spatial IDs` are already populated.
-   - Assign keywords following the prompt rules. Use existing index terms when they fit, but freely create new ones — they will be reconciled later.
+   - Assign keywords following the prompt rules, complementing (not duplicating) existing keywords.
    - **All keywords in French**, regardless of document language.
 
-5. Write `AI_reference_indexing/output/items_enriched_{YYYYMMDD_HHMMSS}.csv` — all original columns plus `Subject AI` and `Spatial AI` (pipe-separated).
+4. Write `AI_reference_indexing/output/items_enriched_{YYYYMMDD_HHMMSS}.csv` — all original columns plus `Subject AI` and `Spatial AI` (pipe-separated).
 
-6. Write `AI_reference_indexing/output/keyword_summary_{YYYYMMDD_HHMMSS}.csv` with columns: `Term`, `Type` (subject/spatial), `Count`, `In Index` (yes/no), `Index ID` (if matched).
+5. Write `AI_reference_indexing/output/keyword_summary_{YYYYMMDD_HHMMSS}.csv` with columns: `Term`, `Type` (subject/spatial), `Count`.

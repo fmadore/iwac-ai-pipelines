@@ -28,6 +28,9 @@ from rich.progress import (
 )
 from rich import box
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 console = Console()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -164,7 +167,8 @@ def main():
     console.print(config_table)
     console.print()
 
-    # Read rows
+    # Read rows — reconciled CSV may contain large bibo:content fields
+    csv.field_size_limit(sys.maxsize)
     with open(input_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames:

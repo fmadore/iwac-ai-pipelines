@@ -29,6 +29,9 @@ from rich.progress import (
 )
 from rich import box
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 console = Console()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

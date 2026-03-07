@@ -23,6 +23,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 console = Console()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -67,6 +70,7 @@ def find_latest_enriched_csv() -> str | None:
             if f.startswith("items_enriched_") and f.endswith(".csv")
             and "_reconciled" not in f
             and "_unreconciled" not in f
+            and "_ambiguous_authorities" not in f
         ]
         if not candidates:
             return None
