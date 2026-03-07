@@ -50,7 +50,7 @@ python 03_reconcile_metadata.py
 # Step 4 (optional): Create new authority items from unreconciled terms
 python 04_create_index_items.py \
     --input-csv output/items_enriched_..._unreconciled_subject.csv \
-    --item-set-id 854 --type subject
+    --type subject
 
 # Step 5: Update Omeka with reconciled links
 python 05_update_omeka.py
@@ -58,12 +58,19 @@ python 05_update_omeka.py
 
 ## Authority Item Sets
 
-| Type | Item Set ID(s) | Description |
-|------|---------------|-------------|
-| Spatial | 268 | Geographic locations |
-| Subject | 854, 2 | Subject/thematic terms |
-| Topic | 1 | Topic terms (merged with subject for reconciliation) |
-| Individuals | 266 | Person names (used in reconciliation, excluded from agent context) |
+When **creating** new authority items, the `--type` parameter routes to the correct item set, resource template, and resource class:
+
+| `--type` | Item Set | Template | Class | Use for |
+|----------|----------|----------|-------|---------|
+| `subject` | 1 (Sujets) | 3 | 244 | Topics/themes |
+| `spatial` | 268 (Emplacements) | 6 | 9 | Locations |
+| `association` | 854 (Associations) | 7 | 96 | Organizations |
+| `individu` | 266 (Individus) | 5 | 94 | People |
+| `event` | 2 (Événements) | 2 | 54 | Events |
+
+All created items automatically include `dcterms:type` → "Notice d'autorité" (linked item 67568).
+
+For **reconciliation**, the subject index is built from item sets 1, 2, 266, and 854 combined.
 
 ## Keyword Assignment Rules
 
@@ -75,6 +82,7 @@ Defined in `02_enrichment_prompt.md`:
 - Avoid `Islam` and `Musulmans` (too generic for the IWAC context)
 - Persons: full name without titles; Organizations: full name without acronyms
 - Spatial: cities before countries, no continents, standardized names
+- Geographic features (parks, regions) belong in Spatial AI, not Subject AI
 
 ## Output Files
 
