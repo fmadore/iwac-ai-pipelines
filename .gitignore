@@ -35,6 +35,9 @@ wheels/
 *.swo
 *~
 
+# Claude Code
+.claude/settings.local.json
+
 # OS specific
 .DS_Store
 .DS_Store?
@@ -43,20 +46,17 @@ wheels/
 .Trashes
 ehthumbs.db
 Thumbs.db
+nul
 
 # Logs
 *.log
-AI_ocr_extraction/pdf_download.log
-AI_ocr_extraction/ocr_gemini.log
-AI_ocr_correction/log
-AI_summary_issue/log
 
-# Output directories
+# Pipeline output directories
 AI_audio_summary/Audio/
 AI_audio_summary/temp_segments/
 AI_audio_summary/Transcriptions/
+AI_htr_extraction/OCR_Results/
 AI_htr_extraction/PDF/
-AI_htr_extraction/OCR_Results
 AI_NER/output/
 AI_ocr_correction/ALTO/
 AI_ocr_correction/ALTO_Corrected/
@@ -64,6 +64,7 @@ AI_ocr_correction/Corrected_TXT/
 AI_ocr_correction/TXT/
 AI_ocr_extraction/OCR_Results/
 AI_ocr_extraction/PDF/
+AI_reference_indexing/output/
 AI_summary/Summaries_FR_TXT/
 AI_summary/TXT/
 AI_summary_issue/Magazine_Extractions/
@@ -72,10 +73,9 @@ AI_video_summary/output/
 AI_video_summary/video/
 NotebookLM/extracted_articles/
 
-# Temporary files
+# Cache and temporary files
 *.tmp
 *.temp
 .cache/
 .pytest_cache/
 AI_sentiment_analysis/cache/sentiment_cache.json
-nul

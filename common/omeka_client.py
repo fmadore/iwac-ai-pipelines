@@ -151,6 +151,22 @@ class OmekaClient:
                 LOGGER.error("Response body: %s", exc.response.text)
             return False
 
+    def create_item(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """POST a new item to Omeka S. Returns the created item dict or ``None``."""
+        url = f"{self.base_url}/items"
+        headers = {"Content-Type": "application/json"}
+        try:
+            resp = self.session.post(
+                url, json=data, params=self._auth_params(), headers=headers
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as exc:
+            LOGGER.error("Failed to create item: %s", exc)
+            if hasattr(exc, "response") and exc.response is not None:
+                LOGGER.error("Response body: %s", exc.response.text)
+            return None
+
     def get_item_set(self, item_set_id: int) -> Optional[Dict[str, Any]]:
         """Fetch a single item set by ID. Returns ``None`` on HTTP errors."""
         url = f"{self.base_url}/item_sets/{item_set_id}"

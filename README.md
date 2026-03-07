@@ -23,6 +23,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
 | **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations using three models concurrently |
+| **Reference Indexing** | Assign controlled subject and spatial keywords to scholarly references using Claude, with authority reconciliation |
 
 ## Limitations and Caveats
 
@@ -102,6 +103,7 @@ The approach assumes you have digitized materials and need to make them searchab
 ## Documentation
 
 - [Shared Utilities](common/README.md) — OmekaClient and LLM provider configuration
+- [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Full dataset
 - Individual pipeline directories contain their own documentation
 
