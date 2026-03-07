@@ -28,15 +28,21 @@ The script auto-detects PDFs and processes them sequentially.
 ### With Omeka S Integration
 
 ```bash
-python 01_omeka_pdf_downloader.py   # Download PDFs from collection
-python 02_AI_generate_summaries_issue.py   # Extract articles
+python 01_omeka_pdf_downloader.py            # Download PDFs from collection
+python 02_AI_generate_summaries_issue.py     # Extract articles
+python 03_update_omeka_toc.py --input output/toc_results.json  # Update Omeka S
 ```
+
+### Claude Agent (Alternative)
+
+The issue-indexing Claude agent reads PDFs directly without LLM API calls and handles the full pipeline (download, extraction, Omeka update). Use it via the `/issue-indexing` skill in Claude Code.
 
 ## Supported Models
 
 | Provider | Model | Best For |
 |----------|-------|----------|
-| **Gemini** (recommended) | Pro + Flash | Best extraction quality, accurate article detection |
+| **Claude Agent** (recommended) | Opus 4.6 | Reads PDFs directly, no API costs, best quality |
+| **Gemini** | Pro + Flash | Good extraction quality, accurate article detection |
 | Mistral | OCR + Small | Alternative if Gemini unavailable |
 
 The Gemini version produces significantly better results. Use Mistral only for experimentation.

@@ -103,6 +103,7 @@ The approach assumes you have digitized materials and need to make them searchab
 ## Documentation
 
 - [Shared Utilities](common/README.md) — OmekaClient and LLM provider configuration
+- [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini, Mistral, or Claude agent)
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Full dataset
 - Individual pipeline directories contain their own documentation
