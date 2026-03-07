@@ -427,7 +427,7 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
                     
                     # Save both JSON and markdown for debugging/resumption
                     with open(page_json_file, 'w', encoding='utf-8') as f:
-                        f.write(extraction.model_dump_json(indent=2))
+                        f.write(extraction.model_dump_json(indent=2, ensure_ascii=False))
                     with open(page_md_file, 'w', encoding='utf-8') as f:
                         f.write(markdown)
                     
@@ -559,7 +559,7 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
         # Save the final result as JSON
         final_json_file = output_dir / f"{magazine_id}_final_index.json"
         with open(final_json_file, 'w', encoding='utf-8') as f:
-            f.write(index.model_dump_json(indent=2))
+            f.write(index.model_dump_json(indent=2, ensure_ascii=False))
         
         # Save the final result as markdown (for human readability)
         final_md_file = output_dir / f"{magazine_id}_final_index.md"
