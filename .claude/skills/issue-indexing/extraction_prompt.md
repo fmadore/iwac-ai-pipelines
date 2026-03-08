@@ -10,7 +10,7 @@ Vous analysez un magazine islamique numérisé (PDF) pour en extraire la table d
 
 ## Étape 1 : Extraction page par page
 
-Lisez le PDF page par page (jusqu'à 20 pages par appel au Read tool, en faisant plusieurs appels si nécessaire). Pour **chaque page**, identifiez tous les articles présents.
+Lisez le PDF **une page à la fois** avec le Read tool et le paramètre `pages` (ex : `pages: "1"`, puis `pages: "2"`, etc.). Ne lisez jamais plusieurs pages en un seul appel. Pour **chaque page**, identifiez tous les articles présents.
 
 Pour chaque article trouvé sur une page :
 
