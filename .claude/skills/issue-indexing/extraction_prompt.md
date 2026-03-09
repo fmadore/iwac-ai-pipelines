@@ -4,7 +4,7 @@
 
 Vous analysez un magazine islamique numérisé (PDF) pour en extraire la table des matières complète. Le processus se fait en **deux étapes** : d'abord une extraction **page par page**, puis une **consolidation** des articles fragmentés sur plusieurs pages.
 
-**IMPORTANT — Langue française** : Tout le contenu produit (titres, résumés, notes) DOIT être en français correct avec TOUS les accents et diacritiques : é, è, ê, ë, à, â, ç, ù, û, ü, î, ï, ô, ö. Ne jamais omettre les accents. Exemples : « éducation » (pas « education »), « réflexion » (pas « reflexion »), « société » (pas « societe »), « défis » (pas « defis »), « pèlerinage » (pas « pelerinage »).
+**ACCENTS** : Le texte OCR est souvent sans accents. Vous DEVEZ écrire en français correct avec tous les diacritiques (é, è, ê, à, â, ç, ù, û, î, ï, ô). Ne copiez jamais le texte OCR tel quel — ajoutez les accents manquants sur les mots courants, les noms propres et les noms de lieux.
 
 **Important** : Les magazines islamiques contiennent fréquemment des termes en arabe. Ces termes doivent être préservés et inclus dans les titres et résumés lorsqu'ils sont correctement retranscrits par l'OCR.
 

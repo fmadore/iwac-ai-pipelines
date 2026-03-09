@@ -5,19 +5,31 @@ description: Extract article-level table of contents from digitized Islamic maga
 
 # Magazine Issue Indexing
 
-Extract structured table of contents from digitized Islamic magazine PDFs (e.g., Le CERFIste, Plume Libre) and update Omeka S.
+Extract structured table of contents from digitized Islamic magazine PDFs (e.g., Le CERFIste, Plume Libre, Alif) and update Omeka S.
 
-## What it does
+## CRITICAL: Follow the existing Python pipeline
 
-1. Downloads PDFs from an Omeka S item set
-2. Reads each PDF directly (no LLM API calls — Claude does the extraction)
-3. Identifies articles: titles, authors, page numbers, summaries
-4. Formats a `dcterms:tableOfContents` entry per magazine issue
-5. Updates Omeka S items after user review
+You MUST use the existing scripts in `AI_summary_issue/`. Do NOT create temp folders, custom download scripts, or any ad-hoc workflow.
 
-## Usage
+### Pipeline steps
 
-Provide the item set ID containing magazine issues to index. The agent handles the full pipeline.
+1. **Download PDFs** — Run `AI_summary_issue/01_omeka_pdf_downloader.py` to download PDFs to `AI_summary_issue/PDF/`
+2. **Extract ToC** — Spawn `issue-indexing` sub-agents to read PDFs and extract articles (Claude reads PDFs directly — no LLM API calls)
+3. **Save JSON** — Write results to `AI_summary_issue/toc_results.json` in the format expected by the update script:
+   ```json
+   [{"item_id": 12345, "table_of_contents": "p. 2-3 : Title\nSummary."}]
+   ```
+4. **Review** — Present results to the user for approval
+5. **Update Omeka** — Run `AI_summary_issue/03_update_omeka_toc.py --input AI_summary_issue/toc_results.json`
+
+### Sub-agent instructions
+
+When spawning `issue-indexing` sub-agents for extraction, you MUST:
+
+- Include the FULL content of `extraction_prompt.md` (in this skill directory) in the sub-agent prompt
+- Explicitly instruct sub-agents to use PyPDF2 via Bash (`.venv/Scripts/python.exe`) to extract text page by page, since the Read tool may lack poppler for PDF rendering
+- Tell sub-agents to write output to a specific batch file in `AI_summary_issue/`
+- **ACCENTS**: Emphasize in the prompt that ALL output MUST have proper French accents. The OCR text is often unaccented — the agent must ADD correct accents. Include the accent rules and common proper name list from `extraction_prompt.md`. This is the #1 source of errors.
 
 ## Output format
 
