@@ -176,9 +176,16 @@ def download_pdfs_from_item_set(item_set_id: str, pdf_folder: Path, max_workers:
     downloader = PDFDownloader(client, pdf_folder)
 
     # Retrieve all items from the specified item set
-    items = client.get_items(int(item_set_id))
-    if not items:
+    all_items = client.get_items(int(item_set_id))
+    if not all_items:
         logging.error(f"No items found for item set {item_set_id}")
+        return
+
+    # Filter to only bibo:Issue items
+    items = [item for item in all_items if "bibo:Issue" in item.get("@type", [])]
+    logging.info(f"Filtered {len(items)} bibo:Issue items from {len(all_items)} total items")
+    if not items:
+        logging.error(f"No bibo:Issue items found in item set {item_set_id}")
         return
 
     # Process items concurrently with thread pool
