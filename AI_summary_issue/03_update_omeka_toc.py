@@ -1,17 +1,16 @@
 """
-Update Omeka S items with table of contents extracted by the issue-indexing agent.
+Generate a CSV file with table of contents for Omeka S CSV Import.
 
-Reads a JSON file mapping item IDs to table of contents text and updates
-each item's dcterms:tableOfContents field in Omeka S.
+Scans Magazine_Extractions/ for *_final_index.json files produced by
+02_AI_generate_summaries_issue.py, prompts for the annotation model,
+and outputs a CSV ready for import.
 
 Usage:
-    python 03_update_omeka_toc.py --input toc_results.json
-    python 03_update_omeka_toc.py --input toc_results.json --dry-run
+    python 03_update_omeka_toc.py
 """
 
-import argparse
+import csv
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -19,149 +18,125 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from common.omeka_client import OmekaClient
-
 console = Console()
 
-# dcterms:tableOfContents property ID in Omeka S
-TABLE_OF_CONTENTS_PROPERTY_ID = 18
-
-# iwac:summaryModel property ID and Claude Opus 4.6 item for annotation
-SUMMARY_MODEL_PROPERTY_ID = 313
-CLAUDE_OPUS_ITEM_ID = 78528
-CLAUDE_OPUS_API_URL = f"https://islam.zmo.de/api/items/{CLAUDE_OPUS_ITEM_ID}"
-CLAUDE_OPUS_DISPLAY_TITLE = "Claude Opus 4.6"
-
-
-def load_toc_results(input_path: Path) -> list:
-    """Load TOC results from JSON file.
-
-    Expected format:
-        [{"item_id": 123, "table_of_contents": "p. 1-3 : ..."}]
-    """
-    with open(input_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+# Available model annotations
+MODEL_CHOICES = {
+    "1": {
+        "item_id": 78528,
+        "display_title": "Claude Opus 4.6",
+    },
+    "2": {
+        "item_id": 78536,
+        "display_title": "Gemini 3.1 pro",
+    },
+}
 
 
+def format_article_toc(article: dict) -> str:
+    """Format a single article from a final_index.json into a TOC line."""
+    title = article["titre"]
+    pages = article["pages"]
+    authors = article.get("auteurs")
+    resume = article.get("resume", "")
 
-def update_items(client: OmekaClient, toc_entries: list, dry_run: bool = False) -> dict:
-    """Update Omeka items with table of contents.
+    if authors:
+        header = f"p. {pages} : {title} ({', '.join(authors)})"
+    else:
+        header = f"p. {pages} : {title}"
 
-    Fetches each item first, modifies only the dcterms:tableOfContents field
-    on the full item object, then PATCHes the whole thing back.  This preserves
-    all existing metadata (same pattern as AI_summary/03_omeka_update_summaries.py).
+    return f"{header}\n{resume}"
 
-    Returns a summary dict with counts of modified, skipped, and errored items.
-    """
-    stats = {"modified": 0, "skipped": 0, "errors": 0}
 
-    for entry in toc_entries:
-        item_id = entry["item_id"]
-        toc_text = entry.get("table_of_contents", "").strip()
+def load_from_extractions(extractions_dir: Path) -> list:
+    """Scan Magazine_Extractions/ for *_final_index.json files."""
+    toc_entries = []
+    if not extractions_dir.exists():
+        return toc_entries
 
-        if not toc_text:
-            console.print(f"  [yellow]Skipped[/] item {item_id} -- empty table of contents")
-            stats["skipped"] += 1
+    for item_dir in sorted(extractions_dir.iterdir()):
+        if not item_dir.is_dir():
+            continue
+        try:
+            item_id = int(item_dir.name)
+        except ValueError:
             continue
 
-        if dry_run:
-            console.print(f"  [cyan]Would update[/] item {item_id} ({len(toc_text)} chars)")
-            stats["modified"] += 1
+        index_files = list(item_dir.glob("*_final_index.json"))
+        if not index_files:
             continue
 
-        # Fetch full existing item to preserve ALL metadata
-        item_data = client.get_item(item_id)
-        if not item_data:
-            console.print(f"  [red]x[/] Could not fetch item {item_id}")
-            stats["errors"] += 1
+        with open(index_files[0], 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        articles = data.get("articles", [])
+        if not articles:
             continue
 
-        # Build the TOC value with annotation
-        toc_value = {
-            "type": "literal",
-            "property_id": TABLE_OF_CONTENTS_PROPERTY_ID,
-            "property_label": "Table Of Contents",
-            "is_public": True,
-            "@annotation": {
-                "iwac:summaryModel": [
-                    {
-                        "type": "resource:item",
-                        "property_id": SUMMARY_MODEL_PROPERTY_ID,
-                        "property_label": "AI Model - Summary",
-                        "is_public": True,
-                        "@id": CLAUDE_OPUS_API_URL,
-                        "value_resource_id": CLAUDE_OPUS_ITEM_ID,
-                        "value_resource_name": "items",
-                        "url": None,
-                        "display_title": CLAUDE_OPUS_DISPLAY_TITLE,
-                    }
-                ]
-            },
-            "@value": toc_text,
-        }
+        toc_text = "\n\n".join(format_article_toc(a) for a in articles)
+        toc_entries.append({"item_id": item_id, "table_of_contents": toc_text})
 
-        # Set or replace dcterms:tableOfContents on the full item
-        item_data["dcterms:tableOfContents"] = [toc_value]
-
-        success = client.update_item(item_id, item_data)
-
-        if success:
-            console.print(f"  [green]OK[/] Updated item {item_id}")
-            stats["modified"] += 1
-        else:
-            console.print(f"  [red]FAIL[/] Failed to update item {item_id}")
-            stats["errors"] += 1
-
-    return stats
+    return toc_entries
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Update Omeka S items with table of contents from JSON."
-    )
-    parser.add_argument(
-        "--input", "-i",
-        required=True,
-        help="Path to JSON file with TOC results",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview changes without updating Omeka",
-    )
-    args = parser.parse_args()
+    script_dir = Path(__file__).parent
+    extractions_dir = script_dir / "Magazine_Extractions"
 
-    input_path = Path(args.input)
-    if not input_path.exists():
-        console.print(f"[red]Error:[/] File not found: {input_path}")
-        sys.exit(1)
-
-    # Load TOC results
-    toc_entries = load_toc_results(input_path)
+    # Load TOC entries from Magazine_Extractions/
+    toc_entries = load_from_extractions(extractions_dir)
     if not toc_entries:
-        console.print("[yellow]No entries found in input file.[/]")
+        console.print("[yellow]No entries found in Magazine_Extractions/.[/]")
         sys.exit(0)
 
-    # Display config
-    mode = "[yellow]DRY RUN[/]" if args.dry_run else "[green]LIVE[/]"
+    # Model selection
+    console.print("\n[bold]Select annotation model:[/]")
+    for key, info in MODEL_CHOICES.items():
+        console.print(f"  {key}. {info['display_title']}")
+    choice = input("\nChoice [1]: ").strip() or "1"
+    if choice not in MODEL_CHOICES:
+        console.print(f"[red]Invalid choice: {choice}[/]")
+        sys.exit(1)
+    selected_model = MODEL_CHOICES[choice]
+
+    # Write CSV
+    output_path = script_dir / "toc_import.csv"
+    with open(output_path, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "o:id",
+            "dcterms:tableOfContents",
+            "iwac:summaryModel [annotation]",
+        ])
+        for entry in toc_entries:
+            writer.writerow([
+                entry["item_id"],
+                entry["table_of_contents"],
+                selected_model["item_id"],
+            ])
+
+    # Display summary
     console.print(Panel(
-        f"Input: {input_path}\nItems: {len(toc_entries)}\nMode: {mode}",
-        title="Update Omeka — Table of Contents",
+        f"Source: {extractions_dir}\n"
+        f"Items: {len(toc_entries)}\n"
+        f"Model: {selected_model['display_title']}\n"
+        f"Output: {output_path}",
+        title="CSV Generated",
     ))
 
-    # Initialize client and update
-    client = OmekaClient.from_env()
-    stats = update_items(client, toc_entries, dry_run=args.dry_run)
-
-    # Summary
-    summary = Table(title="Summary")
-    summary.add_column("Status", style="bold")
-    summary.add_column("Count", justify="right")
-    summary.add_row("[green]Modified[/]", str(stats["modified"]))
-    summary.add_row("[yellow]Skipped[/]", str(stats["skipped"]))
-    summary.add_row("[red]Errors[/]", str(stats["errors"]))
-    console.print(summary)
+    # Preview
+    preview = Table(title="Preview")
+    preview.add_column("o:id", style="cyan")
+    preview.add_column("dcterms:tableOfContents", max_width=60)
+    preview.add_column("annotation", style="green")
+    for entry in toc_entries:
+        toc_preview = entry["table_of_contents"][:80] + "..."
+        preview.add_row(
+            str(entry["item_id"]),
+            toc_preview,
+            str(selected_model["item_id"]),
+        )
+    console.print(preview)
 
 
 if __name__ == "__main__":
