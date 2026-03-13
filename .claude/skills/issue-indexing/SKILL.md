@@ -1,11 +1,11 @@
 ---
 name: issue-indexing
-description: Extract article-level table of contents from digitized Islamic magazine PDFs and update Omeka S items with dcterms:tableOfContents. Claude reads PDFs directly — no LLM API calls needed. Use when indexing magazine issues, extracting article listings from PDF scans, or populating table of contents metadata for IWAC periodicals.
+description: Extract article-level table of contents from digitized Islamic magazine PDFs and generate a CSV for Omeka S CSV Import. Claude reads PDFs directly — no LLM API calls needed. Use when indexing magazine issues, extracting article listings from PDF scans, or populating table of contents metadata for IWAC periodicals.
 ---
 
 # Magazine Issue Indexing
 
-Extract structured table of contents from digitized Islamic magazine PDFs (e.g., Le CERFIste, Plume Libre, Alif) and update Omeka S.
+Extract structured table of contents from digitized Islamic magazine PDFs (e.g., Le CERFIste, Plume Libre, Alif) and generate a CSV for Omeka S CSV Import.
 
 ## CRITICAL: Follow the existing Python pipeline
 
@@ -13,14 +13,11 @@ You MUST use the existing scripts in `AI_summary_issue/`. Do NOT create temp fol
 
 ### Pipeline steps
 
-1. **Download PDFs** — Run `AI_summary_issue/01_omeka_pdf_downloader.py` to download PDFs to `AI_summary_issue/PDF/`
+1. **Download PDFs** — Run `AI_summary_issue/01_omeka_pdf_downloader.py` to download PDFs to `AI_summary_issue/PDF/` (only `bibo:Issue` items)
 2. **Extract ToC** — Spawn `issue-indexing` sub-agents to read PDFs and extract articles (Claude reads PDFs directly — no LLM API calls)
-3. **Save JSON** — Write results to `AI_summary_issue/toc_results.json` in the format expected by the update script:
-   ```json
-   [{"item_id": 12345, "table_of_contents": "p. 2-3 : Title\nSummary."}]
-   ```
+3. **Save results** — Write extraction results to `AI_summary_issue/Magazine_Extractions/{item_id}/{item_id}_final_index.json`
 4. **Review** — Present results to the user for approval
-5. **Update Omeka** — Run `AI_summary_issue/03_update_omeka_toc.py --input AI_summary_issue/toc_results.json`
+5. **Generate CSV** — Run `AI_summary_issue/03_update_omeka_toc.py` to generate `toc_import.csv` (the user will upload this via Omeka S CSV Import themselves)
 
 ### Sub-agent instructions
 

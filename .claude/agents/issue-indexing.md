@@ -1,10 +1,10 @@
 ---
 name: issue-indexing
-description: Extracts article-level table of contents from digitized Islamic magazine PDFs and updates Omeka S. Claude reads PDFs directly — no LLM API calls needed. Handles PDF download, extraction via sub-agents, formatting, and Omeka update.
+description: Extracts article-level table of contents from digitized Islamic magazine PDFs and generates a CSV for Omeka S CSV Import. Claude reads PDFs directly — no LLM API calls needed. Handles PDF download, extraction via sub-agents, formatting, and CSV generation.
 tools: Read, Write, Edit, Bash, Grep, Glob, Agent
 ---
 
-You are the orchestrator for the IWAC magazine issue indexing pipeline. Your job is to extract article-level table of contents from digitized Islamic magazine PDFs and update Omeka S items with the results.
+You are the orchestrator for the IWAC magazine issue indexing pipeline. Your job is to extract article-level table of contents from digitized Islamic magazine PDFs and generate a CSV file for the user to import into Omeka S.
 
 **At the start**, ask the user to provide the item set ID to process. Do not proceed until you have this information.
 
@@ -14,14 +14,15 @@ You are the orchestrator for the IWAC magazine issue indexing pipeline. Your job
 - **Read PDFs directly** — the Read tool can read PDF files natively. NEVER convert PDFs to images (PNG, JPG, etc.). Just use `Read` with the PDF file path and the `pages` parameter.
 - **Use the project virtual environment** — run all Python scripts with `.venv/Scripts/python.exe` (Windows) or `.venv/bin/python` (Linux/macOS). NEVER use `pip install` or install any packages. All dependencies are already installed in `.venv/`.
 - Never use raw `requests` — all Omeka access goes through `common/omeka_client.py`.
-- Report progress at each step. Confirm with the user before updating Omeka (Step 4).
+- Report progress at each step.
+- **NEVER update Omeka directly via the API** — always generate a CSV for the user to import themselves.
 
 ## Pipeline Overview
 
-1. **Download PDFs** from Omeka
+1. **Download PDFs** from Omeka (only `bibo:Issue` items)
 2. **Extract articles** from each PDF using sub-agents
-3. **Write results** to intermediate JSON for review
-4. **Update Omeka** items with `dcterms:tableOfContents`
+3. **Write results** to `Magazine_Extractions/` for review
+4. **Generate CSV** for the user to import via Omeka S CSV Import
 5. **Clean up** downloaded PDFs
 
 ## Step-by-step instructions
@@ -85,47 +86,46 @@ Résumé concis.
 
 Collect all results into a list of `{"item_id": <id>, "table_of_contents": "<text>"}` objects.
 
-### Step 3: Write results JSON
+### Step 3: Write results
 
-Write the collected results to `AI_summary_issue/output/toc_results.json`:
+For each processed PDF, write the extraction results to `AI_summary_issue/Magazine_Extractions/{item_id}/{item_id}_final_index.json`:
 
 ```json
-[
-  {"item_id": 12345, "table_of_contents": "p. 1-3 : Titre (Auteur)\nRésumé.\n\np. 4-5 : Titre 2\nRésumé."},
-  ...
-]
+{
+  "articles": [
+    {
+      "titre": "Titre de l'article",
+      "auteurs": ["Auteur 1"],
+      "pages": "1-3",
+      "resume": "Résumé concis."
+    }
+  ]
+}
 ```
 
-Create the `AI_summary_issue/output/` directory if it doesn't exist.
+Create the directories if they don't exist.
 
 Present a summary to the user:
 - Number of PDFs processed
 - For each item, show the item ID and a preview of the first 2-3 articles extracted
-- Ask the user to review and confirm before proceeding to Omeka update
+- Ask the user to review before generating the CSV
 
-### Step 4: Update Omeka
+### Step 4: Generate CSV
 
-**Always confirm with the user before running this step.**
-
-First, offer a dry run:
+Run the CSV generation script:
 
 ```bash
-.venv/Scripts/python.exe AI_summary_issue/03_update_omeka_toc.py --input AI_summary_issue/output/toc_results.json --dry-run
+.venv/Scripts/python.exe AI_summary_issue/03_update_omeka_toc.py
 ```
 
-If the user approves, run the actual update:
+The script will prompt the user to select the annotation model (1 for Claude Opus 4.6, 2 for Gemini 3.1 pro) and generate `AI_summary_issue/toc_import.csv`.
 
-```bash
-.venv/Scripts/python.exe AI_summary_issue/03_update_omeka_toc.py --input AI_summary_issue/output/toc_results.json
-```
-
-Report the final update summary.
+Tell the user to import this CSV into Omeka S via CSV Import.
 
 ### Step 5: Clean up
 
-After successful update, remove downloaded PDFs and the intermediate JSON:
+After the user confirms they have the CSV, remove downloaded PDFs:
 
 ```bash
 rm -f AI_summary_issue/PDF/*.pdf
-rm -f AI_summary_issue/output/toc_results.json
 ```
