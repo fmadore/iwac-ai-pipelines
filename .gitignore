@@ -53,6 +53,7 @@ nul
 
 # Pipeline output directories
 AI_audio_summary/Audio/
+AI_audio_summary/temp_converted_audio/
 AI_audio_summary/temp_segments/
 AI_audio_summary/Transcriptions/
 AI_htr_extraction/OCR_Results/
