@@ -31,14 +31,15 @@ python 03_omeka_content_updater.py  # Update Omeka S items
 | **Gemini** | Vision model with custom prompts | French typography, column layouts, guided extraction |
 | **Mistral** | Dedicated OCR endpoint | Fast raw extraction, Markdown output |
 
-### Gemini Models
+### Gemini / Gemma Models
 
 | Model | Speed | Quality | Cost | Notes |
 |-------|-------|---------|------|-------|
 | Gemini 3 Flash | Fast | Good | Low | Recommended for most documents |
 | Gemini 3.1 Pro | Slower | Higher | Higher | Complex layouts, poor scans |
+| Gemma 4 31B    | Fast  | Good    | Low  | Open-weights flagship via Gemini API; uses `MINIMAL` thinking for OCR speed |
 
-**Recommendation**: Start with Gemini Flash. Switch to Pro for challenging documents or frequent copyright blocks.
+**Recommendation**: Start with Gemini Flash. Switch to Pro for challenging documents or frequent copyright blocks. Try Gemma 4 when you want an open-weights alternative with similar speed to Flash (same `GEMINI_API_KEY`).
 
 ## Output
 

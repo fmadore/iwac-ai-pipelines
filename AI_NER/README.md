@@ -22,6 +22,9 @@ Omeka S items → AI entity extraction → Authority reconciliation → Database
 # Extract entities from an item set
 python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 
+# Or use Google's open-weights flagship
+python 01_NER_AI.py --item-set-id 123 --model gemma-4
+
 # Match against authority records
 python 02_NER_reconciliation_Omeka.py
 
@@ -34,11 +37,14 @@ python 03_Omeka_update.py
 | Model | Provider | Speed | Cost |
 |-------|----------|-------|------|
 | `gemini-flash` | Google | Fast | Low |
+| `gemma-4` | Google (Gemma 4 31B, open-weights via Gemini API) | Fast | Low |
 | `gpt-5-mini` | OpenAI | Fast | Low |
 | `mistral-large` | Mistral | Medium | Medium |
 | `ministral-14b` | Mistral | Fast | Low |
 
 All models use the same French-language prompt (`ner_system_prompt.md`) optimized for West African Islamic contexts.
+
+`gemma-4` uses the same `GEMINI_API_KEY` as the Gemini models. Thinking level is `minimal` by default (Gemma 4 accepts only `MINIMAL` or `HIGH`), which matches the low-cost entity-extraction budget used by `gemini-flash`.
 
 ## Entity Categories
 

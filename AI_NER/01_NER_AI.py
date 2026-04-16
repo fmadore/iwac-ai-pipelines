@@ -4,6 +4,7 @@ Named Entity Recognition (NER) script for Omeka S metadata extraction.
 Supported models:
   - gpt-5-mini: Fast, cost-effective OpenAI model
   - gemini-flash: Fast, cost-effective Gemini model
+  - gemma-4: Google Gemma 4 31B — open-weights flagship, via Gemini API
   - mistral-large: Mistral Large 3 flagship model
   - ministral-14b: Ministral 3 14B cost-effective model
 
@@ -18,7 +19,7 @@ Environment variables:
     OMEKA_KEY_CREDENTIAL
   OpenAI:
     OPENAI_API_KEY
-  Gemini:
+  Gemini / Gemma:
     GEMINI_API_KEY
   Mistral:
     MISTRAL_API_KEY
@@ -29,6 +30,7 @@ Usage examples:
     python 01_NER_AI.py --item-set-id 123
     python 01_NER_AI.py --item-set-id 123 --model gpt-5-mini
     python 01_NER_AI.py --item-set-id 123 --model gemini-flash --async
+    python 01_NER_AI.py --item-set-id 123 --model gemma-4
     python 01_NER_AI.py --item-set-id 123 --model mistral-large
     python 01_NER_AI.py --item-set-id 123 --model ministral-14b
     python 01_NER_AI.py --item-set-id 123,456,789 --batch-size 8
@@ -439,8 +441,8 @@ def parse_arguments():
     parser.add_argument(
         "--model",
         type=str,
-        choices=["gpt-5-mini", "gemini-flash", "mistral-large", "ministral-14b"],
-        help="Model: 'gpt-5-mini', 'gemini-flash', 'mistral-large', or 'ministral-14b'. Defaults to interactive prompt."
+        choices=["gpt-5-mini", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b"],
+        help="Model: 'gpt-5-mini', 'gemini-flash', 'gemma-4', 'mistral-large', or 'ministral-14b'. Defaults to interactive prompt."
     )
     return parser.parse_args()
 
@@ -466,7 +468,7 @@ async def async_main(args) -> None:
     )
     console.print(Panel(intro_text, title="🔍 NER Extraction", border_style="cyan", padding=(1, 2)))
     
-    model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "mistral-large", "ministral-14b"])
+    model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b"])
     config = load_config(model_option=model_option, batch_size=args.batch_size)
 
     # Initialize shared Omeka client
@@ -540,7 +542,7 @@ def main() -> None:
     )
     console.print(Panel(intro_text, title="🔍 NER Extraction", border_style="cyan", padding=(1, 2)))
     
-    model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "mistral-large", "ministral-14b"])
+    model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b"])
     config = load_config(model_option=model_option, batch_size=args.batch_size)
 
     # Initialize shared Omeka client

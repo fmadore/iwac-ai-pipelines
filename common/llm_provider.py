@@ -53,6 +53,7 @@ DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 OPENAI_FULL_MODEL = "gpt-5.1"
 DEFAULT_GEMINI_FLASH = "gemini-3-flash-preview"
 DEFAULT_GEMINI_PRO = "gemini-3.1-pro-preview"
+DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
 
@@ -87,6 +88,9 @@ class LLMConfig:
             thinking_level: Controls reasoning depth (cannot be disabled)
                            Flash: "MINIMAL", "LOW", "MEDIUM", or "HIGH"
                            Pro: "LOW" or "HIGH" only
+
+        For Gemma 4:
+            thinking_level: "MINIMAL" or "HIGH" only (LOW/MEDIUM are remapped)
     
     Example:
         # High-quality reasoning for complex NER
@@ -134,6 +138,14 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         description="Google Gemini 3.1 Pro — highest quality",
         default_thinking_level="LOW"  # Gemini 3.1 Pro: LOW or HIGH only
     ),
+    "gemma-4": ModelOption(
+        key="gemma-4",
+        provider=PROVIDER_GEMINI,  # Served via the Gemini API (same google-genai client)
+        model=DEFAULT_GEMMA_4,
+        label="Gemma 4 31B",
+        description="Google Gemma 4 31B dense — open-weights flagship, via Gemini API",
+        default_thinking_level="HIGH"  # Gemma 4 supports only MINIMAL or HIGH
+    ),
     "mistral-large": ModelOption(
         key="mistral-large",
         provider=PROVIDER_MISTRAL,
@@ -168,6 +180,10 @@ MODEL_ALIASES = {
     "gemini-3-flash-preview": "gemini-flash",
     "gemini-3-pro-preview": "gemini-pro",
     "gemini-3.1-pro-preview": "gemini-pro",
+    # Gemma 4 aliases
+    "gemma": "gemma-4",
+    "gemma-4-31b": "gemma-4",
+    "gemma-4-31b-it": "gemma-4",
     # Mistral aliases
     "mistral": "mistral-large",
     "mistral-large-latest": "mistral-large",
@@ -399,13 +415,30 @@ class GeminiGenerateContentClient(BaseLLMClient):
             return gen_config_kwargs
         
         try:
-            # All Gemini 3 models use thinking_level (cannot be disabled)
-            # Default to "MINIMAL" for Flash, "LOW" for Pro if not specified
+            # All Gemini 3 models use thinking_level (cannot be disabled).
+            # Gemma 4 also supports thinking_level via ThinkingConfig, but only
+            # accepts "MINIMAL" or "HIGH" (no LOW/MEDIUM).
             thinking_level = effective_config.thinking_level or self.option.default_thinking_level
             if thinking_level is None:
                 # Fallback based on model type
-                is_pro_model = "pro" in self.option.model.lower()
-                thinking_level = "LOW" if is_pro_model else "MINIMAL"
+                model_lower = self.option.model.lower()
+                is_pro_model = "pro" in model_lower
+                is_gemma_model = "gemma" in model_lower
+                if is_gemma_model:
+                    thinking_level = "HIGH"  # Gemma 4 only supports MINIMAL or HIGH
+                else:
+                    thinking_level = "LOW" if is_pro_model else "MINIMAL"
+
+            # Clamp unsupported values for Gemma 4 (only MINIMAL / HIGH accepted)
+            if "gemma" in self.option.model.lower():
+                requested = str(thinking_level).upper()
+                if requested not in ("MINIMAL", "HIGH"):
+                    # Map LOW/MEDIUM to the nearest supported tier
+                    thinking_level = "HIGH" if requested in ("MEDIUM", "HIGH") else "MINIMAL"
+                    LOGGER.debug(
+                        "Gemma only supports MINIMAL/HIGH thinking_level; "
+                        "mapped %s -> %s", requested, thinking_level
+                    )
             
             # Normalize to uppercase for SDK compatibility (scripts can pass any case)
             thinking_level = thinking_level.upper()

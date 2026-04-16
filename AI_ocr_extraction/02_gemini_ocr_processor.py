@@ -1,5 +1,5 @@
 """
-AI-Powered Direct PDF Processing using Google Gemini (Page-by-Page)
+AI-Powered Direct PDF Processing using Google Gemini / Gemma (Page-by-Page)
 
 This script performs high-precision OCR on PDF documents by sending them directly to Gemini
 page-by-page, without converting to images first. This leverages Gemini's native PDF understanding
@@ -15,9 +15,11 @@ Requirements:
     - Shared llm_provider module for model selection
 
 Model Selection:
-    - Uses shared LLM provider with Gemini Flash and Gemini Pro options
-    - Flash: Faster, cost-effective, uses minimal thinking for speed
-    - Pro: Higher quality, uses low thinking
+    - Uses shared LLM provider with three options (all via the Gemini API):
+        * Gemini 3 Flash — faster, cost-effective, uses MINIMAL thinking
+        * Gemini 3.1 Pro — higher quality, uses LOW thinking
+        * Gemma 4 31B    — open-weights flagship, uses MINIMAL thinking
+          (Gemma 4 accepts only MINIMAL or HIGH; MINIMAL is used for OCR speed.)
 
 Advantages over image-based approach:
     - No Poppler dependency needed
@@ -659,20 +661,24 @@ def main():
         return
     console.print("[green]✓[/] API Key loaded successfully")
 
-    # Use shared LLM provider for model selection (Gemini models only)
+    # Use shared LLM provider for model selection (Gemini + Gemma models)
     console.print()
     console.rule("[bold cyan]🤖 Model Selection[/]")
-    model_option = get_model_option(None, allowed_keys=["gemini-flash", "gemini-pro"])
-    
-    # Configure LLM for OCR task based on model type
-    # OCR benefits from low temperature and minimal thinking for speed
-    is_pro_model = "pro" in model_option.model.lower()
-    
-    # All Gemini 3 models use thinking_level (cannot be disabled)
-    # Use MINIMAL for Flash, LOW for Pro
+    model_option = get_model_option(None, allowed_keys=["gemini-flash", "gemini-pro", "gemma-4"])
+
+    # Configure LLM for OCR task based on model type.
+    # OCR benefits from low temperature and minimal thinking for speed.
+    # All Gemini 3 / Gemma 4 models use thinking_level (cannot be disabled):
+    #   - Gemini 3 Flash:  MINIMAL (fastest, sufficient for OCR)
+    #   - Gemini 3.1 Pro:  LOW     (Pro does not accept MINIMAL)
+    #   - Gemma 4:         MINIMAL (only MINIMAL or HIGH accepted; use MINIMAL for speed)
+    model_lower = model_option.model.lower()
+    is_pro_model = "pro" in model_lower
+    thinking_level = "LOW" if is_pro_model else "MINIMAL"
+
     llm_config = LLMConfig(
         temperature=0.1,  # Low temperature for consistent OCR
-        thinking_level="LOW" if is_pro_model else "MINIMAL"
+        thinking_level=thinking_level,
     )
     
     # Display configuration table
