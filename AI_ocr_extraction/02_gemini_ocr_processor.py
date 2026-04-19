@@ -144,7 +144,11 @@ class GeminiPDFProcessor:
             "top_k": 40,
             "max_output_tokens": 65535,
             "response_mime_type": "text/plain",
-            "safety_settings": SAFETY_SETTINGS_NONE
+            "safety_settings": SAFETY_SETTINGS_NONE,
+            # HIGH gives best OCR fidelity for dense/archival scans; MEDIUM saturates for
+            # clean standard docs but archival PDFs benefit from HIGH. ULTRA_HIGH is not
+            # supported at the global config level.
+            "media_resolution": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
         }
         
         # All Gemini 3 models use thinking_level (cannot be disabled)
@@ -154,7 +158,8 @@ class GeminiPDFProcessor:
         
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
         console.print(f"  [cyan]🧠 Thinking:[/] level='{thinking_level}' for {self.model_name}")
-        
+        console.print(f"  [cyan]🖼  Media resolution:[/] HIGH")
+
         return types.GenerateContentConfig(**config_kwargs)
     
     def _log_gemini_error(self, error: Exception, context: str, page_num: Optional[int] = None) -> None:
