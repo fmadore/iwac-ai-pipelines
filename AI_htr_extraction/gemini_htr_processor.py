@@ -87,12 +87,17 @@ class GeminiHTR:
         """
         thinking_level = get_thinking_level(self.model_name)
         print(f"🧠 Using thinking level '{thinking_level}' for {self.model_name}")
+        print(f"🖼  Using media resolution 'HIGH' for {self.model_name}")
 
         return types.GenerateContentConfig(
             max_output_tokens=65535,
             response_mime_type="text/plain",
             thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
             safety_settings=SAFETY_SETTINGS_NONE,
+            # HIGH fidelity matters for handwriting where fine stroke detail and
+            # letter disambiguation are critical. ULTRA_HIGH isn't supported at
+            # the global config level.
+            media_resolution=types.MediaResolution.MEDIA_RESOLUTION_HIGH,
         )
     
     def _get_system_instruction(self):
