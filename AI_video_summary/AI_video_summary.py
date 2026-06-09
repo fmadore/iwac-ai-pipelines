@@ -6,7 +6,7 @@ Processes video files from the video folder and saves summaries/transcriptions a
 Supports:
 - Video summarization
 - Full transcription with periodic visual descriptions
-- Both Gemini 3.1 Pro Preview and Gemini 3 Flash models
+- Both Gemini Pro Preview and Gemini 3 Flash models
 """
 
 import argparse
@@ -37,14 +37,14 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 
 
 class VideoProcessor:
-    def __init__(self, api_key=None, model='gemini-3.1-pro-preview', requests_per_minute: Optional[int] = None):
+    def __init__(self, api_key=None, model='gemini-pro-latest', requests_per_minute: Optional[int] = None):
         """
         Initialize the Video Processor with Gemini API.
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-3.1-pro-preview' or 'gemini-3-flash-preview'.
-                                   Default is 'gemini-3.1-pro-preview'.
+            model (str, optional): Model to use. Either 'gemini-pro-latest' or 'gemini-flash-latest'.
+                                   Default is 'gemini-pro-latest'.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
@@ -540,13 +540,13 @@ def parse_args():
         epilog="""
 Examples:
   python AI_video_summary.py
-  python AI_video_summary.py --model gemini-3-flash-preview
+  python AI_video_summary.py --model gemini-flash-latest
   python AI_video_summary.py --video-folder my_videos --output-folder results
         """
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-3.1-pro-preview", "gemini-3-flash-preview"],
+        choices=["gemini-pro-latest", "gemini-flash-latest"],
         default=None,
         help="Model to use for processing (default: interactive selection)"
     )
@@ -568,13 +568,13 @@ def select_model_interactive():
     Interactively select a model if not provided via CLI.
     """
     print("\nAvailable models:")
-    print("1. gemini-3.1-pro-preview (Higher quality, best for detailed transcription)")
-    print("2. gemini-3-flash-preview (Faster, good for summaries)")
-    model_choice = input("\nSelect a model (1 or 2) or press Enter for default (gemini-3.1-pro-preview): ").strip()
+    print("1. gemini-pro-latest (Higher quality, best for detailed transcription)")
+    print("2. gemini-flash-latest (Faster, good for summaries)")
+    model_choice = input("\nSelect a model (1 or 2) or press Enter for default (gemini-pro-latest): ").strip()
 
     if model_choice == '2':
-        return 'gemini-3-flash-preview'
-    return 'gemini-3.1-pro-preview'
+        return 'gemini-flash-latest'
+    return 'gemini-pro-latest'
 
 
 def main():

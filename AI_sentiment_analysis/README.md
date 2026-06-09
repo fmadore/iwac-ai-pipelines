@@ -146,7 +146,7 @@ All three models are configured via the shared LLM provider (`common/llm_provide
 
 | Registry Key | Provider | Model ID | Notes |
 |-------------|----------|----------|-------|
-| `gemini-flash` | Google | `gemini-3-flash-preview` | Gemini 3 Flash with thinking_level support |
+| `gemini-flash` | Google | `gemini-flash-latest` | Gemini Flash with thinking_level support |
 | `gpt-5-mini` | OpenAI | `gpt-5-mini` | GPT-5 Mini with structured output support |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 14B with structured output |
 

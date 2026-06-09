@@ -51,8 +51,9 @@ PROVIDER_MISTRAL = "mistral"
 
 DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 OPENAI_FULL_MODEL = "gpt-5.1"
-DEFAULT_GEMINI_FLASH = "gemini-3-flash-preview"
-DEFAULT_GEMINI_PRO = "gemini-3.1-pro-preview"
+DEFAULT_GEMINI_FLASH = "gemini-flash-latest"  # rolling alias -> newest stable Flash
+DEFAULT_GEMINI_FLASH_LITE = "gemini-flash-lite-latest"  # rolling alias -> newest stable Flash-Lite
+DEFAULT_GEMINI_PRO = "gemini-pro-latest"  # rolling alias -> newest stable Pro
 DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
@@ -96,7 +97,7 @@ class LLMConfig:
         # High-quality reasoning for complex NER
         config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
 
-        # Fast OCR with Gemini 3.1 Pro (low thinking)
+        # Fast OCR with Gemini Pro (low thinking)
         config = LLMConfig(thinking_level="low", temperature=0.1)
 
         # Fast OCR correction with Gemini 3 Flash (minimal thinking)
@@ -126,17 +127,25 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         key="gemini-flash",
         provider=PROVIDER_GEMINI,
         model=DEFAULT_GEMINI_FLASH,
-        label="Gemini 3 Flash",
-        description="Google Gemini 3 Flash — fast, cost-effective",
-        default_thinking_level="MINIMAL"  # Gemini 3 Flash uses thinking_level, cannot be disabled
+        label="Gemini Flash",
+        description="Google Gemini Flash — latest stable (rolling alias gemini-flash-latest), fast & cost-effective",
+        default_thinking_level="MINIMAL"  # Flash supports minimal/low/medium/high
+    ),
+    "gemini-flash-lite": ModelOption(
+        key="gemini-flash-lite",
+        provider=PROVIDER_GEMINI,
+        model=DEFAULT_GEMINI_FLASH_LITE,
+        label="Gemini Flash-Lite",
+        description="Google Gemini Flash-Lite — latest stable (rolling alias gemini-flash-lite-latest), cheapest/lowest latency",
+        default_thinking_level="MINIMAL"  # Flash-Lite uses thinking_level; minimal keeps it cheap
     ),
     "gemini-pro": ModelOption(
         key="gemini-pro",
         provider=PROVIDER_GEMINI,
         model=DEFAULT_GEMINI_PRO,
-        label="Gemini 3.1 Pro",
-        description="Google Gemini 3.1 Pro — highest quality",
-        default_thinking_level="LOW"  # Gemini 3.1 Pro: LOW or HIGH only
+        label="Gemini Pro",
+        description="Google Gemini Pro — latest stable (rolling alias gemini-pro-latest), highest quality",
+        default_thinking_level="LOW"  # Pro supports LOW or HIGH
     ),
     "gemma-4": ModelOption(
         key="gemma-4",
@@ -166,6 +175,12 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
 
 MODEL_ALIASES = {
     "gemini": "gemini-flash",
+    # Gemini Flash-Lite aliases
+    "flash-lite": "gemini-flash-lite",
+    "gemini-flash-lite-latest": "gemini-flash-lite",
+    "gemini-flash-lite-3.1": "gemini-flash-lite",
+    "gemini-3.1-flash-lite": "gemini-flash-lite",  # pinned (explicit version)
+    "gemini-3.1-flash-lite-preview": "gemini-flash-lite",  # legacy preview id
     "openai": "gpt-5-mini",  # Legacy generic name
     "openai:gpt-5-mini": "gpt-5-mini",
     "openai:gpt-5.1": "gpt-5.1",
@@ -177,9 +192,12 @@ MODEL_ALIASES = {
     "openai:gpt-5": "gpt-5.1",
     "openai-5": "gpt-5.1",  # Legacy key name
     "openai-5.1": "gpt-5.1",  # Legacy key name
-    "gemini-3-flash-preview": "gemini-flash",
-    "gemini-3-pro-preview": "gemini-pro",
-    "gemini-3.1-pro-preview": "gemini-pro",
+    "gemini-flash-latest": "gemini-flash",
+    "gemini-3.5-flash": "gemini-flash",  # pinned (explicit version)
+    "gemini-3-flash-preview": "gemini-flash",  # legacy (Gemini 3 Flash)
+    "gemini-pro-latest": "gemini-pro",
+    "gemini-3.1-pro-preview": "gemini-pro",  # pinned (explicit version)
+    "gemini-3-pro-preview": "gemini-pro",  # legacy
     # Gemma 4 aliases
     "gemma": "gemma-4",
     "gemma-4-31b": "gemma-4",

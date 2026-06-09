@@ -108,23 +108,24 @@ Create the directories if they don't exist.
 Present a summary to the user:
 - Number of PDFs processed
 - For each item, show the item ID and a preview of the first 2-3 articles extracted
-- Ask the user to review before generating the CSV
+- Ask the user to review before writing to Omeka
 
-### Step 4: Generate CSV
+### Step 4: Write the TOC to Omeka
 
-Run the CSV generation script:
+Run the update script. It writes `dcterms:tableOfContents` to each item **directly
+via the Omeka API**, preserving all existing metadata (it fetches the full item,
+changes only the TOC property, and PATCHes it back).
 
 ```bash
-.venv/Scripts/python.exe AI_summary_issue/03_update_omeka_toc.py
+.venv/Scripts/python.exe AI_summary_issue/03_update_omeka_toc.py --dry-run   # preview first
+.venv/Scripts/python.exe AI_summary_issue/03_update_omeka_toc.py             # then write
 ```
 
-The script will prompt the user to select the annotation model (1 for Claude Opus 4.6, 2 for Gemini 3.1 pro) and generate `AI_summary_issue/toc_import.csv`.
-
-Tell the user to import this CSV into Omeka S via CSV Import.
+The script prompts for the annotation model (1 = Claude Opus 4.6, 2 = Gemini 3.1 pro, 3 = Gemini 3.5 flash, 4 = Gemini 3.1 flash lite), recorded as the `iwac:summaryModel` value annotation. Recommend running `--dry-run` first, then confirm the live run.
 
 ### Step 5: Clean up
 
-After the user confirms they have the CSV, remove downloaded PDFs:
+After the user confirms the Omeka update, remove downloaded PDFs:
 
 ```bash
 rm -f AI_summary_issue/PDF/*.pdf

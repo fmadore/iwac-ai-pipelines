@@ -3,9 +3,9 @@
 This script implements a two-step pipeline to extract and consolidate articles
 from an Islamic magazine using Gemini's native PDF understanding with structured outputs.
 
-Supported models:
-- Gemini 3.1 Pro (step 1) - High-quality extraction with thinking_level
-- Gemini 3 Flash (step 2) - Fast consolidation with thinking_level
+Supported models (select with --profile):
+- standard: Gemini Pro (step 1, per page) + Gemini Flash (step 2, consolidation)
+- light: Gemini Flash (step 1, per page) + Gemini Flash-Lite (step 2, consolidation)
 
 Step 1: Page-by-page extraction (high-performance model)
 - Extracts individual pages using PyPDF2
@@ -45,6 +45,7 @@ Usage:
 import os
 import sys
 import json
+import argparse
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
@@ -161,17 +162,27 @@ def load_consolidation_prompt() -> str:
 # ------------------------------------------------------------------
 # Client Initialization
 # ------------------------------------------------------------------
-def get_model_pair() -> Tuple[ModelOption, ModelOption]:
-    """Get the Gemini model pair for the pipeline.
-    
+def get_model_pair(profile: str = "standard") -> Tuple[ModelOption, ModelOption]:
+    """Get the Gemini (step1, step2) model pair for the pipeline.
+
+    Profiles:
+        - "standard": Gemini Pro for per-page extraction (best quality) +
+          Gemini Flash for consolidation.
+        - "light": Gemini Flash for per-page extraction (the quality-critical
+          step) + Gemini Flash-Lite for the cheaper consolidation step.
+
     Returns:
-        Tuple of (model_step1, model_step2) where step1 is Pro and step2 is Flash.
+        Tuple of (model_step1, model_step2).
     """
-    step1_option = get_model_option("gemini-pro")
-    step2_option = get_model_option("gemini-flash")
+    if profile == "light":
+        step1_option = get_model_option("gemini-flash")        # quality-critical per-page extraction
+        step2_option = get_model_option("gemini-flash-lite")   # cheaper consolidation
+    else:
+        step1_option = get_model_option("gemini-pro")
+        step2_option = get_model_option("gemini-flash")
     
     # Display model configuration in a table
-    model_table = Table(title="🤖 Model Configuration", box=box.ROUNDED, show_header=True, header_style="bold cyan")
+    model_table = Table(title=f"🤖 Model Configuration ({profile})", box=box.ROUNDED, show_header=True, header_style="bold cyan")
     model_table.add_column("Step", style="white", width=12)
     model_table.add_column("Purpose", style="dim")
     model_table.add_column("Model", style="green")
@@ -183,6 +194,29 @@ def get_model_pair() -> Tuple[ModelOption, ModelOption]:
     logging.info(f"Selected models: Step 1={summary_from_option(step1_option)}, Step 2={summary_from_option(step2_option)}")
     
     return step1_option, step2_option
+
+def choose_profile() -> str:
+    """Interactively ask the user which model profile to run.
+
+    Accepts 1/a for the standard profile and 2/b for the light profile.
+    """
+    table = Table(title="Select model profile", box=box.ROUNDED, show_header=True, header_style="bold cyan")
+    table.add_column("#", style="cyan", justify="center")
+    table.add_column("Profile", style="green")
+    table.add_column("Description", style="white")
+    table.add_row("1 / a", "standard", "Gemini Pro per page - best quality")
+    table.add_row("2 / b", "light", "Gemini Flash per page + Flash-Lite consolidation - cheaper")
+    console.print(table)
+
+    mapping = {"1": "standard", "a": "standard", "2": "light", "b": "light"}
+    while True:
+        choice = console.input("\n[bold]Profile (1/a = standard, 2/b = light) [1]:[/] ").strip().lower()
+        if not choice:
+            return "standard"
+        if choice in mapping:
+            return mapping[choice]
+        console.print("[red]Invalid choice - enter 1, 2, a, or b.[/]")
+
 
 # ------------------------------------------------------------------
 # AI Generation Functions with Retry
@@ -579,7 +613,8 @@ def step2_consolidate(client: genai.Client, model_option: ModelOption, llm_confi
 # Main Pipeline
 # ------------------------------------------------------------------
 def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
-                    pdf_path: Path, output_dir: Path, magazine_id: str = None):
+                    pdf_path: Path, output_dir: Path, magazine_id: str = None,
+                    profile: str = "standard"):
     """
     Complete pipeline to process a magazine PDF using Gemini's native PDF understanding.
     
@@ -613,14 +648,15 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     # Initialize Gemini client
     client = genai.Client(api_key=api_key)
     
-    # Configure for each step - all Gemini 3 models use thinking_level
-    # Step 1: Pro uses LOW thinking for quality
+    # Configure for each step - all Gemini 3 models use thinking_level.
+    # Step 1 (per-page extraction) is the quality-critical step - Pro (standard)
+    # or Flash (light) - so it gets LOW thinking.
     config_step1 = LLMConfig(
         thinking_level="LOW",
         temperature=0.2
     )
     
-    # Step 2: Flash uses MINIMAL thinking for speed
+    # Step 2 (consolidation): Flash (standard) or Flash-Lite (light) - MINIMAL thinking for speed
     config_step2 = LLMConfig(
         thinking_level="MINIMAL",
         temperature=0.3
@@ -702,7 +738,23 @@ def main():
     try:
         # Load environment variables
         load_dotenv()
-        
+
+        # Parse CLI args. When neither --profile nor --light is given, the user
+        # is prompted interactively (see choose_profile()).
+        parser = argparse.ArgumentParser(
+            description="Islamic magazine article extraction to a table of contents."
+        )
+        parser.add_argument(
+            "--profile", choices=["standard", "light"], default=None,
+            help="standard = Gemini Pro per page + Gemini Flash consolidation "
+                 "(best quality); light = Gemini Flash per page + Gemini Flash-Lite "
+                 "consolidation (cheaper/faster). Omit to choose interactively.",
+        )
+        parser.add_argument(
+            "--light", action="store_true", help="Shortcut for --profile light.",
+        )
+        args = parser.parse_args()
+
         # Verify Gemini API key
         if not os.getenv("GEMINI_API_KEY"):
             console.print(Panel(
@@ -715,19 +767,29 @@ def main():
         
         script_dir = Path(__file__).parent
         
+        # Resolve the model profile: a CLI flag wins, otherwise ask interactively.
+        if args.light:
+            profile = "light"
+        elif args.profile:
+            profile = args.profile
+        else:
+            profile = choose_profile()
+
         # Display welcome banner
+        step1_label = "Gemini Flash" if profile == "light" else "Gemini Pro"
+        step2_label = "Gemini Flash-Lite" if profile == "light" else "Gemini Flash"
         intro_text = (
             "[bold cyan]Islamic Magazine Article Extraction Pipeline[/]\n\n"
-            "[dim]Using Gemini's native PDF understanding[/]\n\n"
-            "📖 [white]Step 1:[/] Page-by-page extraction [dim](Gemini Pro)[/]\n"
-            "📊 [white]Step 2:[/] Magazine-level consolidation [dim](Gemini Flash)[/]"
+            f"[dim]Using Gemini's native PDF understanding — profile: {profile}[/]\n\n"
+            f"📖 [white]Step 1:[/] Page-by-page extraction [dim]({step1_label})[/]\n"
+            f"📊 [white]Step 2:[/] Magazine-level consolidation [dim]({step2_label})[/]"
         )
         console.print(Panel(intro_text, title="🚀 Pipeline Started", border_style="cyan", padding=(1, 2)))
         
         logging.info("=== Magazine Article Extraction Pipeline ===")
         
         # Model selection (Gemini only)
-        model_step1, model_step2 = get_model_pair()
+        model_step1, model_step2 = get_model_pair(profile)
         
         # Get the list of PDFs to process
         pdf_files = get_input_pdfs(script_dir)
@@ -762,7 +824,7 @@ def main():
             
             try:
                 # Execute the pipeline for this PDF
-                process_magazine(model_step1, model_step2, pdf_path, output_dir, magazine_id)
+                process_magazine(model_step1, model_step2, pdf_path, output_dir, magazine_id, profile=profile)
                 success_count += 1
                 console.print(f"\n[green]✓[/] PDF {i}/{len(pdf_files)} completed: [bold]{pdf_path.name}[/]")
             except Exception as e:

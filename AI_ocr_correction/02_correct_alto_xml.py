@@ -13,8 +13,8 @@ The approach:
 4. Update only CONTENT attributes, preserving all coordinate data
 
 Supports multiple models via --model flag:
-- gemini-flash (default): Gemini 2.5 Flash - fast, cost-effective
-- gemini-pro: Gemini 3.1 Pro - highest quality
+- gemini-flash (default): Gemini Flash - fast, cost-effective
+- gemini-pro: Gemini Pro - highest quality
 - gpt-5-mini: OpenAI GPT-5 mini - cost-optimized
 - mistral-large: Mistral Large 3 - multimodal MoE
 """

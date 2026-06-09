@@ -17,7 +17,7 @@ Requirements:
 Model Selection:
     - Uses shared LLM provider with three options (all via the Gemini API):
         * Gemini 3 Flash — faster, cost-effective, uses MINIMAL thinking
-        * Gemini 3.1 Pro — higher quality, uses LOW thinking
+        * Gemini Pro — higher quality, uses LOW thinking
         * Gemma 4 31B    — open-weights flagship, uses MINIMAL thinking
           (Gemma 4 accepts only MINIMAL or HIGH; MINIMAL is used for OCR speed.)
 
@@ -127,7 +127,7 @@ class GeminiPDFProcessor:
         - Model-appropriate thinking configuration:
           - All Gemini 3 models use thinking_level (cannot be disabled)
           - Gemini 3 Flash: "MINIMAL", "LOW", "MEDIUM", or "HIGH"
-          - Gemini 3.1 Pro: "LOW" or "HIGH" only
+          - Gemini Pro: "LOW" or "HIGH" only
         
         Returns:
             types.GenerateContentConfig: Configured generation config
@@ -675,7 +675,7 @@ def main():
     # OCR benefits from low temperature and minimal thinking for speed.
     # All Gemini 3 / Gemma 4 models use thinking_level (cannot be disabled):
     #   - Gemini 3 Flash:  MINIMAL (fastest, sufficient for OCR)
-    #   - Gemini 3.1 Pro:  LOW     (Pro does not accept MINIMAL)
+    #   - Gemini Pro:  LOW     (Pro does not accept MINIMAL)
     #   - Gemma 4:         MINIMAL (only MINIMAL or HIGH accepted; use MINIMAL for speed)
     model_lower = model_option.model.lower()
     is_pro_model = "pro" in model_lower

@@ -106,8 +106,9 @@ Audio, vision, HTR, and OCR scripts use provider clients directly because they r
 |-----|----------|----------|
 | `gpt-5-mini` | OpenAI | Fast, cost-effective text processing |
 | `gpt-5.1` | OpenAI | Higher quality, slower |
-| `gemini-flash` | Google | Fast multimodal, cost-effective |
-| `gemini-pro` | Google | Best quality (3.1 Pro), more expensive |
+| `gemini-flash` | Google | Gemini Flash — fast multimodal, cost-effective |
+| `gemini-flash-lite` | Google | Gemini Flash-Lite — cheapest, lowest latency |
+| `gemini-pro` | Google | Best quality (latest Pro), more expensive |
 | `mistral-large` | Mistral | Good quality, moderate cost |
 | `ministral-14b` | Mistral | Budget option ($0.2/M tokens) |
 
