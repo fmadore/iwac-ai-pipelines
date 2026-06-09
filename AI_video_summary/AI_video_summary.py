@@ -6,7 +6,7 @@ Processes video files from the video folder and saves summaries/transcriptions a
 Supports:
 - Video summarization
 - Full transcription with periodic visual descriptions
-- Both Gemini Pro Preview and Gemini 3 Flash models
+- Both Gemini Pro and Gemini Flash models
 """
 
 import argparse

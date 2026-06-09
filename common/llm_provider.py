@@ -100,7 +100,7 @@ class LLMConfig:
         # Fast OCR with Gemini Pro (low thinking)
         config = LLMConfig(thinking_level="low", temperature=0.1)
 
-        # Fast OCR correction with Gemini 3 Flash (minimal thinking)
+        # Fast OCR correction with Gemini Flash (minimal thinking)
         config = LLMConfig(thinking_level="minimal", temperature=0.1)
     """
     temperature: Optional[float] = None
