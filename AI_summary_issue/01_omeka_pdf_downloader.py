@@ -1,12 +1,13 @@
 """
 PDF Download Script for Omeka S Collections
 
-This script downloads PDF files from Omeka S digital collections using the API.
-It processes item sets, finds PDF media attachments, and downloads them locally
-with proper error handling and concurrent processing.
+Downloads PDF media from Omeka S items in a given item set, restricted to items
+whose resource class is **bibo:Issue** (periodical issues). The class filter is
+applied server-side via ``resource_class_id``, with a defensive ``@type`` backstop,
+so PDFs are only ever fetched from bibo:Issue items.
 
 Usage:
-    python 01_PDF_download.py
+    python 01_omeka_pdf_downloader.py
 
 Requirements:
     - Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
@@ -25,6 +26,9 @@ from typing import List, Dict, Optional, Tuple, Any
 # Shared Omeka client
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from common.omeka_client import OmekaClient
+
+# Only download PDFs from items whose resource class is bibo:Issue (verified id).
+BIBO_ISSUE_CLASS_ID = 60  # bibo:Issue
 
 
 class PDFDownloader:
@@ -175,15 +179,20 @@ def download_pdfs_from_item_set(item_set_id: str, pdf_folder: Path, max_workers:
     client = OmekaClient.from_env()
     downloader = PDFDownloader(client, pdf_folder)
 
-    # Retrieve all items from the specified item set
-    all_items = client.get_items(int(item_set_id))
+    # Retrieve only bibo:Issue items from the set (server-side class filter).
+    all_items = client.get_items(int(item_set_id), resource_class_id=BIBO_ISSUE_CLASS_ID)
     if not all_items:
-        logging.error(f"No items found for item set {item_set_id}")
+        logging.error(f"No bibo:Issue items found in item set {item_set_id}")
+        print(f"No bibo:Issue items found in item set {item_set_id}.")
         return
 
-    # Filter to only bibo:Issue items
+    # Defensive backstop: keep only items whose @type confirms bibo:Issue.
     items = [item for item in all_items if "bibo:Issue" in item.get("@type", [])]
-    logging.info(f"Filtered {len(items)} bibo:Issue items from {len(all_items)} total items")
+    dropped = len(all_items) - len(items)
+    if dropped:
+        logging.warning(f"Skipped {dropped} item(s) returned without a bibo:Issue @type")
+    logging.info(f"Processing {len(items)} bibo:Issue items from item set {item_set_id}")
+    print(f"Found {len(items)} bibo:Issue item(s) to download PDFs from.")
     if not items:
         logging.error(f"No bibo:Issue items found in item set {item_set_id}")
         return
