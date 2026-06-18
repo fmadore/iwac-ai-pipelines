@@ -43,6 +43,12 @@ load_dotenv()
 # Script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
+# Gemini caps an *inline* request (audio bytes + prompt + system instruction)
+# at 20 MB total. Anything larger must go through the Files API, which supports
+# files up to ~2 GB / 9.5 h of audio. We upload above an 18 MB margin so the
+# prompt text always fits under the hard cap.
+INLINE_REQUEST_LIMIT_BYTES = 18 * 1024 * 1024
+
 class AudioTranscriber:
     def __init__(self, api_key=None, model='gemini-pro-latest', requests_per_minute: Optional[int] = None):
         """
@@ -50,7 +56,7 @@ class AudioTranscriber:
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-pro-latest' or 'gemini-flash-latest'. Default is 'gemini-pro-latest'.
+            model (str, optional): Model to use — 'gemini-pro-latest', 'gemini-flash-latest', or 'gemini-flash-lite-latest'. Default is 'gemini-pro-latest'.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
@@ -176,75 +182,148 @@ class AudioTranscriber:
             str: Transcribed text or None if error
         """
         console.print(f"[cyan]🎤[/] Transcribing: [bold]{audio_file_path.name}[/]")
-        
-        # Prepare audio data
-        audio_bytes, mime_type = self.prepare_audio_for_api(audio_file_path)
-        if not audio_bytes or not mime_type:
+
+        mime_type = get_mime_type(audio_file_path)
+        if not mime_type:
+            console.print(f"[red]✗[/] Could not determine MIME type for [cyan]{audio_file_path.name}[/]")
             return None
-        
-        # Create audio part for the API (do this once, outside retry loop)
-        audio_part = types.Part.from_bytes(
-            data=audio_bytes,
-            mime_type=mime_type
-        )
-        
-        # Use custom prompt or default
-        prompt = custom_prompt or self.transcription_prompt
-        
-        # Retry loop with exponential backoff
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                # Generate transcription using the selected model
-                # IMPORTANT: Audio part must come FIRST, then the prompt text
-                self.rate_limiter.wait()
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=[audio_part, prompt],
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                        max_output_tokens=65536,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_level=get_thinking_level(self.model)
-                        ),
-                        safety_settings=SAFETY_SETTINGS_NONE,
-                    )
-                )
 
-                # Handle case where response.text is None (e.g., content blocked, empty response)
-                if response.text is None:
-                    console.print(f"[yellow]⚠[/] Warning: No transcription returned for [cyan]{audio_file_path.name}[/] (response was empty)")
-                    # Don't retry for empty responses - likely a content issue, not transient
+        # Choose transport by size: small payloads go inline; anything above the
+        # 20 MB inline cap is uploaded via the Files API instead.
+        try:
+            file_size = audio_file_path.stat().st_size
+        except OSError:
+            file_size = 0
+
+        uploaded_file = None
+        try:
+            if file_size > INLINE_REQUEST_LIMIT_BYTES:
+                uploaded_file = self._upload_via_files_api(audio_file_path, mime_type)
+                if uploaded_file is None:
                     return None
+                media_part = uploaded_file
+            else:
+                audio_bytes, _ = self.prepare_audio_for_api(audio_file_path)
+                if not audio_bytes:
+                    return None
+                media_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
 
-                return response.text.strip()
+            # Use custom prompt or default
+            prompt = custom_prompt or self.transcription_prompt
 
-            except genai_errors.APIError as e:
-                if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
-                last_error = e
-                if attempt < max_retries - 1:
-                    import random
-                    wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
-                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
-                    console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                else:
-                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
+            # Retry loop with exponential backoff
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    # Generate transcription using the selected model
+                    # IMPORTANT: Audio part must come FIRST, then the prompt text
+                    self.rate_limiter.wait()
+                    response = self.client.models.generate_content(
+                        model=self.model,
+                        contents=[media_part, prompt],
+                        config=types.GenerateContentConfig(
+                            temperature=0.1,
+                            max_output_tokens=65536,
+                            thinking_config=types.ThinkingConfig(
+                                thinking_level=get_thinking_level(self.model)
+                            ),
+                            safety_settings=SAFETY_SETTINGS_NONE,
+                        )
+                    )
 
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    import random
-                    wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
-                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
-                    console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                else:
-                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
+                    # Handle case where response.text is None (e.g., content blocked, empty response)
+                    if response.text is None:
+                        console.print(f"[yellow]⚠[/] Warning: No transcription returned for [cyan]{audio_file_path.name}[/] (response was empty)")
+                        # Don't retry for empty responses - likely a content issue, not transient
+                        return None
 
-        return None
-    
+                    return response.text.strip()
+
+                except genai_errors.APIError as e:
+                    if is_quota_exhausted(e):
+                        raise QuotaExhaustedError(str(e))
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        import random
+                        wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
+                        console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
+
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        import random
+                        wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
+                        console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
+
+            return None
+        finally:
+            # Always remove any Files API upload, on success or failure.
+            if uploaded_file is not None:
+                self._delete_uploaded_file(uploaded_file)
+
+    def _upload_via_files_api(self, audio_file_path, mime_type, poll_seconds=2, max_wait=600):
+        """Upload a media file via the Gemini Files API and wait until it is ACTIVE.
+
+        Used for segments/files that exceed the 20 MB inline request limit.
+        The Files API supports files up to ~2 GB / 9.5 h of audio.
+
+        Args:
+            audio_file_path (Path): Path to the audio file to upload.
+            mime_type (str): MIME type of the file.
+            poll_seconds (int): Seconds between status polls while PROCESSING.
+            max_wait (int): Maximum seconds to wait for the file to become ACTIVE.
+
+        Returns:
+            The ACTIVE ``File`` handle, or ``None`` on failure.
+        """
+        size_mb = audio_file_path.stat().st_size / (1024 * 1024)
+        console.print(f"[cyan]☁[/] Uploading [bold]{audio_file_path.name}[/] ({size_mb:.1f} MB) via Files API...")
+        try:
+            uploaded = self.client.files.upload(
+                file=str(audio_file_path),
+                config=types.UploadFileConfig(mime_type=mime_type),
+            )
+        except genai_errors.APIError as e:
+            if is_quota_exhausted(e):
+                raise QuotaExhaustedError(str(e))
+            console.print(f"[red]✗[/] Files API upload failed for [cyan]{audio_file_path.name}[/]: {e}")
+            return None
+
+        # Media files are processed asynchronously; wait until ACTIVE.
+        waited = 0
+        while uploaded.state and uploaded.state.name == "PROCESSING":
+            if waited >= max_wait:
+                console.print(f"[red]✗[/] Upload still processing after {max_wait}s; giving up on [cyan]{audio_file_path.name}[/]")
+                self._delete_uploaded_file(uploaded)
+                return None
+            time.sleep(poll_seconds)
+            waited += poll_seconds
+            uploaded = self.client.files.get(name=uploaded.name)
+
+        if not uploaded.state or uploaded.state.name != "ACTIVE":
+            console.print(f"[red]✗[/] Uploaded file not ACTIVE (state={uploaded.state}); skipping [cyan]{audio_file_path.name}[/]")
+            self._delete_uploaded_file(uploaded)
+            return None
+
+        console.print(f"[green]✓[/] Upload ready: [cyan]{uploaded.name}[/]")
+        return uploaded
+
+    def _delete_uploaded_file(self, uploaded_file):
+        """Best-effort deletion of a Files API upload after transcription."""
+        try:
+            self.client.files.delete(name=uploaded_file.name)
+            console.print(f"[dim]🧹 Removed uploaded file: {uploaded_file.name}[/]")
+        except Exception as e:
+            console.print(f"[yellow]⚠[/] Could not delete uploaded file {getattr(uploaded_file, 'name', '?')}: {e}")
+
     def save_transcription(self, transcription, audio_file_path, output_folder="Transcriptions"):
         """
         Save transcription to a text file.
@@ -277,7 +356,7 @@ class AudioTranscriber:
             console.print(f"[red]✗[/] Error saving transcription: {e}")
             return None
     
-    def split_audio_file(self, audio_file_path, segment_minutes=10, temp_root="temp_segments"):
+    def split_audio_file(self, audio_file_path, segment_minutes=20, temp_root="temp_segments"):
         """Split an audio file into fixed-length segments.
 
         Checks for existing segments from a previous run first (resume support),
@@ -446,7 +525,7 @@ class AudioTranscriber:
             console.print(f"[red]✗[/] Error updating transcription file: {e}")
             return False
 
-    def transcribe_all_audio_files(self, audio_folder="Audio", output_folder="Transcriptions", custom_prompt=None, split_segments=False, segment_minutes=10, resume_mode=False):
+    def transcribe_all_audio_files(self, audio_folder="Audio", output_folder="Transcriptions", custom_prompt=None, split_segments=False, segment_minutes=20, resume_mode=False):
         """
         Transcribe all audio and video files in the specified folder.
         Video files are automatically converted to audio before transcription.
@@ -915,7 +994,7 @@ def parse_args():
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-pro-latest", "gemini-flash-latest"],
+        choices=["gemini-pro-latest", "gemini-flash-latest", "gemini-flash-lite-latest"],
         default=None,
         help="Model to use for transcription (default: interactive selection)"
     )
@@ -932,13 +1011,13 @@ def parse_args():
     parser.add_argument(
         "--split",
         action="store_true",
-        help="Split audio into 10-minute segments for improved accuracy"
+        help="Split audio into 20-minute segments (segments over 20 MB are sent via the Files API)"
     )
     parser.add_argument(
         "--segment-minutes",
         type=int,
-        default=10,
-        help="Segment length in minutes when splitting (default: 10)"
+        default=20,
+        help="Segment length in minutes when splitting (default: 20)"
     )
     parser.add_argument(
         "--resume",
@@ -958,12 +1037,15 @@ def select_model_interactive():
     models_table.add_column("Description", style="dim")
     models_table.add_row("1", "gemini-pro-latest", "Higher quality, slower")
     models_table.add_row("2", "gemini-flash-latest", "Faster, good quality")
+    models_table.add_row("3", "gemini-flash-lite-latest", "Fastest, cheapest, lowest latency")
     console.print(models_table)
 
-    model_choice = console.input("\n[bold]Select a model (1 or 2) or press Enter for default (gemini-pro-latest):[/] ").strip()
+    model_choice = console.input("\n[bold]Select a model (1-3) or press Enter for default (gemini-pro-latest):[/] ").strip()
 
     if model_choice == '2':
         return 'gemini-flash-latest'
+    if model_choice == '3':
+        return 'gemini-flash-lite-latest'
     return 'gemini-pro-latest'
 
 
@@ -1014,7 +1096,7 @@ def main():
                 split_segments = False
         else:
             # Ask user if they want to split audio into 10-minute segments
-            split_choice = console.input("\n[bold]Split audio into 10-minute segments for improved accuracy? (y/N):[/] ").strip().lower()
+            split_choice = console.input("\n[bold]Split audio into 20-minute segments for improved accuracy? (y/N):[/] ").strip().lower()
             split_segments = split_choice in {"y", "yes"}
             if split_segments and not _pydub_ready:
                 console.print("[yellow]⚠[/] You chose to split audio, but 'pydub' or ffmpeg is not available. Proceeding without splitting.")

@@ -87,7 +87,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 | Provider | Key | Notes |
 |----------|-----|-------|
 | OpenAI | `gpt-5-mini`, `gpt-5.1` | Text pipelines only |
-| Gemini | `gemini-flash`, `gemini-pro` | Text and multimodal |
+| Gemini | `gemini-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
 

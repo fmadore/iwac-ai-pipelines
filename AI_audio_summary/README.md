@@ -37,8 +37,8 @@ Or process local files by placing them in `Audio/` and running step 2.
 | **Approach** | Prompt-based multimodal | Dedicated transcription model |
 | **Speaker diarization** | Via prompt instructions | Native `--no-diarize` toggle |
 | **Language selection** | Via prompt | `--language` flag (en, fr, de, ha, sw) |
-| **Max audio length** | ~10 min per segment | Up to 3 hours per request |
-| **Audio splitting** | Optional (`--split`) | Not needed |
+| **Max audio length** | Up to 9.5 h per request (Files API); 20-min segments by default | Up to 3 hours per request |
+| **Audio splitting** | Optional (`--split`, 20-min segments) | Not needed |
 | **Transcription modes** | Multiple prompts (verbatim, translation, segmentation) | Single mode (verbatim) |
 | **Output files** | `.txt` only | `.txt` + `.json` (with timestamps) |
 | **Cost** | ~$0.50-15/hour depending on model | $0.003/min (~$0.18/hour) |
@@ -68,10 +68,11 @@ Select mode interactively or edit prompt files in `prompts/`.
 
 | Model | Speed | Quality | Cost |
 |-------|-------|---------|------|
+| `gemini-flash-lite-latest` | Fastest | Good | ~$0.20-1/hour |
 | `gemini-flash-latest` | Faster | Good | ~$0.50-2/hour |
 | `gemini-pro-latest` | Slower | Higher | ~$5-15/hour |
 
-Use Flash for clear recordings, Pro for noisy audio or multiple speakers.
+Use Flash-Lite for clean, single-speaker recordings on a budget, Flash for general use, Pro for noisy audio or multiple speakers.
 
 ### Voxtral
 
@@ -85,13 +86,22 @@ Supports 13 languages. Language can be auto-detected or specified explicitly.
 
 ### Gemini
 
-For recordings over 10 minutes, enable splitting:
+Gemini can transcribe up to **9.5 hours** of audio per request. Audio is sent
+**inline** (capped at 20 MB total) for small files, and automatically uploaded
+via the **Files API** for anything larger — so segments are not limited by the
+20 MB inline cap.
+
+For long recordings, enable splitting into 20-minute segments:
 
 ```bash
-python 02_AI_transcribe_audio.py --split
+python 02_AI_transcribe_audio.py --split                 # 20-min segments (default)
+python 02_AI_transcribe_audio.py --split --segment-minutes 45   # longer segments
 ```
 
-This improves accuracy and allows recovery if segments fail. Failed segments are marked and can be retried with `--resume`.
+Twenty-minute segments mean fewer split points — and fewer boundary
+artifacts — than shorter chunks, while keeping per-segment retries cheap.
+Splitting also allows recovery if segments fail: failed segments are marked
+and can be retried with `--resume`.
 
 ### Voxtral
 
