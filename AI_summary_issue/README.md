@@ -31,10 +31,11 @@ which **model profile** to run (or pass `--profile` / `--light` to skip the prom
 | Choice | Profile | Step 1 — per page | Step 2 — consolidation | Best for |
 |--------|---------|-------------------|------------------------|----------|
 | `1` / `a` | standard | Gemini Pro | Gemini Flash (latest) | Best quality |
-| `2` / `b` | light | Gemini Flash (latest) | Gemini Flash-Lite (latest) | Cheaper & faster |
+| `2` / `b` | light | Gemini Flash (latest) | Gemini Flash (latest) | Cheaper & faster |
 
-Step 1 (per-page extraction) is the quality-critical step, so the light profile
-uses Flash there and the cheaper Flash-Lite for the simpler consolidation step.
+The light profile uses Gemini Flash for both steps. The standard profile keeps
+Gemini Pro for the quality-critical per-page extraction and Flash for the
+simpler consolidation step.
 
 ### With Omeka S Integration
 
@@ -70,13 +71,13 @@ The issue-indexing Claude agent reads PDFs directly without LLM API calls and ha
 |----------|-------|----------|
 | **Claude Agent** (recommended) | Opus 4.6 | Reads PDFs directly, no API costs, best quality |
 | **Gemini** (standard profile) | Gemini Pro + Flash | Good extraction quality, accurate article detection |
-| **Gemini** (light profile) | Gemini Flash + Flash-Lite | Cheaper & faster; minor quality trade-off |
+| **Gemini** (light profile) | Gemini Flash (both steps) | Cheaper & faster; minor quality trade-off |
 | Mistral | OCR + Small | Alternative if Gemini unavailable |
 
 Gemini model IDs come from the shared registry (`common/llm_provider.py`) via the
-rolling `gemini-flash-latest` / `gemini-flash-lite-latest` aliases, so they always
-track the newest stable Flash models. The Gemini version produces significantly
-better results than Mistral; use Mistral only for experimentation.
+rolling `gemini-pro-latest` / `gemini-flash-latest` aliases, so they always track
+the newest stable models. The Gemini version produces significantly better
+results than Mistral; use Mistral only for experimentation.
 
 ## Output
 

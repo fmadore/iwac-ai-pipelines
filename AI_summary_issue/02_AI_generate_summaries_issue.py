@@ -5,7 +5,7 @@ from an Islamic magazine using Gemini's native PDF understanding with structured
 
 Supported models (select with --profile):
 - standard: Gemini Pro (step 1, per page) + Gemini Flash (step 2, consolidation)
-- light: Gemini Flash (step 1, per page) + Gemini Flash-Lite (step 2, consolidation)
+- light: Gemini Flash (step 1, per page) + Gemini Flash (step 2, consolidation)
 
 Step 1: Page-by-page extraction (high-performance model)
 - Extracts individual pages using PyPDF2
@@ -168,15 +168,15 @@ def get_model_pair(profile: str = "standard") -> Tuple[ModelOption, ModelOption]
     Profiles:
         - "standard": Gemini Pro for per-page extraction (best quality) +
           Gemini Flash for consolidation.
-        - "light": Gemini Flash for per-page extraction (the quality-critical
-          step) + Gemini Flash-Lite for the cheaper consolidation step.
+        - "light": Gemini Flash for both per-page extraction and
+          consolidation (cheaper/faster).
 
     Returns:
         Tuple of (model_step1, model_step2).
     """
     if profile == "light":
-        step1_option = get_model_option("gemini-flash")        # quality-critical per-page extraction
-        step2_option = get_model_option("gemini-flash-lite")   # cheaper consolidation
+        step1_option = get_model_option("gemini-flash")   # per-page extraction
+        step2_option = get_model_option("gemini-flash")   # consolidation
     else:
         step1_option = get_model_option("gemini-pro")
         step2_option = get_model_option("gemini-flash")
@@ -204,8 +204,8 @@ def choose_profile() -> str:
     table.add_column("#", style="cyan", justify="center")
     table.add_column("Profile", style="green")
     table.add_column("Description", style="white")
-    table.add_row("1 / a", "standard", "Gemini Pro per page - best quality")
-    table.add_row("2 / b", "light", "Gemini Flash per page + Flash-Lite consolidation - cheaper")
+    table.add_row("1 / a", "standard", "Gemini Pro per page + Flash consolidation - best quality")
+    table.add_row("2 / b", "light", "Gemini Flash for both steps - cheaper / faster")
     console.print(table)
 
     mapping = {"1": "standard", "a": "standard", "2": "light", "b": "light"}
@@ -656,7 +656,7 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
         temperature=0.2
     )
     
-    # Step 2 (consolidation): Flash (standard) or Flash-Lite (light) - MINIMAL thinking for speed
+    # Step 2 (consolidation): Gemini Flash (both profiles) - MINIMAL thinking for speed
     config_step2 = LLMConfig(
         thinking_level="MINIMAL",
         temperature=0.3
@@ -747,8 +747,8 @@ def main():
         parser.add_argument(
             "--profile", choices=["standard", "light"], default=None,
             help="standard = Gemini Pro per page + Gemini Flash consolidation "
-                 "(best quality); light = Gemini Flash per page + Gemini Flash-Lite "
-                 "consolidation (cheaper/faster). Omit to choose interactively.",
+                 "(best quality); light = Gemini Flash for both steps "
+                 "(cheaper/faster). Omit to choose interactively.",
         )
         parser.add_argument(
             "--light", action="store_true", help="Shortcut for --profile light.",
@@ -777,7 +777,7 @@ def main():
 
         # Display welcome banner
         step1_label = "Gemini Flash" if profile == "light" else "Gemini Pro"
-        step2_label = "Gemini Flash-Lite" if profile == "light" else "Gemini Flash"
+        step2_label = "Gemini Flash"
         intro_text = (
             "[bold cyan]Islamic Magazine Article Extraction Pipeline[/]\n\n"
             f"[dim]Using Gemini's native PDF understanding — profile: {profile}[/]\n\n"
