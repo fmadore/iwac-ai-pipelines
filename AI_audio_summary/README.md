@@ -122,6 +122,24 @@ Generated using: Google gemini-pro-latest
 [00:02:15] Speaker 1: Let's begin with...
 ```
 
+When the audio is split (`--split`), each block is prefixed with a header
+giving its position in the original recording — `[Segment <n>/<total> |
+<start>–<end>]`, with the start time computed from the segment length. The
+final segment shows `–end`:
+
+```
+[Segment 1/3 | 00:00:00–00:20:00]
+[00:00:01] Speaker 1: Welcome to today's interview...
+
+[Segment 2/3 | 00:20:00–00:40:00]
+...
+
+[Segment 3/3 | 00:40:00–end]
+...
+```
+
+A segment that fails is marked `[Segment <n>/<total> | <start>–<end>] TRANSCRIPTION FAILED` and can be re-run with `--resume` (which preserves the header).
+
 ### Voxtral
 
 Two files are saved per transcription:

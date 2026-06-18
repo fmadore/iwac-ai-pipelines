@@ -49,6 +49,34 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # prompt text always fits under the hard cap.
 INLINE_REQUEST_LIMIT_BYTES = 18 * 1024 * 1024
 
+
+def _format_timestamp(total_minutes: float) -> str:
+    """Format a number of minutes as ``HH:MM:SS``."""
+    total_seconds = int(round(total_minutes * 60))
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _segment_header(idx: int, total: int, segment_minutes: int) -> str:
+    """Build a segment marker that records its position in the recording.
+
+    Segments are fixed-length, so segment ``idx`` (1-based) starts at exactly
+    ``(idx - 1) * segment_minutes`` into the original audio. The final segment
+    runs to the end of the file (an unknown remainder), so its end is shown as
+    ``end`` rather than an over-stated boundary.
+
+    The leading ``[Segment N ...]`` token is what the resume/retry logic
+    parses, so it must stay first.
+    """
+    start = _format_timestamp((idx - 1) * segment_minutes)
+    if idx < total:
+        span = f"{start}–{_format_timestamp(idx * segment_minutes)}"
+    else:
+        span = f"{start}–end"
+    return f"[Segment {idx}/{total} | {span}]"
+
+
 class AudioTranscriber:
     def __init__(self, api_key=None, model='gemini-pro-latest', requests_per_minute: Optional[int] = None):
         """
@@ -465,14 +493,16 @@ class AudioTranscriber:
             with open(output_file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Check for failed segments
+            # Check for failed segments. The header may carry extra detail
+            # after the number (e.g. "[Segment 2/3 | 00:20:00–00:40:00]"), so
+            # match anything up to the closing bracket.
             import re
-            failed_pattern = re.compile(r'\[Segment (\d+)\] TRANSCRIPTION FAILED')
+            failed_pattern = re.compile(r'\[Segment (\d+)[^\]]*\] TRANSCRIPTION FAILED')
             failed_matches = failed_pattern.findall(content)
             failed_segments = [int(m) for m in failed_matches]
-            
+
             # Count total segments
-            segment_pattern = re.compile(r'\[Segment (\d+)\]')
+            segment_pattern = re.compile(r'\[Segment (\d+)[^\]]*\]')
             all_segments = segment_pattern.findall(content)
             total_segments = len(set(all_segments)) if all_segments else 0
             
@@ -504,17 +534,23 @@ class AudioTranscriber:
             with open(output_file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Replace the failed segment marker with actual content
+            # Replace the failed segment marker with the new content, preserving
+            # whatever header it had (segment number + any timestamp range). The
+            # (?![0-9]) guard stops segment 2 from matching "[Segment 20 ...]".
             import re
-            failed_marker = f"[Segment {segment_num}] TRANSCRIPTION FAILED"
-            new_segment_content = f"[Segment {segment_num}]\n{new_content}"
-            
-            if failed_marker in content:
-                content = content.replace(failed_marker, new_segment_content)
-                
+            failed_pattern = re.compile(
+                rf'\[Segment {segment_num}(?![0-9])([^\]]*)\] TRANSCRIPTION FAILED'
+            )
+
+            def _replace(match):
+                header = f"[Segment {segment_num}{match.group(1)}]"
+                return f"{header}\n{new_content}"
+
+            new_text, replaced = failed_pattern.subn(_replace, content)
+            if replaced:
                 with open(output_file_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                
+                    f.write(new_text)
+
                 console.print(f"[green]✓[/] Updated segment {segment_num} in transcription file")
                 return True
             else:
@@ -770,14 +806,19 @@ class AudioTranscriber:
                         combined_transcription_parts = []
                         all_segments_successful = True
 
+                        total_segments = len(segment_paths)
                         for idx, segment_path in enumerate(segment_paths, start=1):
-                            console.print(f"[cyan]📍[/] Processing segment {idx}/{len(segment_paths)}: [bold]{segment_path.name}[/]")
+                            console.print(f"[cyan]📍[/] Processing segment {idx}/{total_segments}: [bold]{segment_path.name}[/]")
                             seg_transcription = self.transcribe_audio(segment_path, custom_prompt)
+                            # Header records the segment's start–end position in the
+                            # recording; only added when the file was actually split.
+                            header = _segment_header(idx, total_segments, segment_minutes) if total_segments > 1 else ""
                             if seg_transcription:
-                                header = f"[Segment {idx}]" if len(segment_paths) > 1 else ""
-                                combined_transcription_parts.append(f"{header}\n{seg_transcription}\n")
+                                part = f"{header}\n{seg_transcription}\n" if header else f"{seg_transcription}\n"
+                                combined_transcription_parts.append(part)
                             else:
-                                combined_transcription_parts.append(f"[Segment {idx}] TRANSCRIPTION FAILED")
+                                marker = f"{header} TRANSCRIPTION FAILED" if header else f"[Segment {idx}] TRANSCRIPTION FAILED"
+                                combined_transcription_parts.append(marker)
                                 all_segments_successful = False
 
                         # Combine
