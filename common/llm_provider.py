@@ -31,7 +31,7 @@ except Exception:  # pragma: no cover - import guard
     genai_types = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from mistralai import Mistral  # type: ignore
+    from mistralai.client import Mistral  # type: ignore
 except Exception:  # pragma: no cover - import guard
     Mistral = None  # type: ignore
 

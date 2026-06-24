@@ -3,7 +3,7 @@
 # =============================================================================
 google-genai          # Google Gemini API
 openai                # OpenAI GPT API
-mistralai             # Mistral AI API (Large 3, OCR models)
+mistralai>=2.5,<3     # Mistral AI API (Large 3, OCR 4). 2.x layout: import from mistralai.client and mistralai.client.errors
 pydantic              # Data validation and structured outputs
 
 # =============================================================================

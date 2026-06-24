@@ -29,7 +29,16 @@ python 03_omeka_content_updater.py  # Update Omeka S items
 | Provider | Approach | Best For |
 |----------|----------|----------|
 | **Gemini** | Vision model with custom prompts | French typography, column layouts, guided extraction |
-| **Mistral** | Dedicated OCR endpoint | Fast raw extraction, Markdown output |
+| **Mistral** | Dedicated OCR endpoint (OCR 4) | Fast whole-document extraction, lowest cost per page |
+
+### Mistral OCR
+
+Uses Mistral's dedicated Document AI endpoint as `mistral-ocr-latest`, which resolves server-side to the latest release (OCR 4). The whole PDF is sent in a **single call** — no page splitting — and the model's Markdown output is normalised to plain text so `bibo:content` stays consistent with the Gemini path (no `#`, `**`, image placeholders, or table pipes). Optional `--rpm` throttling is available:
+
+```bash
+python 02_mistral_ocr_processor.py          # whole batch, paid-tier speed
+python 02_mistral_ocr_processor.py --rpm 30 # space requests to 30/minute
+```
 
 ### Gemini / Gemma Models
 

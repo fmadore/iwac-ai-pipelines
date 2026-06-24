@@ -70,7 +70,7 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 try:
-    from mistralai import Mistral
+    from mistralai.client import Mistral
 except ImportError:
     raise RuntimeError("mistralai package is required. Install with: pip install mistralai")
 

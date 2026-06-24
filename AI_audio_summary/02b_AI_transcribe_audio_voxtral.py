@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from mistralai import Mistral
+from mistralai.client import Mistral
 
 # Add repo root to path for shared imports
 import sys as _sys
