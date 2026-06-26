@@ -7,6 +7,7 @@ Video files are automatically converted to audio before transcription.
 
 import argparse
 import os
+import random
 import time
 from pathlib import Path
 from typing import Optional
@@ -19,7 +20,11 @@ from google.genai import errors as genai_errors
 # Add repo root to path for shared imports
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
+from common.gemini_utils import (
+    SAFETY_SETTINGS_NONE,
+    get_thinking_level,
+    extract_text_from_response,
+)
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 from common.ffmpeg_utils import (
     AUDIO_FORMATS, VIDEO_FORMATS,
@@ -48,6 +53,34 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # files up to ~2 GB / 9.5 h of audio. We upload above an 18 MB margin so the
 # prompt text always fits under the hard cap.
 INLINE_REQUEST_LIMIT_BYTES = 18 * 1024 * 1024
+
+
+class _RetryableResponse(Exception):
+    """Internal signal: a response came back empty/blocked but is worth retrying.
+
+    Gemini can return an empty or blocked result (RECITATION, a momentary blank
+    candidate, or MAX_TOKENS with no recoverable text) that is *transient* — a
+    fresh sample usually succeeds. Raising this routes such cases through the
+    same exponential-backoff path as API errors instead of failing the segment
+    outright.
+
+    The exception message is a short, parenthesis-free reason code suitable for
+    the ``TRANSCRIPTION FAILED (<reason>)`` segment marker.
+    """
+
+
+def _finish_reason_code(finish_reason) -> str:
+    """Return the bare finish-reason name (e.g. ``MAX_TOKENS``).
+
+    Tolerates a ``types.FinishReason`` enum, a plain string, or ``None``.
+    """
+    if finish_reason is None:
+        return "UNKNOWN"
+    name = getattr(finish_reason, "name", None)
+    if name:
+        return name
+    text = str(finish_reason)
+    return text.rsplit(".", 1)[-1] if "." in text else text
 
 
 def _format_timestamp(total_minutes: float) -> str:
@@ -103,6 +136,11 @@ class AudioTranscriber:
 
         # Track temporary converted audio files for cleanup
         self._temp_audio_files = []
+
+        # Short, human-readable reason for the most recent transcription failure
+        # (e.g. "RECITATION", "MAX_TOKENS", "API-503"). Surfaced in the
+        # "TRANSCRIPTION FAILED (<reason>)" segment marker; None on success.
+        self.last_failure_reason = None
 
         # Default transcription prompt (fallback)
         self.default_prompt = """
@@ -197,17 +235,23 @@ class AudioTranscriber:
             print(f"Error reading audio file {audio_file_path}: {e}")
             return None, None
     
-    def transcribe_audio(self, audio_file_path, custom_prompt=None, max_retries=3):
+    def transcribe_audio(self, audio_file_path, custom_prompt=None, max_retries=5):
         """
-        Transcribe a single audio file using Gemini Pro with retry mechanism.
-        
+        Transcribe a single audio file using Gemini with a resilient retry mechanism.
+
+        Retries cover not only transient API/network errors but also *empty or
+        blocked* responses (RECITATION, MAX_TOKENS with no text, momentary
+        blanks), which are frequently non-deterministic for audio. Partial text
+        is recovered when the model truncates on MAX_TOKENS.
+
         Args:
             audio_file_path (Path): Path to the audio file
             custom_prompt (str, optional): Custom transcription prompt
-            max_retries (int): Maximum number of retry attempts (default: 3)
-            
+            max_retries (int): Maximum number of attempts (default: 5)
+
         Returns:
-            str: Transcribed text or None if error
+            str: Transcribed text, or None if every attempt failed (in which
+                 case ``self.last_failure_reason`` holds a short reason code).
         """
         console.print(f"[cyan]🎤[/] Transcribing: [bold]{audio_file_path.name}[/]")
 
@@ -239,18 +283,30 @@ class AudioTranscriber:
             # Use custom prompt or default
             prompt = custom_prompt or self.transcription_prompt
 
-            # Retry loop with exponential backoff
+            # Retry loop with exponential backoff.
+            #
+            # Beyond transient API/network errors, this also retries *empty or
+            # blocked* responses — RECITATION, a momentary blank candidate, or
+            # MAX_TOKENS with no recoverable text. For audio these are usually
+            # non-deterministic, so a fresh sample (nudged to a higher
+            # temperature on later attempts to break probabilistic
+            # recitation/empty loops) typically succeeds where the first failed.
+            self.last_failure_reason = None
             last_error = None
             for attempt in range(max_retries):
                 try:
-                    # Generate transcription using the selected model
-                    # IMPORTANT: Audio part must come FIRST, then the prompt text
+                    # First attempt stays at the accurate low temperature; later
+                    # attempts raise it to diversify sampling.
+                    temperature = 0.1 if attempt == 0 else min(0.1 + 0.2 * attempt, 0.7)
+
+                    # Generate transcription using the selected model.
+                    # IMPORTANT: Audio part must come FIRST, then the prompt text.
                     self.rate_limiter.wait()
                     response = self.client.models.generate_content(
                         model=self.model,
                         contents=[media_part, prompt],
                         config=types.GenerateContentConfig(
-                            temperature=0.1,
+                            temperature=temperature,
                             max_output_tokens=65536,
                             thinking_config=types.ThinkingConfig(
                                 thinking_level=get_thinking_level(self.model)
@@ -259,43 +315,83 @@ class AudioTranscriber:
                         )
                     )
 
-                    # Handle case where response.text is None (e.g., content blocked, empty response)
-                    if response.text is None:
-                        console.print(f"[yellow]⚠[/] Warning: No transcription returned for [cyan]{audio_file_path.name}[/] (response was empty)")
-                        # Don't retry for empty responses - likely a content issue, not transient
-                        return None
+                    # Returns text (or recovered partial text on MAX_TOKENS);
+                    # raises _RetryableResponse for empty/blocked output.
+                    return self._response_to_text(response, audio_file_path)
 
-                    return response.text.strip()
-
+                except QuotaExhaustedError:
+                    raise
                 except genai_errors.APIError as e:
                     if is_quota_exhausted(e):
                         raise QuotaExhaustedError(str(e))
                     last_error = e
-                    if attempt < max_retries - 1:
-                        import random
-                        wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
-                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
-                        console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
-                        time.sleep(wait_time)
-                    else:
-                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
-
+                    self.last_failure_reason = f"API-{getattr(e, 'code', '?')}"
+                except _RetryableResponse as e:
+                    last_error = e
+                    self.last_failure_reason = str(e)
                 except Exception as e:
                     last_error = e
-                    if attempt < max_retries - 1:
-                        import random
-                        wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
-                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/]: {e}")
-                        console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f} seconds... (attempt {attempt + 1}/{max_retries})")
-                        time.sleep(wait_time)
-                    else:
-                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_file_path.name}[/] after {max_retries} attempts: {last_error}")
+                    self.last_failure_reason = "error"
+
+                # Shared backoff for every retryable failure handled above.
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+                    console.print(f"[red]✗[/] Transcription attempt failed for [cyan]{audio_file_path.name}[/] ([yellow]{self.last_failure_reason}[/]): {last_error}")
+                    console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    console.print(f"[red]✗[/] Giving up on [cyan]{audio_file_path.name}[/] after {max_retries} attempts ([yellow]{self.last_failure_reason}[/]): {last_error}")
 
             return None
         finally:
             # Always remove any Files API upload, on success or failure.
             if uploaded_file is not None:
                 self._delete_uploaded_file(uploaded_file)
+
+    def _response_to_text(self, response, audio_file_path):
+        """Extract transcription text from a Gemini response, or signal a retry.
+
+        Mirrors the robust handling used by the OCR pipeline:
+
+        * **MAX_TOKENS** — keep whatever was generated (a truncated segment is
+          still useful) and append an inline truncation marker. If nothing was
+          produced, treat it as retryable.
+        * **Empty / blocked** (no candidates, RECITATION, SAFETY, OTHER, or a
+          momentary blank) — raise :class:`_RetryableResponse` so the caller
+          resamples instead of failing the segment outright.
+
+        Returns:
+            str: the transcription text (possibly with a truncation marker).
+
+        Raises:
+            _RetryableResponse: when a fresh attempt may succeed.
+        """
+        # Whole prompt rejected before any generation (rare with safety off).
+        feedback = getattr(response, "prompt_feedback", None)
+        block_reason = getattr(feedback, "block_reason", None) if feedback else None
+        if block_reason:
+            raise _RetryableResponse(f"prompt-blocked-{_finish_reason_code(block_reason)}")
+
+        if not response.candidates:
+            raise _RetryableResponse("no-candidates")
+
+        candidate = response.candidates[0]
+        code = _finish_reason_code(candidate.finish_reason)
+
+        # MAX_TOKENS: salvage partial text rather than discarding the segment.
+        if code == "MAX_TOKENS":
+            partial = extract_text_from_response(response)
+            if partial:
+                console.print(f"[yellow]⚠[/] Output truncated (MAX_TOKENS) for [cyan]{audio_file_path.name}[/] — partial transcription kept")
+                return partial + "\n\n[... TRANSCRIPTION TRUNCATED — OUTPUT EXCEEDED MAX TOKENS ...]"
+            raise _RetryableResponse("MAX_TOKENS")
+
+        text = extract_text_from_response(response)
+        if text:
+            return text
+
+        # Empty text with no usable parts — RECITATION/SAFETY/OTHER or a blank.
+        raise _RetryableResponse(code if code not in ("STOP", "UNKNOWN") else "empty")
 
     def _upload_via_files_api(self, audio_file_path, mime_type, poll_seconds=2, max_wait=600):
         """Upload a media file via the Gemini Files API and wait until it is ACTIVE.
@@ -538,8 +634,10 @@ class AudioTranscriber:
             # whatever header it had (segment number + any timestamp range). The
             # (?![0-9]) guard stops segment 2 from matching "[Segment 20 ...]".
             import re
+            # Match the failed marker plus any optional "(<reason>)" annotation so
+            # a successful retry removes the whole marker, reason included.
             failed_pattern = re.compile(
-                rf'\[Segment {segment_num}(?![0-9])([^\]]*)\] TRANSCRIPTION FAILED'
+                rf'\[Segment {segment_num}(?![0-9])([^\]]*)\] TRANSCRIPTION FAILED(?: \([^)]*\))?'
             )
 
             def _replace(match):
@@ -817,7 +915,9 @@ class AudioTranscriber:
                                 part = f"{header}\n{seg_transcription}\n" if header else f"{seg_transcription}\n"
                                 combined_transcription_parts.append(part)
                             else:
-                                marker = f"{header} TRANSCRIPTION FAILED" if header else f"[Segment {idx}] TRANSCRIPTION FAILED"
+                                reason = getattr(self, "last_failure_reason", None)
+                                suffix = f" ({reason})" if reason else ""
+                                marker = f"{header} TRANSCRIPTION FAILED{suffix}" if header else f"[Segment {idx}] TRANSCRIPTION FAILED{suffix}"
                                 combined_transcription_parts.append(marker)
                                 all_segments_successful = False
 
