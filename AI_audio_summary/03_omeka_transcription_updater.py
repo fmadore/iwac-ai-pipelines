@@ -62,28 +62,8 @@ def search_item_by_identifier(client: OmekaClient, identifier: str) -> Optional[
     Returns:
         Item data dict or None if not found
     """
-    url = f"{client.base_url}/items"
-    params = {
-        'key_identity': client.key_identity,
-        'key_credential': client.key_credential,
-        'property[0][property]': DCTERMS_IDENTIFIER_PROPERTY_ID,
-        'property[0][type]': 'eq',
-        'property[0][text]': identifier,
-        'per_page': 1
-    }
-
-    try:
-        response = client.session.get(url, params=params)
-        response.raise_for_status()
-        items = response.json()
-
-        if items:
-            return items[0]
-        return None
-
-    except Exception as e:
-        logging.error(f"Error searching for item with identifier '{identifier}': {e}")
-        return None
+    items = client.search_items_by_property(DCTERMS_IDENTIFIER_PROPERTY_ID, identifier, per_page=1)
+    return items[0] if items else None
 
 
 def update_item_content(client: OmekaClient, item_id: int, content: str) -> bool:
@@ -103,33 +83,12 @@ def update_item_content(client: OmekaClient, item_id: int, content: str) -> bool
         logging.error(f"Could not retrieve item {item_id} for update")
         return False
 
-    bibo_content_key = 'bibo:content'
-
-    if bibo_content_key in item_data:
-        # Update existing bibo:content
-        updated = False
-        for i, value in enumerate(item_data[bibo_content_key]):
-            if value.get('type') == 'literal':
-                item_data[bibo_content_key][i]['@value'] = content
-                updated = True
-                break
-
-        if not updated:
-            item_data[bibo_content_key].append({
-                "type": "literal",
-                "property_id": BIBO_CONTENT_PROPERTY_ID,
-                "property_label": "content",
-                "is_public": True,
-                "@value": content
-            })
-    else:
-        item_data[bibo_content_key] = [{
-            "type": "literal",
-            "property_id": BIBO_CONTENT_PROPERTY_ID,
-            "property_label": "content",
-            "is_public": True,
-            "@value": content
-        }]
+    changed = OmekaClient.upsert_property_value(
+        item_data, 'bibo:content', BIBO_CONTENT_PROPERTY_ID, content,
+        property_label='content',
+    )
+    if not changed:
+        return True  # already up to date
 
     return client.update_item(item_id, item_data)
 

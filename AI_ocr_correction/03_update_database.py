@@ -51,22 +51,12 @@ def update_item_with_new_content(client: OmekaClient, item_id, new_content):
         console.print(f"[yellow]⚠[/] No data found for item {item_id}. Skipping update.")
         return False
 
-    # Omeka S JSON-LD keys property values by term (e.g. 'bibo:content'),
-    # not by a generic 'value' key — writing anywhere else is silently dropped.
-    values = item_data.setdefault('bibo:content', [])
-
-    for value in values:
-        if value.get('property_id') == BIBO_CONTENT_PROPERTY_ID:
-            value['@value'] = new_content
-            break
-    else:
-        values.append({
-            "type": "literal",
-            "property_id": BIBO_CONTENT_PROPERTY_ID,
-            "property_label": "content",
-            "is_public": True,
-            "@value": new_content,
-        })
+    changed = OmekaClient.upsert_property_value(
+        item_data, 'bibo:content', BIBO_CONTENT_PROPERTY_ID, new_content,
+        property_label='content',
+    )
+    if not changed:
+        return True  # already up to date
 
     return client.update_item(int(item_id), item_data)
 

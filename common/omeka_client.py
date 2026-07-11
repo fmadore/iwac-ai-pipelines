@@ -110,8 +110,131 @@ class OmekaClient:
         }
 
     # ------------------------------------------------------------------
+    # JSON-LD value helpers
+    #
+    # Omeka S keys property values by vocabulary term (e.g. 'bibo:content');
+    # writing anywhere else is silently dropped on PATCH. These helpers make
+    # that class of bug impossible in pipeline scripts.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def upsert_property_value(
+        item_data: Dict[str, Any],
+        term: str,
+        property_id: int,
+        value: str,
+        *,
+        property_label: str = "",
+        is_public: bool = True,
+        language: Optional[str] = None,
+    ) -> bool:
+        """Set the literal value for *term* on an item's JSON-LD payload.
+
+        Replaces the first existing literal with the same *property_id*, or
+        appends a new value object. Mutates *item_data* in place.
+
+        Returns:
+            True if *item_data* changed.
+        """
+        values = item_data.get(term)
+        if not isinstance(values, list):
+            values = item_data[term] = []
+
+        for entry in values:
+            if isinstance(entry, dict) and entry.get("property_id") == property_id \
+                    and entry.get("type", "literal") == "literal":
+                if entry.get("@value") == value:
+                    return False
+                entry["@value"] = value
+                entry["type"] = "literal"
+                return True
+
+        new_value: Dict[str, Any] = {
+            "type": "literal",
+            "property_id": property_id,
+            "property_label": property_label or term.split(":")[-1],
+            "is_public": is_public,
+            "@value": value,
+        }
+        if language:
+            new_value["@language"] = language
+        values.append(new_value)
+        return True
+
+    @staticmethod
+    def append_resource_links(
+        item_data: Dict[str, Any],
+        term: str,
+        property_id: int,
+        resource_ids: List[int],
+        *,
+        property_label: str = "",
+        is_public: bool = True,
+    ) -> int:
+        """Append ``resource:item`` links for IDs not already present on *term*.
+
+        Mutates *item_data* in place and skips duplicates.
+
+        Returns:
+            Number of links added.
+        """
+        values = item_data.get(term)
+        if not isinstance(values, list):
+            values = item_data[term] = []
+
+        existing_ids = set()
+        for entry in values:
+            if isinstance(entry, dict) and "value_resource_id" in entry:
+                try:
+                    existing_ids.add(int(entry["value_resource_id"]))
+                except (TypeError, ValueError):
+                    pass
+
+        added = 0
+        for resource_id in resource_ids:
+            resource_id = int(resource_id)
+            if resource_id in existing_ids:
+                continue
+            values.append({
+                "type": "resource:item",
+                "property_id": property_id,
+                "property_label": property_label or term.split(":")[-1],
+                "is_public": is_public,
+                "value_resource_id": resource_id,
+                "value_resource_name": "items",
+            })
+            existing_ids.add(resource_id)
+            added += 1
+        return added
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def search_items_by_property(
+        self,
+        property_id: int,
+        value: str,
+        per_page: int = 1,
+        **extra_params: Any,
+    ) -> List[Dict[str, Any]]:
+        """Search items whose *property_id* equals *value* (Omeka 'eq' query)."""
+        url = f"{self.base_url}/items"
+        params: Dict[str, Any] = {
+            **self._auth_params(),
+            "property[0][property]": property_id,
+            "property[0][type]": "eq",
+            "property[0][text]": value,
+            "per_page": per_page,
+            **extra_params,
+        }
+        try:
+            resp = self.session.get(url, params=params, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as exc:
+            LOGGER.error("Error searching items by property %s=%r: %s", property_id, value, exc)
+            return []
 
     def get_items(
         self,

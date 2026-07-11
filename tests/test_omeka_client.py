@@ -87,3 +87,69 @@ def test_from_env_requires_configuration(monkeypatch):
     monkeypatch.setattr("common.omeka_client.load_dotenv", lambda: None)
     with pytest.raises(ValueError):
         OmekaClient.from_env()
+
+
+def test_upsert_property_value_appends_when_missing():
+    item = {"o:id": 1}
+    changed = OmekaClient.upsert_property_value(item, "bibo:content", 91, "text", property_label="content")
+    assert changed is True
+    assert item["bibo:content"] == [{
+        "type": "literal",
+        "property_id": 91,
+        "property_label": "content",
+        "is_public": True,
+        "@value": "text",
+    }]
+
+
+def test_upsert_property_value_replaces_matching_literal():
+    item = {"bibo:content": [{"type": "literal", "property_id": 91, "@value": "old"}]}
+    assert OmekaClient.upsert_property_value(item, "bibo:content", 91, "new") is True
+    assert item["bibo:content"][0]["@value"] == "new"
+    assert len(item["bibo:content"]) == 1
+
+
+def test_upsert_property_value_noop_when_identical():
+    item = {"bibo:content": [{"type": "literal", "property_id": 91, "@value": "same"}]}
+    assert OmekaClient.upsert_property_value(item, "bibo:content", 91, "same") is False
+
+
+def test_upsert_property_value_leaves_other_properties_alone():
+    linked = {"type": "resource:item", "property_id": 91, "value_resource_id": 5}
+    item = {"bibo:content": [linked]}
+    OmekaClient.upsert_property_value(item, "bibo:content", 91, "text")
+    assert linked in item["bibo:content"]
+    assert any(v.get("@value") == "text" for v in item["bibo:content"])
+
+
+def test_append_resource_links_skips_duplicates():
+    item = {"dcterms:spatial": [{"type": "resource:item", "property_id": 40, "value_resource_id": 7}]}
+    added = OmekaClient.append_resource_links(item, "dcterms:spatial", 40, [7, 8])
+    assert added == 1
+    ids = [v["value_resource_id"] for v in item["dcterms:spatial"]]
+    assert ids == [7, 8]
+
+
+def test_append_resource_links_creates_term():
+    item = {}
+    added = OmekaClient.append_resource_links(item, "dcterms:subject", 3, [1, 2], property_label="Subject")
+    assert added == 2
+    assert all(v["type"] == "resource:item" for v in item["dcterms:subject"])
+
+
+def test_search_items_by_property_builds_eq_query():
+    client = make_client()
+    client.session.get.return_value = response_with([{"o:id": 9}])
+    items = client.search_items_by_property(10, "ABC-123")
+    assert items == [{"o:id": 9}]
+    _, kwargs = client.session.get.call_args
+    params = kwargs["params"]
+    assert params["property[0][property]"] == 10
+    assert params["property[0][type]"] == "eq"
+    assert params["property[0][text]"] == "ABC-123"
+
+
+def test_search_items_by_property_returns_empty_on_error():
+    client = make_client()
+    client.session.get.return_value = response_with([], status=500)
+    assert client.search_items_by_property(10, "x") == []

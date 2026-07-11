@@ -46,28 +46,13 @@ def update_item_summary(client: OmekaClient, item_id, new_summary, abstract_prop
         logging.warning(f"No data found for item {item_id}. Skipping update.")
         return False
 
-    if 'dcterms:abstract' not in item_data:
-        item_data['dcterms:abstract'] = []
-
-    summary_found = False
-    for desc in item_data['dcterms:abstract']:
-        if desc.get('property_id') == abstract_property_id:
-            desc['@value'] = new_summary
-            desc['type'] = 'literal'
-            desc['property_label'] = 'Abstract'
-            summary_found = True
-            logging.info(f"Updated existing abstract for item {item_id}")
-            break
-
-    if not summary_found:
-        item_data['dcterms:abstract'].append({
-            "type": "literal",
-            "property_id": abstract_property_id,
-            "property_label": "Abstract",
-            "is_public": True,
-            "@value": new_summary
-        })
-        logging.info(f"Added new abstract for item {item_id}")
+    changed = OmekaClient.upsert_property_value(
+        item_data, 'dcterms:abstract', abstract_property_id, new_summary,
+        property_label='Abstract',
+    )
+    if not changed:
+        logging.info(f"Abstract for item {item_id} already up to date")
+        return True
 
     return client.update_item(int(item_id), item_data)
 
