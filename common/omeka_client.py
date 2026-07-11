@@ -29,13 +29,24 @@ LOGGER = logging.getLogger(__name__)
 
 ITEMS_PER_PAGE = 100
 
+# (connect, read) timeout applied to every request so a stalled connection
+# can never hang a batch run indefinitely.
+DEFAULT_TIMEOUT = (10, 120)
+
 
 class OmekaClient:
     """Lightweight client for the Omeka S REST API."""
 
-    def __init__(self, base_url: str, key_identity: str, key_credential: str):
+    def __init__(
+        self,
+        base_url: str,
+        key_identity: str,
+        key_credential: str,
+        timeout: tuple = DEFAULT_TIMEOUT,
+    ):
         self.key_identity = key_identity
         self.key_credential = key_credential
+        self.timeout = timeout
 
         # Normalize base URL: ensure it ends with /api
         base = base_url.rstrip("/")
@@ -74,12 +85,18 @@ class OmekaClient:
 
     @staticmethod
     def _create_session() -> requests.Session:
-        """Return a session with automatic retry on transient errors."""
+        """Return a session with automatic retry on transient errors.
+
+        GET and PATCH are retried (PATCH sends the full item representation,
+        so replaying it is safe). POST is deliberately excluded: retrying a
+        create whose first attempt actually succeeded would duplicate items.
+        """
         session = requests.Session()
         retry = Retry(
             total=5,
             backoff_factor=0.3,
             status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=frozenset({"GET", "HEAD", "OPTIONS", "PATCH"}),
         )
         adapter = HTTPAdapter(max_retries=retry)
         session.mount("http://", adapter)
@@ -113,7 +130,7 @@ class OmekaClient:
         }
         all_items: List[Dict[str, Any]] = []
         while True:
-            resp = self.session.get(url, params=params)
+            resp = self.session.get(url, params=params, timeout=self.timeout)
             resp.raise_for_status()
             page_items = resp.json()
             if not page_items:
@@ -128,7 +145,7 @@ class OmekaClient:
         """Fetch a single item by ID. Returns ``None`` on HTTP errors."""
         url = f"{self.base_url}/items/{item_id}"
         try:
-            resp = self.session.get(url, params=self._auth_params())
+            resp = self.session.get(url, params=self._auth_params(), timeout=self.timeout)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
@@ -141,7 +158,8 @@ class OmekaClient:
         headers = {"Content-Type": "application/json"}
         try:
             resp = self.session.patch(
-                url, json=data, params=self._auth_params(), headers=headers
+                url, json=data, params=self._auth_params(), headers=headers,
+                timeout=self.timeout,
             )
             resp.raise_for_status()
             return True
@@ -157,7 +175,8 @@ class OmekaClient:
         headers = {"Content-Type": "application/json"}
         try:
             resp = self.session.post(
-                url, json=data, params=self._auth_params(), headers=headers
+                url, json=data, params=self._auth_params(), headers=headers,
+                timeout=self.timeout,
             )
             resp.raise_for_status()
             return resp.json()
@@ -171,7 +190,7 @@ class OmekaClient:
         """Fetch a single item set by ID. Returns ``None`` on HTTP errors."""
         url = f"{self.base_url}/item_sets/{item_set_id}"
         try:
-            resp = self.session.get(url, params=self._auth_params())
+            resp = self.session.get(url, params=self._auth_params(), timeout=self.timeout)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
@@ -181,7 +200,7 @@ class OmekaClient:
     def get_resource(self, url: str) -> Optional[Dict[str, Any]]:
         """GET any Omeka S resource URL (e.g. media @id)."""
         try:
-            resp = self.session.get(url, params=self._auth_params())
+            resp = self.session.get(url, params=self._auth_params(), timeout=self.timeout)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:

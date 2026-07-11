@@ -7,9 +7,8 @@ changing this file.
 from __future__ import annotations
 
 import os
-import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, fields
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
 from dotenv import load_dotenv
@@ -107,6 +106,13 @@ class LLMConfig:
     reasoning_effort: Optional[str] = None
     text_verbosity: Optional[str] = None
     thinking_level: Optional[str] = None  # Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
+
+    def merged_over(self, base: "LLMConfig") -> "LLMConfig":
+        """Return a copy where unset (None) fields fall back to ``base``."""
+        return LLMConfig(**{
+            f.name: getattr(self, f.name) if getattr(self, f.name) is not None else getattr(base, f.name)
+            for f in fields(self)
+        })
 
 MODEL_REGISTRY: Dict[str, ModelOption] = {
     "gpt-5-mini": ModelOption(
@@ -217,26 +223,20 @@ class BaseLLMClient:
 
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
         self.option = option
-        self.config = config or LLMConfig()
         # Fill in defaults from ModelOption when not explicitly set
-        if self.config.temperature is None:
-            self.config = LLMConfig(
-                temperature=option.default_temperature,
-                reasoning_effort=self.config.reasoning_effort,
-                text_verbosity=self.config.text_verbosity,
-                thinking_level=self.config.thinking_level,
-            )
+        model_defaults = LLMConfig(
+            temperature=option.default_temperature,
+            reasoning_effort=option.default_reasoning_effort,
+            text_verbosity=option.default_text_verbosity,
+            thinking_level=option.default_thinking_level,
+        )
+        self.config = (config or LLMConfig()).merged_over(model_defaults)
 
     def _get_effective_config(self, config: Optional[LLMConfig]) -> LLMConfig:
         """Merge a per-request config with client defaults."""
         if not config:
             return self.config
-        return LLMConfig(
-            temperature=config.temperature if config.temperature is not None else self.config.temperature,
-            reasoning_effort=config.reasoning_effort if config.reasoning_effort is not None else self.config.reasoning_effort,
-            text_verbosity=config.text_verbosity if config.text_verbosity is not None else self.config.text_verbosity,
-            thinking_level=config.thinking_level if config.thinking_level is not None else self.config.thinking_level,
-        )
+        return config.merged_over(self.config)
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         """Generate content with optional per-request config override.
@@ -305,8 +305,8 @@ class OpenAIResponsesClient(BaseLLMClient):
         effective_config = self._get_effective_config(config)
         
         # Use configured values or model defaults
-        reasoning_effort = effective_config.reasoning_effort or self.option.default_reasoning_effort
-        text_verbosity = effective_config.text_verbosity or self.option.default_text_verbosity
+        reasoning_effort = effective_config.reasoning_effort
+        text_verbosity = effective_config.text_verbosity
         
         LOGGER.debug(
             f"OpenAI request with reasoning_effort={reasoning_effort}, text_verbosity={text_verbosity}"
@@ -354,8 +354,8 @@ class OpenAIResponsesClient(BaseLLMClient):
             raise RuntimeError("pydantic package is required for structured outputs")
         
         effective_config = self._get_effective_config(config)
-        reasoning_effort = effective_config.reasoning_effort or self.option.default_reasoning_effort
-        text_verbosity = effective_config.text_verbosity or self.option.default_text_verbosity
+        reasoning_effort = effective_config.reasoning_effort
+        text_verbosity = effective_config.text_verbosity
         
         # Get JSON schema from Pydantic model
         json_schema = response_schema.model_json_schema()
@@ -426,7 +426,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
         All Gemini 3 models (Flash and Pro) use thinking_level ("MINIMAL", "LOW", or "HIGH").
         Thinking cannot be disabled for Gemini 3 models.
         """
-        temp = effective_config.temperature or self.option.default_temperature
+        temp = effective_config.temperature
         gen_config_kwargs: Dict[str, Any] = {"temperature": temp}
         
         if genai_types is None:
@@ -436,7 +436,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
             # All Gemini 3 models use thinking_level (cannot be disabled).
             # Gemma 4 also supports thinking_level via ThinkingConfig, but only
             # accepts "MINIMAL" or "HIGH" (no LOW/MEDIUM).
-            thinking_level = effective_config.thinking_level or self.option.default_thinking_level
+            thinking_level = effective_config.thinking_level
             if thinking_level is None:
                 # Fallback based on model type
                 model_lower = self.option.model.lower()
@@ -475,13 +475,15 @@ class GeminiGenerateContentClient(BaseLLMClient):
         # Use system_instruction parameter for system prompts (modern API)
         gen_config_kwargs["system_instruction"] = system_prompt
         
-        gen_config = None
-        if genai_types is not None:
-            try:
-                gen_config = genai_types.GenerateContentConfig(**gen_config_kwargs)
-            except Exception:  # pragma: no cover - optional field
-                gen_config = None
-        
+        if genai_types is None:
+            raise RuntimeError("google-genai package is required for Gemini generation")
+        try:
+            gen_config = genai_types.GenerateContentConfig(**gen_config_kwargs)
+        except Exception as exc:
+            # Never fall back to config=None: that would silently drop the
+            # system prompt and temperature and produce plausible-but-wrong output.
+            raise RuntimeError(f"Failed to build Gemini generation config: {exc}") from exc
+
         response = self._client.models.generate_content(
             model=self.option.model,
             contents=user_prompt,
@@ -554,7 +556,7 @@ class MistralClient(BaseLLMClient):
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
-        temp = effective_config.temperature or self.option.default_temperature
+        temp = effective_config.temperature
         
         LOGGER.debug(f"Mistral request with temperature={temp}")
         
@@ -589,7 +591,7 @@ class MistralClient(BaseLLMClient):
             raise RuntimeError("pydantic package is required for structured outputs")
         
         effective_config = self._get_effective_config(config)
-        temp = effective_config.temperature or self.option.default_temperature
+        temp = effective_config.temperature
         
         LOGGER.debug(
             f"Mistral structured request with schema={response_schema.__name__}, "
@@ -632,13 +634,14 @@ def get_model_option(model_key: Optional[str], allowed_keys: Optional[List[str]]
         Selected ModelOption
     """
     normalized = normalize_model_key(model_key)
+    normalized_allowed = [normalize_model_key(key) for key in allowed_keys] if allowed_keys else None
     if normalized and normalized in MODEL_REGISTRY:
-        if allowed_keys and normalized not in allowed_keys:
+        if normalized_allowed and normalized not in normalized_allowed:
             raise ValueError(f"Model '{model_key}' not allowed. Choose from: {', '.join(allowed_keys)}")
         return MODEL_REGISTRY[normalized]
     if normalized:
         raise ValueError(f"Unsupported model key: {model_key}")
-    return prompt_for_model_choice(allowed_keys=allowed_keys)
+    return prompt_for_model_choice(allowed_keys=normalized_allowed)
 
 def prompt_for_model_choice(allowed_keys: Optional[List[str]] = None) -> ModelOption:
     """Prompt user to select a model, optionally filtered by allowed keys.
@@ -686,16 +689,9 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
         client = build_llm_client(option, config=config)
     """
     # Backward compatibility: convert temperature to config
-    if temperature is not None and config is None:
-        config = LLMConfig(temperature=temperature)
-    elif temperature is not None and config is not None and config.temperature is None:
-        config = LLMConfig(
-            temperature=temperature,
-            reasoning_effort=config.reasoning_effort,
-            text_verbosity=config.text_verbosity,
-            thinking_level=config.thinking_level,
-        )
-    
+    if temperature is not None:
+        config = (config or LLMConfig()).merged_over(LLMConfig(temperature=temperature))
+
     if option.provider == PROVIDER_OPENAI:
         return OpenAIResponsesClient(option, config)
     if option.provider == PROVIDER_GEMINI:

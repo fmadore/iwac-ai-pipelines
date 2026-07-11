@@ -13,7 +13,7 @@ import functools
 import logging
 import random
 import time
-from typing import Callable, TypeVar
+from typing import Callable, Optional, TypeVar
 
 from common.rate_limiter import QuotaExhaustedError
 
@@ -25,15 +25,24 @@ F = TypeVar("F", bound=Callable)
 def retry_with_backoff(
     max_retries: int = 3,
     base_delay: float = 2.0,
-    exceptions: tuple = (Exception,),
+    exceptions: tuple[type[BaseException], ...] = (Exception,),
+    is_retryable: Optional[Callable[[BaseException], bool]] = None,
 ) -> Callable[[F], F]:
     """Decorator that retries a function with exponential backoff.
 
     Args:
         max_retries: Maximum number of attempts (including the first call).
+            Must be at least 1.
         base_delay: Initial delay in seconds; doubles after each failure.
         exceptions: Tuple of exception types that trigger a retry.
+        is_retryable: Optional predicate refining *exceptions*; when it
+            returns ``False`` the exception is re-raised immediately
+            (e.g. a 400 among retryable API errors).
+
+    ``QuotaExhaustedError`` is never retried, regardless of the arguments.
     """
+    if max_retries < 1:
+        raise ValueError("max_retries must be at least 1")
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
@@ -46,6 +55,8 @@ def retry_with_backoff(
                 except QuotaExhaustedError:
                     raise  # never retry quota exhaustion
                 except exceptions as exc:
+                    if is_retryable is not None and not is_retryable(exc):
+                        raise
                     last_exc = exc
                     if attempt < max_retries:
                         jittered_delay = delay + random.uniform(0, delay * 0.25)
