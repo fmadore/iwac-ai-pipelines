@@ -14,6 +14,7 @@ Supports multiple models via --model flag:
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -64,12 +65,8 @@ def get_system_instruction() -> str:
     try:
         return prompt_file.read_text(encoding="utf-8")
     except FileNotFoundError:
-        console.print("[yellow]⚠[/] Prompt file not found, using fallback instruction")
-        return (
-            "You are an expert OCR correction assistant. "
-            "Correct OCR errors, fix formatting, and improve text structure "
-            "while preserving the original meaning and historical authenticity."
-        )
+        console.print(f"[red]✗[/] Prompt file not found: {prompt_file}")
+        raise
 
 
 def correct_text_with_llm(client, text: str, system_prompt: str) -> str:
@@ -96,8 +93,10 @@ def correct_text_with_llm(client, text: str, system_prompt: str) -> str:
     try:
         return client.generate(system_prompt, user_prompt)
     except Exception as e:
+        # Do NOT fall back to the original text: the caller would save it to
+        # Corrected_TXT/ and step 03 would upload uncorrected text to Omeka.
         console.print(f"[red]✗[/] Error during API call: {e}")
-        return text  # Return original text if correction fails
+        raise
 
 def split_text(text: str, max_chars: int = 200000) -> list[str]:
     """
@@ -118,55 +117,31 @@ def split_text(text: str, max_chars: int = 200000) -> list[str]:
     # If text is shorter than limit, return as single chunk
     if len(text) <= max_chars:
         return [text]
-    
-    chunks = []
-    current_chunk = []
-    current_length = 0
-    
-    # Split into sentences (roughly) by splitting on periods followed by spaces
-    sentences = text.replace(". ", ".|").split("|")
-    
-    for sentence in sentences:
-        sentence = sentence.strip()
-        sentence_length = len(sentence)
-        
-        # If adding this sentence would exceed limit, save current chunk and start new one
-        if current_length + sentence_length > max_chars:
-            if current_chunk:
-                chunks.append(" ".join(current_chunk))
-                current_chunk = []
-                current_length = 0
-            
-            # Handle sentences that are longer than max_chars
-            if sentence_length > max_chars:
-                # Split long sentence into smaller pieces
-                words = sentence.split()
-                temp_chunk = []
-                temp_length = 0
-                
-                for word in words:
-                    word_length = len(word) + 1  # +1 for space
-                    if temp_length + word_length > max_chars:
-                        if temp_chunk:
-                            chunks.append(" ".join(temp_chunk))
-                            temp_chunk = []
-                            temp_length = 0
-                    temp_chunk.append(word)
-                    temp_length += word_length
-                
-                if temp_chunk:
-                    chunks.append(" ".join(temp_chunk))
-            else:
-                current_chunk.append(sentence)
-                current_length = sentence_length
-        else:
-            current_chunk.append(sentence)
-            current_length += sentence_length
-    
-    # Add any remaining text
-    if current_chunk:
-        chunks.append(" ".join(current_chunk))
-    
+
+    chunks: list[str] = []
+    current = ""
+
+    # Split on paragraph boundaries, keeping the separators so the original
+    # layout survives chunking.
+    for part in re.split(r"(\n{2,})", text):
+        if len(current) + len(part) <= max_chars:
+            current += part
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        # Paragraph longer than the limit: fall back to word-boundary splits
+        while len(part) > max_chars:
+            cut = part.rfind(" ", 0, max_chars)
+            if cut <= 0:
+                cut = max_chars
+            chunks.append(part[:cut])
+            part = part[cut:].lstrip(" ")
+        current = part
+
+    if current:
+        chunks.append(current)
+
     return chunks
 
 
@@ -202,7 +177,7 @@ def process_file(
                 correct_text_with_llm(client, chunk, system_prompt)
                 for chunk in chunks
             ]
-            corrected_text = " ".join(corrected_chunks)
+            corrected_text = "\n\n".join(chunk.strip("\n") for chunk in corrected_chunks)
         else:
             corrected_text = correct_text_with_llm(client, original_text, system_prompt)
         
@@ -340,7 +315,7 @@ def main():
     # For Gemini Flash: disable thinking for faster, cheaper processing
     # For other models: use appropriate defaults
     if model_option.key == "gemini-flash":
-        config = LLMConfig(temperature=0.2, thinking_budget=0)  # Disable thinking
+        config = LLMConfig(temperature=0.2, thinking_level="minimal")  # Fastest/cheapest
     elif model_option.key == "gemini-pro":
         config = LLMConfig(temperature=0.2, thinking_level="low")  # Minimal thinking
     else:
@@ -357,7 +332,7 @@ def main():
     config_table.add_row("Output Directory", str(output_dir))
     config_table.add_row("Max Chunk Length", f"{args.max_length:,} chars")
     if model_option.key == "gemini-flash":
-        config_table.add_row("Thinking", "Disabled (thinking_budget=0)")
+        config_table.add_row("Thinking", "Minimal (thinking_level=minimal)")
     elif model_option.key == "gemini-pro":
         config_table.add_row("Thinking Level", "low")
     console.print(config_table)

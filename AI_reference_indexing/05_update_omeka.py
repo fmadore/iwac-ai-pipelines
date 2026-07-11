@@ -168,7 +168,7 @@ def main():
     console.print()
 
     # Read rows — reconciled CSV may contain large bibo:content fields
-    csv.field_size_limit(sys.maxsize)
+    csv.field_size_limit(10 * 1024 * 1024)  # sys.maxsize overflows C long on Windows
     with open(input_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames:

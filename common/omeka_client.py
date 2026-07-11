@@ -197,6 +197,27 @@ class OmekaClient:
             LOGGER.error("Error fetching item set %s: %s", item_set_id, exc)
             return None
 
+    def get_property_id(self, term: str) -> Optional[int]:
+        """Resolve a vocabulary term (e.g. ``dcterms:abstract``) to its property ID.
+
+        Property IDs vary between Omeka S installations, so scripts should
+        resolve them at runtime rather than hardcoding numbers.
+        """
+        url = f"{self.base_url}/properties"
+        try:
+            resp = self.session.get(
+                url, params={**self._auth_params(), "term": term}, timeout=self.timeout
+            )
+            resp.raise_for_status()
+            results = resp.json()
+            if results:
+                return int(results[0]["o:id"])
+            LOGGER.error("No property found for term %s", term)
+            return None
+        except requests.RequestException as exc:
+            LOGGER.error("Error resolving property term %s: %s", term, exc)
+            return None
+
     def get_resource(self, url: str) -> Optional[Dict[str, Any]]:
         """GET any Omeka S resource URL (e.g. media @id)."""
         try:

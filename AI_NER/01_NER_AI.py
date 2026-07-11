@@ -247,23 +247,22 @@ def perform_ner(llm_client: BaseLLMClient, text_content: str) -> NERResult:
     
     user_prompt = f"TEXT TO ANALYZE:\n{text_content}\n"
     
-    try:
-        # Use structured output - guaranteed to return valid NERResult
-        result = llm_client.generate_structured(
-            NER_SYSTEM_PROMPT,
-            user_prompt,
-            NERResult
-        )
-        # Apply deduplication and cleaning to the structured result
-        return NERResult(
-            persons=deduplicate_entities(result.persons),
-            organizations=deduplicate_entities(result.organizations),
-            locations=deduplicate_entities(result.locations),
-            subjects=deduplicate_entities(result.subjects),
-        )
-    except Exception as e:
-        logger.warning(f"NER structured output failed: {e}")
-        return NERResult(persons=[], organizations=[], locations=[], subjects=[])
+    # Use structured output - guaranteed to return valid NERResult.
+    # Failures propagate (after tenacity retries) so callers count the item
+    # as failed — returning an empty result here would be indistinguishable
+    # from "no entities found" and the item could never be retried.
+    result = llm_client.generate_structured(
+        NER_SYSTEM_PROMPT,
+        user_prompt,
+        NERResult
+    )
+    # Apply deduplication and cleaning to the structured result
+    return NERResult(
+        persons=deduplicate_entities(result.persons),
+        organizations=deduplicate_entities(result.organizations),
+        locations=deduplicate_entities(result.locations),
+        subjects=deduplicate_entities(result.subjects),
+    )
 
 # ---------------------------------------------------------------------------
 # Statistics

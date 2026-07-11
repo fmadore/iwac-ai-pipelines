@@ -94,7 +94,6 @@ class CorrectedLine(BaseModel):
     # manual review (e.g., merged words like "ilest" that cannot be split to
     # "il est" due to coordinate preservation constraints). This would allow
     # exporting a CSV of problematic tokens for post-processing.
-    # See: https://github.com/fmadore/iwac-ai-pipelines/issues/XXX
     # flagged_tokens: list[str] = Field(
     #     default_factory=list,
     #     description="Tokens needing manual review (merged/split words that couldn't be corrected)"
@@ -452,7 +451,7 @@ def correct_block(
 
 def apply_corrections_to_alto(
     text_blocks: list[TextBlockData],
-    all_corrections: dict[str, dict[int, list[str]]],
+    all_corrections: dict[int, dict[int, list[str]]],
     ns: str,
 ) -> int:
     """
@@ -460,7 +459,7 @@ def apply_corrections_to_alto(
 
     Args:
         text_blocks: List of TextBlockData with references to XML elements
-        all_corrections: Dictionary mapping block_id to {line_index: corrected_tokens}
+        all_corrections: Dictionary mapping block index to {line_index: corrected_tokens}
         ns: ALTO namespace URI
 
     Returns:
@@ -468,8 +467,8 @@ def apply_corrections_to_alto(
     """
     updated_count = 0
 
-    for block in text_blocks:
-        block_key = block.block_id or id(block)
+    for block_index, block in enumerate(text_blocks):
+        block_key = block_index
         if block_key not in all_corrections:
             continue
 
@@ -529,19 +528,19 @@ def process_alto_file(
         total_lines = sum(len(block.lines) for block in text_blocks)
 
         # Get corrections for each block
+        # Key by block position: ALTO block IDs are not guaranteed unique
         all_corrections = {}
-        for block in text_blocks:
-            block_key = block.block_id or id(block)
+        for block_index, block in enumerate(text_blocks):
             corrections = correct_block(client, block, system_prompt, max_lines_per_request)
             if corrections:
-                all_corrections[block_key] = corrections
+                all_corrections[block_index] = corrections
 
         # Apply corrections to XML
         updated_count = apply_corrections_to_alto(text_blocks, all_corrections, ns)
 
         # Write corrected XML
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        tree.write(output_path, encoding="unicode", xml_declaration=True)
+        tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
         return True, len(text_blocks), total_lines, updated_count, "Success"
 
@@ -702,7 +701,7 @@ def main():
 
     # Configure LLM based on provider
     if model_option.key == "gemini-flash":
-        config = LLMConfig(temperature=0.1, thinking_budget=0)  # Disable thinking
+        config = LLMConfig(temperature=0.1, thinking_level="minimal")  # Fastest/cheapest
     elif model_option.key == "gemini-pro":
         config = LLMConfig(temperature=0.1, thinking_level="low")  # Minimal thinking
     else:
@@ -719,7 +718,7 @@ def main():
     config_table.add_row("Output Directory", str(output_dir))
     config_table.add_row("Max Lines/Request", f"{args.max_lines} (for large blocks)")
     if model_option.key == "gemini-flash":
-        config_table.add_row("Thinking", "Disabled (thinking_budget=0)")
+        config_table.add_row("Thinking", "Minimal (thinking_level=minimal)")
     elif model_option.key == "gemini-pro":
         config_table.add_row("Thinking Level", "low")
     console.print(config_table)
