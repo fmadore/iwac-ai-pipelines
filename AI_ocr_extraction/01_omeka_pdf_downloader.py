@@ -19,7 +19,7 @@ import requests
 import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any
 
 from rich.console import Console
 from rich.panel import Panel

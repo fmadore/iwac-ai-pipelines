@@ -58,7 +58,7 @@ Date: August 2025
 
 import os
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -80,7 +80,6 @@ from common.reconciliation import (
     display_reconciliation_stats,
     MULTI_WORD_MIN_SIMILARITY,
     DEFAULT_MAX_CANDIDATES,
-    AMBIGUOUS_MARKER,
 )
 
 # Pipeline-specific item set IDs

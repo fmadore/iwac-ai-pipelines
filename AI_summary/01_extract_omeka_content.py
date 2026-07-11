@@ -158,7 +158,7 @@ def main():
         else:
             logging.info(f"No items found for item set {item_set_id}.")
 
-    logging.info(f"Finished processing all item sets.")
+    logging.info("Finished processing all item sets.")
     logging.info(f"Total items fetched: {total_items_fetched}")
     logging.info(f"Total content saved for {total_success_count} out of {total_items_fetched} items.")
     if total_skipped_count > 0:

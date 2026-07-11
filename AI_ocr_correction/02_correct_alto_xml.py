@@ -20,8 +20,6 @@ Supports multiple models via --model flag:
 """
 
 import argparse
-import copy
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -485,7 +483,7 @@ def apply_corrections_to_alto(
                 continue
 
             # Apply corrections to each String element
-            for string_data, new_content in zip(line_data.strings, corrected_tokens):
+            for string_data, new_content in zip(line_data.strings, corrected_tokens, strict=True):
                 old_content = string_data.content
                 if old_content != new_content:
                     string_data.element.set("CONTENT", new_content)

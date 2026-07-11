@@ -341,7 +341,7 @@ async def process_item_async(item: Dict[str, Any], writer: csv.DictWriter, stats
         loop = asyncio.get_running_loop()
         entities: NERResult = await loop.run_in_executor(None, partial(ner_fn, content))
         subjects_all = entities.persons + entities.organizations + entities.subjects
-        locations = [l for l in entities.locations if not spatial_filter or l.lower() != spatial_filter.lower()]
+        locations = [loc for loc in entities.locations if not spatial_filter or loc.lower() != spatial_filter.lower()]
         row['Subject AI'] = clean_apostrophes('|'.join(subjects_all))
         row['Spatial AI'] = clean_apostrophes('|'.join(locations))
         writer.writerow(row)
@@ -370,7 +370,7 @@ def process_items_batch(items: List[Dict[str, Any]], writer: csv.DictWriter, sta
             else:
                 entities = ner_fn(content)
                 subjects_all = entities.persons + entities.organizations + entities.subjects
-                locations = [l for l in entities.locations if not spatial_filter or l.lower() != spatial_filter.lower()]
+                locations = [loc for loc in entities.locations if not spatial_filter or loc.lower() != spatial_filter.lower()]
                 row['Subject AI'] = clean_apostrophes('|'.join(subjects_all))
                 row['Spatial AI'] = clean_apostrophes('|'.join(locations))
                 writer.writerow(row)

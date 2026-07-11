@@ -1,29 +1,29 @@
 # =============================================================================
-# AI Provider APIs
+# Pinned dependencies for IWAC AI pipelines
 # =============================================================================
-google-genai          # Google Gemini API
-openai                # OpenAI GPT API
-mistralai>=2.5,<3     # Mistral AI API (Large 3, OCR 4). 2.x layout: import from mistralai.client and mistralai.client.errors
-pydantic              # Data validation and structured outputs
+# Provider SDKs are bounded to a major version because they break routinely;
+# widen a bound deliberately (and test) rather than removing it.
+#
+# Tip: `pip install -e .` (uses pyproject.toml) additionally makes the
+# `common` package importable from anywhere, which editors and type checkers
+# understand. Keep this file in sync with [project.dependencies].
 
-# =============================================================================
-# PDF Processing
-# =============================================================================
-PyPDF2                # PDF reading and page extraction
+# --- AI provider APIs --------------------------------------------------------
+google-genai>=1.0,<2        # Google Gemini API
+openai>=1.60,<3             # OpenAI GPT API (Responses API)
+mistralai>=2.5,<3           # Mistral AI API (Large 3, OCR 4). 2.x layout: import from mistralai.client and mistralai.client.errors
+pydantic>=2.5,<3            # Data validation and structured outputs
 
-# =============================================================================
-# Omeka S Integration
-# =============================================================================
-requests              # HTTP requests for Omeka API
-urllib3               # HTTP client library
+# --- PDF processing ----------------------------------------------------------
+pypdf>=4,<7                 # PDF reading and page extraction (successor of PyPDF2)
 
-# =============================================================================
-# Utilities
-# =============================================================================
-python-dotenv         # Environment variable management
-tqdm                  # Progress bars
-rich                  # Beautiful console output with colors and formatting
-ratelimit             # Rate limiting for API calls
-tenacity              # Retry logic with exponential backoff
-pydub                 # Audio processing
-audioop-lts           # Audio operations for Python 3.13+ (pydub dependency)
+# --- Omeka S integration -----------------------------------------------------
+requests>=2.31,<3           # HTTP requests for Omeka API
+
+# --- Utilities ---------------------------------------------------------------
+python-dotenv>=1.0,<2       # Environment variable management
+tqdm>=4.66,<5               # Progress bars
+rich>=13,<15                # Console output with colors and formatting
+tenacity>=8,<10             # Retry logic (AI_NER only; being replaced by common/retry.py)
+pydub>=0.25,<1              # Audio processing
+audioop-lts; python_version >= '3.13'   # pydub dependency removed from stdlib in 3.13

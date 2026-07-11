@@ -8,7 +8,7 @@ Supported models (select with --profile):
 - light: Gemini Flash (step 1, per page) + Gemini Flash (step 2, consolidation)
 
 Step 1: Page-by-page extraction (high-performance model)
-- Extracts individual pages using PyPDF2
+- Extracts individual pages using pypdf
 - Sends each page to Gemini using Part.from_bytes (native PDF understanding)
 - Uses structured outputs (Pydantic models) for guaranteed JSON schema compliance
 - Identifies articles present on the page with typed data extraction
@@ -48,7 +48,7 @@ import json
 import argparse
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Tuple
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -110,8 +110,8 @@ class MagazineIndex(BaseModel):
 try:
     from google import genai
     from google.genai import types
-except ImportError:
-    raise RuntimeError("google-genai package is required for PDF processing")
+except ImportError as exc:
+    raise RuntimeError("google-genai package is required for PDF processing") from exc
 
 # ------------------------------------------------------------------
 # Configuration
@@ -138,9 +138,9 @@ def load_extraction_prompt() -> str:
             content = f.read()
         return content
     except FileNotFoundError:
-        raise FileNotFoundError(f"Prompt template not found: {prompt_file}")
+        raise FileNotFoundError(f"Prompt template not found: {prompt_file}") from None
     except Exception as e:
-        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}")
+        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}") from e
 
 def load_consolidation_prompt() -> str:
     """Load the prompt for step 2 (consolidation).
@@ -155,9 +155,9 @@ def load_consolidation_prompt() -> str:
             content = f.read()
         return content
     except FileNotFoundError:
-        raise FileNotFoundError(f"Consolidation prompt template not found: {prompt_file}")
+        raise FileNotFoundError(f"Consolidation prompt template not found: {prompt_file}") from None
     except Exception as e:
-        raise RuntimeError(f"Failed to read consolidation prompt template {prompt_file}: {e}")
+        raise RuntimeError(f"Failed to read consolidation prompt template {prompt_file}: {e}") from e
 
 # ------------------------------------------------------------------
 # Client Initialization
@@ -352,7 +352,7 @@ def format_index_to_markdown(index: MagazineIndex) -> str:
         if article.auteurs:
             lines.append(f"- Auteur(s) : {', '.join(article.auteurs)}")
         lines.append(f"- Pages : {article.pages}")
-        lines.append(f"- Résumé :")
+        lines.append("- Résumé :")
         lines.append(f"  {article.resume}")
     
     return "\n".join(lines)
@@ -446,7 +446,7 @@ def step1_extract_pages(client: genai.Client, model_option: ModelOption, llm_con
             
             # Extract single page from PDF
             try:
-                page_idx = page_num - 1  # 0-indexed for PyPDF2
+                page_idx = page_num - 1  # 0-indexed for pypdf
                 page_bytes = extract_pdf_page(pdf_path, page_idx)
                 
                 # Generate structured extraction with automatic retry

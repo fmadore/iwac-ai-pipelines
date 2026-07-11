@@ -108,16 +108,16 @@ class VideoProcessor:
         """
         max_wait = 600  # seconds; a corrupt video otherwise polls forever
         try:
-            print(f"  Uploading video to Gemini Files API...")
+            print("  Uploading video to Gemini Files API...")
             uploaded_file = self.client.files.upload(file=str(video_file_path))
 
             # Poll until the video is processed (state becomes ACTIVE)
-            print(f"  Waiting for video processing...")
+            print("  Waiting for video processing...")
             waited = 0
             while not uploaded_file.state or uploaded_file.state.name != "ACTIVE":
                 state_name = uploaded_file.state.name if uploaded_file.state else None
                 if state_name == "FAILED":
-                    print(f"  Video processing failed on the server (state: FAILED)")
+                    print("  Video processing failed on the server (state: FAILED)")
                     self._delete_uploaded_file(uploaded_file)
                     return None
                 if waited >= max_wait:
@@ -129,12 +129,12 @@ class VideoProcessor:
                 waited += 5
                 uploaded_file = self.client.files.get(name=uploaded_file.name)
 
-            print(f"  Video ready for processing.")
+            print("  Video ready for processing.")
             return uploaded_file
 
         except genai_errors.APIError as e:
             if is_quota_exhausted(e):
-                raise QuotaExhaustedError(str(e))
+                raise QuotaExhaustedError(str(e)) from e
             print(f"  Error uploading video file: {e}")
             return None
         except Exception as e:
@@ -145,7 +145,7 @@ class VideoProcessor:
         """Best-effort deletion of a Files API upload (potentially GBs)."""
         try:
             self.client.files.delete(name=uploaded_file.name)
-            print(f"  Cleaned up uploaded file.")
+            print("  Cleaned up uploaded file.")
         except Exception:
             pass  # Non-critical if deletion fails
     
@@ -160,7 +160,7 @@ class VideoProcessor:
         Returns:
             str: Generated text or None if error
         """
-        print(f"  Reading video file...")
+        print("  Reading video file...")
         with open(video_file_path, 'rb') as f:
             video_bytes = f.read()
 
@@ -172,7 +172,7 @@ class VideoProcessor:
         base_delay = 5
         for attempt in range(max_retries):
             try:
-                print(f"  Sending to Gemini API (inline mode)...")
+                print("  Sending to Gemini API (inline mode)...")
                 self.rate_limiter.wait()
                 response = self.client.models.generate_content(
                     model=self.model,
@@ -198,7 +198,7 @@ class VideoProcessor:
 
             except genai_errors.APIError as e:
                 if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
+                    raise QuotaExhaustedError(str(e)) from e
                 error_code = getattr(e, 'code', 0)
                 is_retryable = error_code in [429, 500, 503]
                 if attempt < max_retries - 1 and is_retryable:
@@ -240,7 +240,7 @@ class VideoProcessor:
         try:
             for attempt in range(max_retries):
                 try:
-                    print(f"  Generating content from video...")
+                    print("  Generating content from video...")
                     self.rate_limiter.wait()
                     response = self.client.models.generate_content(
                         model=self.model,
@@ -259,7 +259,7 @@ class VideoProcessor:
 
                 except genai_errors.APIError as e:
                     if is_quota_exhausted(e):
-                        raise QuotaExhaustedError(str(e))
+                        raise QuotaExhaustedError(str(e)) from e
                     error_code = getattr(e, 'code', 0)
                     is_retryable = error_code in [429, 500, 503]
                     if attempt < max_retries - 1 and is_retryable:

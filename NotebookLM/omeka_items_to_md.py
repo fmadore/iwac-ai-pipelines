@@ -484,7 +484,7 @@ def fetch_articles_with_subject(client: OmekaClient, subject_item_id: str) -> Tu
     ) as progress:
         task = progress.add_task("Fetching articles...", total=total_refs)
         
-        for idx, ref in enumerate(refs, start=1):
+        for ref in refs:
             if not isinstance(ref, dict):
                 progress.update(task, advance=1)
                 continue
@@ -710,7 +710,7 @@ def process_subject_items(
         articles_by_publisher[publisher_name].append(art)
     
     # Display publisher breakdown
-    pub_table = Table(title=f"📰 Articles by Publisher", box=box.ROUNDED)
+    pub_table = Table(title="📰 Articles by Publisher", box=box.ROUNDED)
     pub_table.add_column("Publisher", style="cyan")
     pub_table.add_column("Articles", style="green", justify="right")
     for pub_name, pub_articles in sorted(articles_by_publisher.items(), key=lambda x: -len(x[1])):

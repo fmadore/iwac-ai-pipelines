@@ -48,9 +48,9 @@ def load_prompt_template() -> str:
             logging.warning("Prompt template missing '{text}' placeholder.")
         return content
     except FileNotFoundError:
-        raise FileNotFoundError(f"Prompt template not found: {prompt_file}")
+        raise FileNotFoundError(f"Prompt template not found: {prompt_file}") from None
     except Exception as e:
-        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}")
+        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}") from e
 
 def split_prompt_template(template: str) -> str:
     """Return the instruction portion of the template for the system prompt.
@@ -198,7 +198,7 @@ def main():
             ))
         else:
             console.print(Panel.fit(
-                f"[bold red]✗ No files processed[/bold red]",
+                "[bold red]✗ No files processed[/bold red]",
                 border_style="red",
                 box=box.ROUNDED
             ))

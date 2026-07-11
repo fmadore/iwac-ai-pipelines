@@ -28,7 +28,7 @@ from common.gemini_utils import (
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 from common.ffmpeg_utils import (
     AUDIO_FORMATS, VIDEO_FORMATS,
-    get_ffmpeg_paths, setup_pydub, is_video_file, get_mime_type,
+    get_ffmpeg_paths, setup_pydub, get_mime_type,
     convert_video_to_audio, split_audio, cleanup_files,
     sanitize_stem, has_unsafe_path_chars,
 )
@@ -36,7 +36,6 @@ from common.ffmpeg_utils import (
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich import box
 
 # Initialize rich console
@@ -323,7 +322,7 @@ class AudioTranscriber:
                     raise
                 except genai_errors.APIError as e:
                     if is_quota_exhausted(e):
-                        raise QuotaExhaustedError(str(e))
+                        raise QuotaExhaustedError(str(e)) from e
                     last_error = e
                     self.last_failure_reason = f"API-{getattr(e, 'code', '?')}"
                 except _RetryableResponse as e:
@@ -417,7 +416,7 @@ class AudioTranscriber:
             )
         except genai_errors.APIError as e:
             if is_quota_exhausted(e):
-                raise QuotaExhaustedError(str(e))
+                raise QuotaExhaustedError(str(e)) from e
             console.print(f"[red]✗[/] Files API upload failed for [cyan]{audio_file_path.name}[/]: {e}")
             return None
 
@@ -696,7 +695,6 @@ class AudioTranscriber:
                 files_complete.append((file_path, is_video))
         
         # Display status
-        audio_count = sum(1 for _, is_video, *_ in media_files if not is_video)
         video_count = sum(1 for _, is_video, *_ in media_files if is_video)
         
         # Show summary of what needs to be done
@@ -770,7 +768,7 @@ class AudioTranscriber:
                                 console.print(f"[red]✗[/] Segment {seg_num} still failed")
                                 failed_retries += 1
                     except QuotaExhaustedError:
-                        console.print(f"\n[red bold]API quota exhausted — stopping all processing.[/]")
+                        console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
                         console.print("[red]Partial results have been saved.[/]")
                         break
 
@@ -941,7 +939,7 @@ class AudioTranscriber:
                         failed_transcriptions += 1
 
                 except QuotaExhaustedError:
-                    console.print(f"\n[red bold]API quota exhausted — stopping all processing.[/]")
+                    console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
                     console.print("[red]Partial results (if any) have been saved.[/]")
                     console.print("[red]Wait for your quota to reset or upgrade your plan.[/]")
                     break

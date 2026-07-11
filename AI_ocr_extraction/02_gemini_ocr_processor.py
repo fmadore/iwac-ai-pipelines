@@ -34,10 +34,10 @@ import random
 import time
 import logging
 from pathlib import Path
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rich.progress import Progress as ProgressType
+    pass
 from dotenv import load_dotenv
 
 # Rich console output
@@ -62,8 +62,8 @@ try:
     from google import genai
     from google.genai import types
     from google.genai import errors as genai_errors
-except ImportError:
-    raise RuntimeError("google-genai package is required for PDF processing")
+except ImportError as exc:
+    raise RuntimeError("google-genai package is required for PDF processing") from exc
 
 # Set up logging configuration for tracking OCR operations and errors
 script_dir = Path(__file__).parent
@@ -158,7 +158,7 @@ class GeminiPDFProcessor:
         
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
         console.print(f"  [cyan]🧠 Thinking:[/] level='{thinking_level}' for {self.model_name}")
-        console.print(f"  [cyan]🖼  Media resolution:[/] HIGH")
+        console.print("  [cyan]🖼  Media resolution:[/] HIGH")
 
         return types.GenerateContentConfig(**config_kwargs)
     
@@ -267,7 +267,7 @@ class GeminiPDFProcessor:
                 return f.read()
         except FileNotFoundError:
             logging.error(f"System prompt file not found: {prompt_file}")
-            raise FileNotFoundError(f"OCR system prompt file not found at {prompt_file}")
+            raise FileNotFoundError(f"OCR system prompt file not found at {prompt_file}") from None
         except Exception as e:
             logging.error(f"Error reading system prompt file: {e}")
             raise
@@ -344,7 +344,7 @@ class GeminiPDFProcessor:
 
         except genai_errors.APIError as e:
             if is_quota_exhausted(e):
-                raise QuotaExhaustedError(str(e))
+                raise QuotaExhaustedError(str(e)) from e
             self._log_gemini_error(e, "inline PDF processing", page_num)
             return None
         except Exception as e:
@@ -478,7 +478,7 @@ class GeminiPDFProcessor:
                 
             except genai_errors.APIError as e:
                 if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
+                    raise QuotaExhaustedError(str(e)) from e
 
                 self._log_gemini_error(e, f"upload PDF processing (attempt {attempt + 1}/{max_retries})", page_num)
 
@@ -551,7 +551,7 @@ class GeminiPDFProcessor:
             # Create page progress bar if parent progress exists
             page_task = None
             if progress:
-                page_task = progress.add_task(f"[dim]  Pages", total=total_pages, visible=True)
+                page_task = progress.add_task("[dim]  Pages", total=total_pages, visible=True)
 
             for page_idx in range(total_pages):
                 page_num = page_idx + 1  # 1-indexed for display
@@ -618,7 +618,7 @@ class GeminiPDFProcessor:
                 console.print(f"  [yellow]⚠[/] {successful_pages}/{total_pages} pages (quota exhausted, partial results saved)")
                 console.print(f"  [dim]Output size:[/] {output_size:,} bytes")
             elif quota_exhausted:
-                console.print(f"  [red]✗[/] Quota exhausted before any pages completed - no output file created")
+                console.print("  [red]✗[/] Quota exhausted before any pages completed - no output file created")
             elif successful_pages == 0:
                 console.print(f"  [red]✗[/] All {total_pages} pages failed - no output file created")
             elif failed_pages:
@@ -757,7 +757,7 @@ def main():
     ) as progress:
         pdf_task = progress.add_task("[cyan]Processing PDFs...", total=total_pdfs)
         
-        for idx, pdf_path in enumerate(pdf_files, 1):
+        for pdf_path in pdf_files:
             progress.update(pdf_task, description=f"[cyan]Processing {pdf_path.name}...")
 
             try:

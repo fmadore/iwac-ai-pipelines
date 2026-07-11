@@ -526,7 +526,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
         try:
             gen_config = genai_types.GenerateContentConfig(**gen_config_kwargs)
         except Exception as exc:
-            raise RuntimeError(f"Failed to configure Gemini structured output: {exc}")
+            raise RuntimeError(f"Failed to configure Gemini structured output: {exc}") from exc
         
         response = self._client.models.generate_content(
             model=self.option.model,

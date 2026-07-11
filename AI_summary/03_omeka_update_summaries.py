@@ -157,7 +157,7 @@ def main():
             error_count += 1
 
     # Final summary of operations
-    logging.info(f"Update process completed:")
+    logging.info("Update process completed:")
     logging.info(f"  - Successfully updated: {success_count} items")
     logging.info(f"  - Errors encountered: {error_count} items")
     logging.info(f"  - Total processed: {len(txt_files)} files")

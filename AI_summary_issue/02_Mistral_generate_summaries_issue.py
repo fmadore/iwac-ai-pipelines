@@ -45,19 +45,16 @@ Requirements:
 
 import os
 import sys
-import io
 import json
-import base64
 import logging
 import time
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Tuple
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 # Rich console for beautiful output
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich import box
@@ -71,8 +68,8 @@ if REPO_ROOT not in sys.path:
 
 try:
     from mistralai.client import Mistral
-except ImportError:
-    raise RuntimeError("mistralai package is required. Install with: pip install mistralai")
+except ImportError as exc:
+    raise RuntimeError("mistralai package is required. Install with: pip install mistralai") from exc
 
 # ------------------------------------------------------------------
 # Pydantic Models for Structured Outputs
@@ -131,9 +128,9 @@ def load_extraction_prompt() -> str:
             content = f.read()
         return content
     except FileNotFoundError:
-        raise FileNotFoundError(f"Prompt template not found: {prompt_file}")
+        raise FileNotFoundError(f"Prompt template not found: {prompt_file}") from None
     except Exception as e:
-        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}")
+        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}") from e
 
 def load_consolidation_prompt() -> str:
     """Load the prompt for step 2 (consolidation).
@@ -148,9 +145,9 @@ def load_consolidation_prompt() -> str:
             content = f.read()
         return content
     except FileNotFoundError:
-        raise FileNotFoundError(f"Consolidation prompt template not found: {prompt_file}")
+        raise FileNotFoundError(f"Consolidation prompt template not found: {prompt_file}") from None
     except Exception as e:
-        raise RuntimeError(f"Failed to read consolidation prompt template {prompt_file}: {e}")
+        raise RuntimeError(f"Failed to read consolidation prompt template {prompt_file}: {e}") from e
 
 # ------------------------------------------------------------------
 # PDF Processing with Mistral
@@ -189,7 +186,7 @@ def upload_pdf_to_mistral(client: Mistral, pdf_path: Path) -> tuple[str, str]:
         print("🔗 Getting signed URL for OCR access...")
         signed_url_obj = client.files.get_signed_url(file_id=file_id)
         signed_url = signed_url_obj.url
-        print(f"✅ Signed URL obtained")
+        print("✅ Signed URL obtained")
         logging.info(f"Got signed URL for file {file_id}")
         
         return file_id, signed_url
@@ -200,7 +197,7 @@ def upload_pdf_to_mistral(client: Mistral, pdf_path: Path) -> tuple[str, str]:
 
 def get_pdf_page_count(pdf_path: Path) -> int:
     """
-    Get the number of pages in a PDF using PyPDF2.
+    Get the number of pages in a PDF using pypdf.
     
     Args:
         pdf_path: Path to the PDF file
@@ -209,7 +206,7 @@ def get_pdf_page_count(pdf_path: Path) -> int:
         Number of pages in the PDF
     """
     try:
-        from PyPDF2 import PdfReader
+        from pypdf import PdfReader
         reader = PdfReader(str(pdf_path))
         return len(reader.pages)
     except Exception as e:
@@ -289,7 +286,7 @@ def generate_page_extraction_mistral(client: Mistral, signed_url: str, page_num:
                 page_text = page_data.markdown
                 logging.info(f"  - Extracted {len(page_text)} chars from markdown")
             else:
-                logging.error(f"  - No markdown attribute or empty content")
+                logging.error("  - No markdown attribute or empty content")
         
         if not page_text:
             raise Exception("No text extracted from OCR")
@@ -408,7 +405,7 @@ def format_index_to_markdown(index: MagazineIndex) -> str:
         if article.auteurs:
             lines.append(f"- Auteur(s) : {', '.join(article.auteurs)}")
         lines.append(f"- Pages : {article.pages}")
-        lines.append(f"- Résumé :")
+        lines.append("- Résumé :")
         lines.append(f"  {article.resume}")
     
     return "\n".join(lines)
@@ -571,7 +568,7 @@ def step2_consolidate(client: Mistral, step1_file: Path, extractions: List[PageE
     Returns:
         Path to the final consolidated file
     """
-    console.print(f"\n[bold cyan]Step 2:[/] Consolidating articles with [green]Mistral Small[/]")
+    console.print("\n[bold cyan]Step 2:[/] Consolidating articles with [green]Mistral Small[/]")
     console.print("[dim]Using structured outputs (Pydantic schema)[/]")
     logging.info("Step 2: Consolidating articles at magazine level with Mistral Small (structured output)...")
     

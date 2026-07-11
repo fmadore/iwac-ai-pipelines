@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Dict
 
 from rich.console import Console
 from rich.panel import Panel

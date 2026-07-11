@@ -21,7 +21,7 @@ import logging
 from pathlib import Path
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any
 
 # Shared Omeka client
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))

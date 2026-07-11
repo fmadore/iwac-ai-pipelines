@@ -15,7 +15,7 @@ import io
 import logging
 from pathlib import Path
 
-from PyPDF2 import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter
 
 LOGGER = logging.getLogger(__name__)
 

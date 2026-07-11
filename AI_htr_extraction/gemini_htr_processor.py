@@ -132,7 +132,7 @@ class GeminiHTR:
                 return f.read()
         except FileNotFoundError:
             logging.error(f"System prompt file not found: {prompt_file}")
-            raise FileNotFoundError(f"HTR system prompt file not found at {prompt_file}")
+            raise FileNotFoundError(f"HTR system prompt file not found at {prompt_file}") from None
         except Exception as e:
             logging.error(f"Error reading system prompt file: {e}")
             raise
@@ -202,7 +202,7 @@ class GeminiHTR:
 
         except genai_errors.APIError as e:
             if is_quota_exhausted(e):
-                raise QuotaExhaustedError(str(e))
+                raise QuotaExhaustedError(str(e)) from e
             print(f"  └─ ❌ Page {page_num} inline processing failed: {str(e)}")
             logging.error(f"Page {page_num} inline processing failed: {e}")
             return None
@@ -306,7 +306,7 @@ class GeminiHTR:
                 
             except genai_errors.APIError as e:
                 if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
+                    raise QuotaExhaustedError(str(e)) from e
 
                 print(f"  └─ ❌ Page {page_num} error (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 logging.error(f"Page {page_num} processing error (attempt {attempt + 1}): {e}", exc_info=True)
@@ -396,7 +396,7 @@ class GeminiHTR:
                     
             except genai_errors.APIError as e:
                 if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
+                    raise QuotaExhaustedError(str(e)) from e
                 print(f"  └─ ⚠️ Page {page_num}: {strategy_name} error: {str(e)}")
                 continue
             except Exception as e:
@@ -471,7 +471,7 @@ class GeminiHTR:
                         # Fallback to upload if inline failed or page too large
                         if not text:
                             if page_size_mb < 20:
-                                print(f"  └─ ⚠️ Inline failed, falling back to upload...")
+                                print("  └─ ⚠️ Inline failed, falling back to upload...")
                             else:
                                 print(f"  └─ 📄 Page size: {page_size_mb:.2f} MB - using upload...")
                             text = self.process_pdf_page_upload(page_bytes, page_num)

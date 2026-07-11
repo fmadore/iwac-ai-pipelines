@@ -165,7 +165,7 @@ def main():
         with open(input_csv_path, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             if not reader.fieldnames:
-                console.print(f"[red]CSV file is empty or header is missing[/]")
+                console.print("[red]CSV file is empty or header is missing[/]")
                 return
 
             required_columns = ['o:id', 'Spatial AI Reconciled ID', 'Subject AI Reconciled ID']

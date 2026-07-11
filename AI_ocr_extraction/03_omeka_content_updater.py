@@ -242,7 +242,7 @@ def main():
     summary_table.add_row("Total Files", str(len(txt_files)))
     console.print(summary_table)
 
-    console.print(f"\n[green]✓[/] Database update process completed.")
+    console.print("\n[green]✓[/] Database update process completed.")
 
 if __name__ == "__main__":
     main()

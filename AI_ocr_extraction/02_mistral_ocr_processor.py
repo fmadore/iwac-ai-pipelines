@@ -63,8 +63,8 @@ from common.rate_limiter import RateLimiter
 try:
     from mistralai.client import Mistral
     from mistralai.client.errors import SDKError
-except ImportError:
-    raise RuntimeError("mistralai package is required. Install with: pip install mistralai")
+except ImportError as exc:
+    raise RuntimeError("mistralai package is required. Install with: pip install mistralai") from exc
 
 console = Console()
 
@@ -185,7 +185,7 @@ def markdown_to_plain_text(md: str) -> str:
     text = _INLINE_MATH_RE.sub(_delatex, text)  # $^{7}$ -> ⁷, XX$^{e}$ -> XXᵉ
 
     # Normalise whitespace: trim trailing spaces, collapse 3+ blank lines.
-    text = "\n".join(l.rstrip() for l in text.split("\n"))
+    text = "\n".join(line.rstrip() for line in text.split("\n"))
     text = _MULTI_BLANK_RE.sub("\n\n", text)
 
     return text.strip()

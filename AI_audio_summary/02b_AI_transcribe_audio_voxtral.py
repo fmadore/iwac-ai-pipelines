@@ -193,7 +193,7 @@ class VoxtralTranscriber:
 
             except Exception as e:
                 if is_mistral_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
+                    raise QuotaExhaustedError(str(e)) from e
                 last_error = e
                 if attempt < max_retries - 1:
                     wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
@@ -417,7 +417,7 @@ class VoxtralTranscriber:
                         failed += 1
 
                 except QuotaExhaustedError:
-                    console.print(f"\n[red bold]API quota exhausted — stopping all processing.[/]")
+                    console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
                     console.print("[red]Partial results (if any) have been saved.[/]")
                     console.print("[red]Wait for your quota to reset or upgrade your plan.[/]")
                     break
