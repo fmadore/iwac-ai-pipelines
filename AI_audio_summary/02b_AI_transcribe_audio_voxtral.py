@@ -23,7 +23,7 @@ from mistralai.client import Mistral
 # Add repo root to path for shared imports
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.rate_limiter import RateLimiter, QuotaExhaustedError
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted
 from common.ffmpeg_utils import (
     AUDIO_FORMATS, VIDEO_FORMATS,
     get_ffmpeg_paths, setup_pydub,
@@ -58,13 +58,6 @@ LANGUAGES = [
 ]
 
 
-def _is_mistral_quota_exhausted(error: Exception) -> bool:
-    """Check if a Mistral API error indicates quota exhaustion (not a transient rate limit)."""
-    status = getattr(error, "status_code", None) or getattr(error, "code", None)
-    if status != 429:
-        return False
-    message = str(error).lower()
-    return any(ind in message for ind in ["quota", "exceeded", "billing", "per_day"])
 
 
 class VoxtralTranscriber:
@@ -199,7 +192,7 @@ class VoxtralTranscriber:
                 return text, response
 
             except Exception as e:
-                if _is_mistral_quota_exhausted(e):
+                if is_mistral_quota_exhausted(e):
                     raise QuotaExhaustedError(str(e))
                 last_error = e
                 if attempt < max_retries - 1:

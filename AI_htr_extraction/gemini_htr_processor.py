@@ -14,6 +14,7 @@ Requirements:
     - HTR system prompt files (htr_system_prompt_french.md, htr_system_prompt_arabic.md, etc.)
 """
 
+import io
 import os
 import random
 import time
@@ -76,6 +77,7 @@ class GeminiHTR:
         self.model_name = model_name
         self.language = language
         self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))
+        self.system_instruction = self._get_system_instruction()
         self.generation_config = self._setup_generation_config()
         
     def _setup_generation_config(self):
@@ -90,6 +92,7 @@ class GeminiHTR:
         print(f"🖼  Using media resolution 'HIGH' for {self.model_name}")
 
         return types.GenerateContentConfig(
+            system_instruction=self.system_instruction,
             max_output_tokens=65535,
             response_mime_type="text/plain",
             thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
@@ -164,8 +167,7 @@ class GeminiHTR:
             else:
                 language_desc = "French"
             
-            combined_prompt = (
-                self._get_system_instruction() + "\n\n" +
+            user_prompt = (
                 f"This is a legitimate handwritten text transcription (HTR) request for academic research and archival preservation. "
                 f"Transcribe ALL handwritten {language_desc} text with exact wording, spacing rules, accents, and WITHOUT summarizing or omitting any zones."
             )
@@ -173,7 +175,7 @@ class GeminiHTR:
             self.rate_limiter.wait()
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=[pdf_part, combined_prompt],  # Document first, then prompt
+                contents=[pdf_part, user_prompt],  # Document first, then prompt
                 config=self.generation_config
             )
 
@@ -266,8 +268,7 @@ class GeminiHTR:
                 else:
                     language_desc = "French"
                 
-                combined_prompt = (
-                    self._get_system_instruction() + "\n\n" +
+                user_prompt = (
                     f"This is a legitimate handwritten text transcription (HTR) request for academic research and archival preservation. "
                     f"Transcribe ALL handwritten {language_desc} text with exact wording, spacing rules, accents, and WITHOUT summarizing or omitting any zones."
                 )
@@ -275,7 +276,7 @@ class GeminiHTR:
                 self.rate_limiter.wait()
                 response = self.client.models.generate_content(
                     model=self.model_name,
-                    contents=[pdf_file, combined_prompt],  # Document first, then prompt
+                    contents=[pdf_file, user_prompt],  # Document first, then prompt
                     config=self.generation_config
                 )
                 
@@ -373,6 +374,7 @@ class GeminiHTR:
         for strategy_name, alternative_prompt in alternative_prompts:
             try:
                 print(f"  └─ 🔄 Page {page_num}: Trying {strategy_name}...")
+                self.rate_limiter.wait()
                 retry_response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=[pdf_content, alternative_prompt],  # Document first, then prompt
@@ -392,6 +394,11 @@ class GeminiHTR:
                     retry_finish_reason = retry_response.candidates[0].finish_reason if retry_response.candidates else 'Unknown'
                     print(f"  └─ ⚠️ Page {page_num}: {strategy_name} failed. Finish reason: {retry_finish_reason}")
                     
+            except genai_errors.APIError as e:
+                if is_quota_exhausted(e):
+                    raise QuotaExhaustedError(str(e))
+                print(f"  └─ ⚠️ Page {page_num}: {strategy_name} error: {str(e)}")
+                continue
             except Exception as e:
                 print(f"  └─ ⚠️ Page {page_num}: {strategy_name} error: {str(e)}")
                 continue
@@ -414,7 +421,7 @@ class GeminiHTR:
         """
         try:
             print("\n" + "="*50)
-            print(f"� Processing PDF: {pdf_path.name}")
+            print(f"📄 Processing PDF: {pdf_path.name}")
             print("="*50)
             
             # Verify PDF exists
