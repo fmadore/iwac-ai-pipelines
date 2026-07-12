@@ -40,11 +40,11 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
-
-# Authority item set IDs (same as NER pipeline)
-SPATIAL_AUTHORITY_ITEM_SETS = ["268"]
-SUBJECT_AUTHORITY_ITEM_SETS = ["854", "2", "266"]
-TOPIC_AUTHORITY_ITEM_SETS = ["1"]
+from common.iwac_config import (  # noqa: E402
+    SPATIAL_AUTHORITY_ITEM_SETS,
+    SUBJECT_AUTHORITY_ITEM_SETS,
+    TOPIC_AUTHORITY_ITEM_SETS,
+)
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -140,7 +140,12 @@ def main():
         border_style="cyan",
     ))
 
-    client = OmekaClient.from_env()
+    try:
+        client = OmekaClient.from_env()
+    except ValueError as e:
+        console.print(f"[red]✗[/] Configuration error: {e}")
+        return
+
     item_set_ids = [s.strip() for s in args.item_set_id.split(",") if s.strip()]
 
     # Display config

@@ -41,12 +41,20 @@ These tools are research aids, not replacements for scholarly judgment. Users sh
 
 ## Installation
 
+Requires **Python >= 3.11** (3.13+ recommended for the audio pipelines, which rely on `audioop-lts` to replace the `audioop` module removed from the standard library).
+
 ```bash
 git clone https://github.com/fmadore/iwac-ai-pipelines.git
 cd iwac-ai-pipelines
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your credentials
+```
+
+For running the tests and linter, install the optional dev extras instead:
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ## Configuration

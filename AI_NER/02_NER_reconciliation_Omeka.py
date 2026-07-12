@@ -29,8 +29,8 @@ CONFIGURATION:
    OMEKA_KEY_CREDENTIAL=your_key_credential
 
 2. Omeka S Item Set Configuration:
-   Configure SPATIAL_AUTHORITY_ITEM_SETS, SUBJECT_AUTHORITY_ITEM_SETS, 
-   and TOPIC_AUTHORITY_ITEM_SETS constants to match your setup.
+   SPATIAL_AUTHORITY_ITEM_SETS, SUBJECT_AUTHORITY_ITEM_SETS, and
+   TOPIC_AUTHORITY_ITEM_SETS are shared constants in common/iwac_config.py.
 
 3. Input CSV Format:
    Required columns:
@@ -71,6 +71,11 @@ console = Console()
 # Shared Omeka client
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from common.omeka_client import OmekaClient
+from common.iwac_config import (
+    SPATIAL_AUTHORITY_ITEM_SETS,
+    SUBJECT_AUTHORITY_ITEM_SETS,
+    TOPIC_AUTHORITY_ITEM_SETS,
+)
 from common.reconciliation import (
     build_authority_dict,
     reconcile_column_values,
@@ -81,11 +86,6 @@ from common.reconciliation import (
     MULTI_WORD_MIN_SIMILARITY,
     DEFAULT_MAX_CANDIDATES,
 )
-
-# Pipeline-specific item set IDs
-SPATIAL_AUTHORITY_ITEM_SETS = ["268"]
-SUBJECT_AUTHORITY_ITEM_SETS = ["854", "2", "266"]
-TOPIC_AUTHORITY_ITEM_SETS = ["1"]
 
 # Column names in input CSV
 SPATIAL_COLUMN = "Spatial AI"

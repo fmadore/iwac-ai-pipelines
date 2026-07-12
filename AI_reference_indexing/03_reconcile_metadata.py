@@ -33,6 +33,11 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
+from common.iwac_config import (  # noqa: E402
+    SPATIAL_AUTHORITY_ITEM_SETS,
+    SUBJECT_AUTHORITY_ITEM_SETS,
+    TOPIC_AUTHORITY_ITEM_SETS,
+)
 from common.reconciliation import (  # noqa: E402
     build_authority_dict,
     reconcile_column_values,
@@ -43,11 +48,6 @@ from common.reconciliation import (  # noqa: E402
     MULTI_WORD_MIN_SIMILARITY,
     DEFAULT_MAX_CANDIDATES,
 )
-
-# Authority item set IDs (same as NER pipeline)
-SPATIAL_AUTHORITY_ITEM_SETS = ["268"]
-SUBJECT_AUTHORITY_ITEM_SETS = ["854", "2", "266"]
-TOPIC_AUTHORITY_ITEM_SETS = ["1"]
 
 # Column names
 SPATIAL_COLUMN = "Spatial AI"

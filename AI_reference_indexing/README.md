@@ -22,10 +22,10 @@ Step 2 is performed by the `reference-indexing` Claude agent (`.claude/agents/re
 
 ### Full pipeline via Claude agent
 
-The recommended workflow is to invoke the `enrich-metadata` agent, which orchestrates all steps:
+The recommended workflow is to invoke the `reference-indexing` agent, which orchestrates all steps:
 
 ```
-Use the enrich-metadata agent to process item set 78405
+Use the reference-indexing agent to process item set 78405
 ```
 
 The agent will:
@@ -42,7 +42,7 @@ The agent will:
 # Step 1: Fetch references and authority indices
 python 01_fetch_references.py --item-set-id 78405
 
-# Step 2: Run the enrich-metadata skill in Claude Code
+# Step 2: Run the reference-indexing skill in Claude Code
 
 # Step 3: Reconcile keywords against authorities
 python 03_reconcile_metadata.py
