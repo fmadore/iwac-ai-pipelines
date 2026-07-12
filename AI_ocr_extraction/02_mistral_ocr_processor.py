@@ -34,7 +34,6 @@ import os
 import re
 import sys
 import time
-import random
 import logging
 import argparse
 from pathlib import Path
@@ -56,9 +55,11 @@ from rich.progress import (
 )
 from rich import box
 
-# Shared proactive throttler (provider-agnostic; only spaces requests when --rpm set)
+# Shared proactive throttler + quota handling (provider-agnostic; only spaces
+# requests when --rpm is set) and the shared exponential-backoff retry decorator.
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.rate_limiter import RateLimiter
+from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted
+from common.retry import retry_with_backoff
 
 try:
     from mistralai.client import Mistral
@@ -98,6 +99,21 @@ def _status_code(error: Exception) -> Optional[int]:
     if code is None:
         code = getattr(error, "status_code", None)
     return code
+
+
+def _is_retryable(error: Exception) -> bool:
+    """Predicate for ``retry_with_backoff``: retry transient errors only.
+
+    Quota exhaustion is never retried — the account quota is dead, so it is
+    surfaced immediately (and converted to ``QuotaExhaustedError`` by the
+    caller). SDK errors are retried only for transient HTTP statuses;
+    unexpected errors (network hiccups, parsing) are always retried.
+    """
+    if is_mistral_quota_exhausted(error):
+        return False
+    if isinstance(error, SDKError):
+        return _status_code(error) in TRANSIENT_STATUS
+    return True
 
 
 # --- Markdown -> plain text normalisation ---------------------------------
@@ -208,71 +224,62 @@ class MistralOCRProcessor:
         """Upload a PDF and run OCR, returning the list of page objects (or None).
 
         Retries transient HTTP errors (429 / 5xx) with exponential backoff and
-        jitter. The uploaded file is deleted from Mistral storage afterwards.
+        jitter via ``common.retry.retry_with_backoff``. The uploaded file is
+        deleted from Mistral storage afterwards.
+
+        Raises:
+            QuotaExhaustedError: When the account quota is exhausted, or a 429
+                still persists after all retries — the whole batch should stop.
         """
-        max_retries = 3
-        base_delay = 5
         uploaded_id: Optional[str] = None
         signed_url: Optional[str] = None
 
+        @retry_with_backoff(max_retries=3, base_delay=5.0, is_retryable=_is_retryable)
+        def _run_ocr():
+            nonlocal uploaded_id, signed_url
+
+            # Upload once; reuse the signed URL across retries.
+            if uploaded_id is None:
+                uploaded = self.client.files.upload(
+                    file={"file_name": pdf_path.name, "content": pdf_path.read_bytes()},
+                    purpose="ocr",
+                )
+                if not uploaded or not uploaded.id:
+                    raise RuntimeError("File upload returned no id")
+                uploaded_id = uploaded.id
+                signed_url = self.client.files.get_signed_url(file_id=uploaded_id).url
+
+            self.rate_limiter.wait()
+            response = self.client.ocr.process(
+                model=self.model,
+                document={"type": "document_url", "document_url": signed_url},
+                extract_header=True,   # split running heads/footers out of
+                extract_footer=True,   # page.markdown (see process_pdf)
+            )
+            if not response.pages:
+                raise RuntimeError("OCR response contained no pages")
+            return response.pages
+
         try:
-            for attempt in range(max_retries):
-                try:
-                    # Upload once; reuse the signed URL across retries.
-                    if uploaded_id is None:
-                        uploaded = self.client.files.upload(
-                            file={"file_name": pdf_path.name, "content": pdf_path.read_bytes()},
-                            purpose="ocr",
-                        )
-                        if not uploaded or not uploaded.id:
-                            raise RuntimeError("File upload returned no id")
-                        uploaded_id = uploaded.id
-                        signed_url = self.client.files.get_signed_url(file_id=uploaded_id).url
+            return _run_ocr()
 
-                    self.rate_limiter.wait()
-                    response = self.client.ocr.process(
-                        model=self.model,
-                        document={"type": "document_url", "document_url": signed_url},
-                        extract_header=True,   # split running heads/footers out of
-                        extract_footer=True,   # page.markdown (see process_pdf)
-                    )
-                    if not response.pages:
-                        raise RuntimeError("OCR response contained no pages")
-                    return response.pages
+        except SDKError as e:
+            code = _status_code(e)
+            if is_mistral_quota_exhausted(e) or code == 429:
+                # Account quota dead, or a 429 that survived every retry:
+                # further PDFs would only burn retries — stop the batch.
+                console.print("  [red]✗ Quota exhausted[/] — stopping the batch")
+                logging.error("Mistral quota exhausted on %s (HTTP %s): %s", pdf_path.name, code, e)
+                raise QuotaExhaustedError(str(e)) from e
+            console.print(f"  [yellow]⚠[/] Mistral API error (HTTP {code}) — skipping this PDF")
+            logging.error("Mistral OCR error for %s (HTTP %s): %s", pdf_path.name, code, e)
+            return None
 
-                except SDKError as e:
-                    code = _status_code(e)
-                    retryable = code in TRANSIENT_STATUS
-                    console.print(
-                        f"  [yellow]⚠[/] Mistral API error (HTTP {code}) "
-                        f"on attempt {attempt + 1}/{max_retries}"
-                    )
-                    logging.error(
-                        "Mistral OCR error for %s (attempt %d, HTTP %s): %s",
-                        pdf_path.name, attempt + 1, code, e,
-                    )
-                    if attempt < max_retries - 1 and retryable:
-                        delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
-                        console.print(f"    [dim]Retrying in {delay:.1f}s...[/]")
-                        time.sleep(delay)
-                    else:
-                        if not retryable:
-                            console.print("    [red]Non-retryable error — skipping this PDF.[/]")
-                        return None
+        except Exception as e:
+            console.print(f"  [red]✗[/] OCR failed after retries: {e}")
+            logging.error("Unexpected OCR error for %s: %s", pdf_path.name, e, exc_info=True)
+            return None
 
-                except Exception as e:
-                    console.print(
-                        f"  [red]✗[/] Unexpected error on attempt {attempt + 1}/{max_retries}: {e}"
-                    )
-                    logging.error(
-                        "Unexpected OCR error for %s (attempt %d): %s",
-                        pdf_path.name, attempt + 1, e, exc_info=True,
-                    )
-                    if attempt < max_retries - 1:
-                        delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
-                        time.sleep(delay)
-                    else:
-                        return None
         finally:
             # Best-effort cleanup so uploads don't accumulate in Mistral storage.
             if uploaded_id is not None:
@@ -280,8 +287,6 @@ class MistralOCRProcessor:
                     self.client.files.delete(file_id=uploaded_id)
                 except Exception:
                     pass
-
-        return None
 
     def process_pdf(self, pdf_path: Path, output_dir: Path) -> bool:
         """OCR a single PDF and write ``<stem>.txt``. Returns True on success."""
@@ -412,6 +417,20 @@ def main():
                     processed += 1
                 else:
                     failed += 1
+            except QuotaExhaustedError:
+                # Results for already-completed PDFs are on disk; stop here
+                # instead of burning retries on every remaining file.
+                failed += 1
+                console.print(Panel(
+                    "[red bold]Mistral API quota exhausted — stopping all processing.[/]\n"
+                    "Results for already-processed PDFs have been saved.\n"
+                    "Wait for your quota to reset or upgrade your plan.",
+                    title="Quota Exhausted",
+                    border_style="red",
+                ))
+                logging.error("Quota exhausted — aborting remaining PDFs.")
+                progress.update(task, advance=1)
+                break
             except Exception as e:
                 failed += 1
                 console.print(f"[red]✗[/] Failed to process {pdf_path.name}: {e}")
