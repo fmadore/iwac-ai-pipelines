@@ -10,12 +10,12 @@ Voxtral supports up to 3 hours of audio per request.
 
 import argparse
 import json
-import logging
 import os
 import random
+import subprocess
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from dotenv import load_dotenv
 from mistralai.client import Mistral
@@ -23,29 +23,23 @@ from mistralai.client import Mistral
 # Add repo root to path for shared imports
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted
-from common.ffmpeg_utils import (
-    AUDIO_FORMATS, VIDEO_FORMATS,
-    get_ffmpeg_paths, setup_pydub,
-    convert_video_to_audio, cleanup_files,
-    has_unsafe_path_chars,
-)
+from common.rate_limiter import QuotaExhaustedError, is_mistral_quota_exhausted
+from common.ffmpeg_utils import get_ffmpeg_paths
 
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-# Initialize rich console
-console = Console()
+from transcriber_base import SCRIPT_DIR, TranscriberBase, console, detect_ffmpeg, make_config_table
+from segments import transcription_path
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Script directory for relative paths
-SCRIPT_DIR = Path(__file__).parent.resolve()
-
 MODEL = "voxtral-mini-2602"
+
+# Voxtral caps a single transcription request at 3 hours of audio.
+VOXTRAL_MAX_SECONDS = 3 * 3600
 
 # Languages supported by Voxtral (subset relevant to IWAC)
 LANGUAGES = [
@@ -58,9 +52,33 @@ LANGUAGES = [
 ]
 
 
+def probe_duration_seconds(audio_path: Path) -> Optional[float]:
+    """Return the media duration in seconds via ffprobe, or ``None``.
+
+    Silently returns ``None`` when ffprobe is unavailable or fails — the
+    duration check is a best-effort warning, not a gate.
+    """
+    paths = get_ffmpeg_paths()
+    if not paths:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                paths.ffprobe, "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(audio_path),
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            return None
+        return float(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
-class VoxtralTranscriber:
+class VoxtralTranscriber(TranscriberBase):
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -77,6 +95,8 @@ class VoxtralTranscriber:
             diarize: Enable speaker diarization.
             requests_per_minute: Optional RPM limit for proactive throttling.
         """
+        super().__init__(requests_per_minute)
+
         self.api_key = api_key or os.environ.get("MISTRAL_API_KEY")
         if not self.api_key:
             raise ValueError("MISTRAL_API_KEY not found in .env file or environment variables")
@@ -84,66 +104,19 @@ class VoxtralTranscriber:
         self.client = Mistral(api_key=self.api_key)
         self.language = language  # None = auto-detect
         self.diarize = diarize
-        self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))
-        self._temp_audio_files: List[Path] = []
-
-    # ---- Video conversion ------------------------------------------------
-
-    def _convert_video(self, video_path: Path) -> Optional[Path]:
-        """Convert a video file to audio, tracking the result for cleanup."""
-        temp_dir = SCRIPT_DIR / "temp_converted_audio"
-        console.print(f"[cyan]🎬[/] Converting video to audio: [bold]{video_path.name}[/]")
-        result = convert_video_to_audio(video_path, temp_dir)
-        if result:
-            console.print(f"[green]✓[/] Video converted: [cyan]{result.name}[/]")
-            self._temp_audio_files.append(result)
-        else:
-            console.print(f"[red]✗[/] Cannot convert video '[cyan]{video_path.name}[/]'")
-        return result
-
-    def cleanup_converted_audio(self):
-        """Clean up temporary converted audio files."""
-        if self._temp_audio_files:
-            cleanup_files(self._temp_audio_files, remove_parents=True)
-            for f in self._temp_audio_files:
-                if not f.exists():
-                    console.print(f"[dim]🧹 Cleaned up converted audio: {f.name}[/]")
-            self._temp_audio_files.clear()
-
-    # ---- File discovery ---------------------------------------------------
-
-    def get_audio_files(self, audio_folder: str = "Audio") -> List[Tuple[Path, bool]]:
-        """Get all supported audio and video files from the specified folder.
-
-        Returns:
-            List of (file_path, is_video) tuples sorted by name.
-        """
-        audio_path = SCRIPT_DIR / audio_folder
-        if not audio_path.exists():
-            console.print(f"[red]✗[/] Audio folder '[cyan]{audio_path}[/]' not found!")
-            return []
-
-        media_files = []
-        skipped = []
-        for file_path in audio_path.iterdir():
-            if file_path.is_file():
-                ext = file_path.suffix.lower()
-                if ext in AUDIO_FORMATS or ext in VIDEO_FORMATS:
-                    if has_unsafe_path_chars(file_path.name):
-                        skipped.append(file_path)
-                        continue
-                    is_video = ext in VIDEO_FORMATS
-                    media_files.append((file_path, is_video))
-
-        if skipped:
-            console.print(f"\n[yellow]⚠[/] Skipped [bold]{len(skipped)}[/] file(s) with characters that break ffmpeg ([cyan]' \" < > | * ?[/]):")
-            for f in skipped:
-                console.print(f"  [dim]- {f.name}[/]")
-            console.print("[yellow]  → Please rename these files to remove the problematic characters and try again.[/]\n")
-
-        return sorted(media_files, key=lambda x: x[0])
+        self.generator_label = f"Mistral {MODEL}"
 
     # ---- Transcription ----------------------------------------------------
+
+    def _warn_if_too_long(self, audio_path: Path) -> None:
+        """Warn when a file exceeds Voxtral's 3-hour per-request cap."""
+        duration = probe_duration_seconds(audio_path)
+        if duration and duration > VOXTRAL_MAX_SECONDS:
+            console.print(
+                f"[yellow]⚠[/] '[cyan]{audio_path.name}[/]' is {duration / 3600:.1f} h long — "
+                f"Voxtral supports at most 3 h of audio per request; "
+                f"the transcription may fail or be truncated."
+            )
 
     def transcribe_audio(self, audio_path: Path, max_retries: int = 3) -> Optional[Tuple[str, Any]]:
         """Transcribe a single audio file via Voxtral API with retry.
@@ -156,6 +129,7 @@ class VoxtralTranscriber:
             Tuple of (formatted_text, raw_response), or None on failure.
         """
         console.print(f"[cyan]🎤[/] Transcribing: [bold]{audio_path.name}[/]")
+        self._warn_if_too_long(audio_path)
 
         last_error = None
         for attempt in range(max_retries):
@@ -286,7 +260,7 @@ class VoxtralTranscriber:
 
     # ---- Saving -----------------------------------------------------------
 
-    def save_transcription(
+    def save_voxtral_transcription(
         self,
         transcription: str,
         response: Any,
@@ -294,35 +268,27 @@ class VoxtralTranscriber:
         output_folder: str = "Transcriptions",
     ) -> Optional[Path]:
         """Save transcription as both a text file and a JSON file with timestamps."""
-        output_path = SCRIPT_DIR / output_folder
-        output_path.mkdir(exist_ok=True)
+        lang_display = self.language if self.language else "auto-detected"
+        diarize_display = "ON" if self.diarize else "OFF"
 
-        stem = f"{audio_path.stem}_transcription"
-        txt_file = output_path / f"{stem}.txt"
-        json_file = output_path / f"{stem}.json"
+        # Text file with header — format owned by segments.write_transcription
+        txt_file = self.save_transcription(
+            transcription,
+            audio_path,
+            output_folder,
+            extra_fields=[("Language", lang_display), ("Diarization", diarize_display)],
+        )
+        if txt_file is None:
+            return None
 
+        # Save JSON file with timestamps and structured data
+        json_file = SCRIPT_DIR / output_folder / f"{audio_path.stem}_transcription.json"
         try:
-            lang_display = self.language if self.language else "auto-detected"
-            diarize_display = "ON" if self.diarize else "OFF"
-
-            # Save text file with header
-            with open(txt_file, "w", encoding="utf-8") as f:
-                f.write(f"Transcription of: {audio_path.name}\n")
-                f.write(f"Generated using: Mistral {MODEL}\n")
-                f.write(f"Language: {lang_display}\n")
-                f.write(f"Diarization: {diarize_display}\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(transcription)
-
-            console.print(f"[green]✓[/] Transcription saved: [cyan]{txt_file}[/]")
-
-            # Save JSON file with timestamps and structured data
             json_data = self._serialize_response(response, audio_path.name)
             with open(json_file, "w", encoding="utf-8") as f:
                 json.dump(json_data, f, indent=2, ensure_ascii=False)
 
             console.print(f"[green]✓[/] JSON with timestamps saved: [cyan]{json_file}[/]")
-
             return txt_file
         except Exception as e:
             console.print(f"[red]✗[/] Error saving transcription: {e}")
@@ -338,9 +304,7 @@ class VoxtralTranscriber:
         """Transcribe all audio/video files in the specified folder."""
         media_files = self.get_audio_files(audio_folder)
         if not media_files:
-            console.print("[yellow]⚠[/] No supported audio or video files found.")
-            console.print(f"[dim]Supported audio: {', '.join(AUDIO_FORMATS.keys())}[/]")
-            console.print(f"[dim]Supported video: {', '.join(VIDEO_FORMATS.keys())}[/]")
+            self.print_no_files_warning()
             return
 
         # Separate already-transcribed files from new ones
@@ -348,104 +312,48 @@ class VoxtralTranscriber:
         files_complete = []
 
         for file_path, is_video in media_files:
-            output_file = SCRIPT_DIR / output_folder / f"{file_path.stem}_transcription.txt"
-            if output_file.exists():
+            if transcription_path(file_path, SCRIPT_DIR / output_folder).exists():
                 files_complete.append((file_path, is_video))
             else:
                 files_to_process.append((file_path, is_video))
 
         # Status table
-        if files_complete:
-            status_table = Table(title="📋 Transcription Status", box=box.ROUNDED)
-            status_table.add_column("Status", style="dim")
-            status_table.add_column("Count", justify="right")
-            status_table.add_column("Details", style="dim")
-            status_table.add_row("[green]✓ Complete[/]", str(len(files_complete)), "Already transcribed")
-            if files_to_process:
-                status_table.add_row("[cyan]○ New[/]", str(len(files_to_process)), "Not yet transcribed")
-            console.print(status_table)
-            console.print()
+        self.print_status_table(files_complete, [], files_to_process)
 
         if not files_to_process:
             console.print("[green]✓[/] All files are already transcribed!")
             return
 
         # Display files table
-        files_table = Table(title="📁 Files to Transcribe", box=box.ROUNDED)
-        files_table.add_column("Type", style="cyan")
-        files_table.add_column("Filename", style="green")
-
-        for fp, iv in files_to_process:
-            ftype = "🎬 Video" if iv else "🎵 Audio"
-            files_table.add_row(ftype, fp.name)
-
-        console.print(files_table)
+        self.print_files_table(files_to_process)
         console.print(f"\n[bold]Summary:[/] [cyan]{len(files_to_process)}[/] file(s) to process")
         console.print()
         console.rule("[bold]Starting Transcription Process", style="cyan")
         console.print()
 
-        successful = 0
-        failed = 0
+        def _process_item(item) -> bool:
+            original_file, is_video = item[0], item[1]
 
-        try:
-            for fp, iv in files_to_process:
-                try:
-                    console.rule(f"[dim]{fp.name}[/]", style="dim")
+            # Convert video to audio if needed
+            if is_video:
+                audio_file = self._convert_video(original_file)
+                if not audio_file:
+                    console.print(f"[yellow]⚠[/] Skipping [cyan]{original_file.name}[/]: video conversion failed")
+                    return False
+            else:
+                audio_file = original_file
 
-                    # Convert video to audio if needed
-                    if iv:
-                        audio_file = self._convert_video(fp)
-                        if not audio_file:
-                            console.print(f"[yellow]⚠[/] Skipping [cyan]{fp.name}[/]: video conversion failed")
-                            failed += 1
-                            continue
-                    else:
-                        audio_file = fp
+            result = self.transcribe_audio(audio_file)
+            if not result:
+                return False
 
-                    result = self.transcribe_audio(audio_file)
+            transcription, response = result
+            # Use original file name for output (not converted audio name)
+            return self.save_voxtral_transcription(transcription, response, original_file, output_folder) is not None
 
-                    if result:
-                        transcription, response = result
-                        # Use original file name for output (not converted audio name)
-                        out = self.save_transcription(transcription, response, fp, output_folder)
-                        if out:
-                            successful += 1
-                        else:
-                            failed += 1
-                    else:
-                        failed += 1
+        successful, failed = self.run_processing_loop(files_to_process, _process_item)
 
-                except QuotaExhaustedError:
-                    console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
-                    console.print("[red]Partial results (if any) have been saved.[/]")
-                    console.print("[red]Wait for your quota to reset or upgrade your plan.[/]")
-                    break
-
-                except Exception as e:
-                    console.print(f"[red]✗[/] Unexpected error processing [cyan]{fp.name}[/]: {e}")
-                    failed += 1
-
-                console.print()
-
-        finally:
-            self.cleanup_converted_audio()
-
-        # Summary
-        console.print()
-        console.rule("[bold]Transcription Summary", style="cyan")
-
-        summary = Table(title="📊 Results", box=box.ROUNDED)
-        summary.add_column("Metric", style="dim")
-        summary.add_column("Value", style="green")
-        summary.add_row("Total files processed", str(len(files_to_process)))
-        summary.add_row("Successful transcriptions", f"[green]{successful}[/]")
-        summary.add_row("Failed transcriptions", f"[red]{failed}[/]" if failed > 0 else "0")
-        summary.add_row("Output folder", output_folder)
-        console.print(summary)
-
-        if successful > 0:
-            console.print(f"\n[green]✓[/] Transcriptions saved in the '[cyan]{output_folder}[/]' folder.")
+        self.print_summary_table(len(files_to_process), successful, failed, output_folder)
 
 
 # ---- Interactive selection ------------------------------------------------
@@ -543,24 +451,18 @@ def main():
         diarize = not args.no_diarize
 
         # Check ffmpeg availability for video conversion
-        setup_pydub()
-        paths = get_ffmpeg_paths()
-        if paths:
-            console.print(f"[green]✓[/] Detected ffmpeg: [cyan]{paths.ffmpeg}[/]")
-            console.print(f"[green]✓[/] Detected ffprobe: [cyan]{paths.ffprobe}[/]")
+        detect_ffmpeg()
 
         # Display configuration
         console.print()
-        config = Table(title="⚙️ Configuration", box=box.ROUNDED)
-        config.add_column("Setting", style="dim")
-        config.add_column("Value", style="green")
-        config.add_row("Model", MODEL)
-        config.add_row("Language", language if language else "Auto-detect")
-        config.add_row("Diarization", "[green]ON[/]" if diarize else "[dim]OFF[/]")
-        config.add_row("Audio Folder", args.audio_folder)
-        config.add_row("Output Folder", args.output_folder)
-        config.add_row("Rate Limit", f"{args.rpm} RPM" if args.rpm else "None")
-        console.print(config)
+        console.print(make_config_table([
+            ("Model", MODEL),
+            ("Language", language if language else "Auto-detect"),
+            ("Diarization", "[green]ON[/]" if diarize else "[dim]OFF[/]"),
+            ("Audio Folder", args.audio_folder),
+            ("Output Folder", args.output_folder),
+            ("Rate Limit", f"{args.rpm} RPM" if args.rpm else "None"),
+        ]))
         console.print()
 
         # Initialize transcriber and run
