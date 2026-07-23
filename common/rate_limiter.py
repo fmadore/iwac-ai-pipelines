@@ -15,6 +15,7 @@ Usage:
 """
 
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -32,20 +33,22 @@ def is_quota_exhausted(error: Exception) -> bool:
 
     Returns ``True`` when all of the following hold:
     - The error has an HTTP status code of 429
-    - AND the error message / status indicates a *quota* limit (daily, billing)
+    - AND the error message indicates a *quota* limit (daily, billing)
       rather than a transient per-minute rate limit
 
     Quota-exhaustion signatures (from Gemini error logs):
     - message contains "exceeded your current quota"
     - message contains "requests_per_model_per_day"
-    - status field is "RESOURCE_EXHAUSTED"
+
+    Note: the ``status`` field alone is deliberately NOT used — Gemini returns
+    ``RESOURCE_EXHAUSTED`` for *every* 429, including transient per-minute
+    rate limits that should be retried, not treated as daily exhaustion.
     """
     code = getattr(error, "code", None)
     if code != 429:
         return False
 
-    message = str(getattr(error, "message", "")).lower()
-    status = str(getattr(error, "status", "")).upper()
+    message = str(getattr(error, "message", "") or str(error)).lower()
 
     quota_indicators = [
         "exceeded your current quota",
@@ -54,13 +57,30 @@ def is_quota_exhausted(error: Exception) -> bool:
         "billing",
     ]
 
-    if any(indicator in message for indicator in quota_indicators):
-        return True
+    return any(indicator in message for indicator in quota_indicators)
 
-    if status == "RESOURCE_EXHAUSTED":
-        return True
 
-    return False
+def is_mistral_quota_exhausted(error: Exception) -> bool:
+    """Detect quota exhaustion for Mistral SDK errors.
+
+    Mistral exceptions carry ``status_code`` rather than ``code``, and their
+    transient rate-limit messages contain generic wording like
+    "rate limit exceeded" — so only unambiguous quota/billing indicators
+    are treated as exhaustion.
+    """
+    status_code = getattr(error, "status_code", None) or getattr(error, "code", None)
+    if status_code != 429:
+        return False
+
+    message = str(error).lower()
+    quota_indicators = [
+        "exceeded your current quota",
+        "quota exceeded",
+        "per_day",
+        "billing",
+        "insufficient credits",
+    ]
+    return any(indicator in message for indicator in quota_indicators)
 
 
 class RateLimiter:
@@ -85,18 +105,24 @@ class RateLimiter:
         self.rpm = requests_per_minute
         self.min_interval = 60.0 / requests_per_minute if requests_per_minute else 0.0
         self._last_request_time: float = 0.0
+        self._lock = threading.Lock()
         self._logger = logger or logging.getLogger(__name__)
 
     def wait(self) -> None:
-        """Block until enough time has elapsed since the previous request."""
+        """Block until enough time has elapsed since the previous request.
+
+        Thread-safe: concurrent callers are serialized so batched/async
+        pipelines still respect the configured RPM.
+        """
         if self.min_interval <= 0:
             return
 
-        now = time.monotonic()
-        elapsed = now - self._last_request_time
-        if elapsed < self.min_interval:
-            sleep_time = self.min_interval - elapsed
-            self._logger.info("Rate limiter: sleeping %.1fs (RPM=%d)", sleep_time, self.rpm)
-            time.sleep(sleep_time)
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request_time
+            if elapsed < self.min_interval:
+                sleep_time = self.min_interval - elapsed
+                self._logger.info("Rate limiter: sleeping %.1fs (RPM=%d)", sleep_time, self.rpm)
+                time.sleep(sleep_time)
 
-        self._last_request_time = time.monotonic()
+            self._last_request_time = time.monotonic()

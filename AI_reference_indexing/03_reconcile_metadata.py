@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Dict
 
 from rich.console import Console
 from rich.panel import Panel
@@ -34,6 +33,11 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
+from common.iwac_config import (  # noqa: E402
+    SPATIAL_AUTHORITY_ITEM_SETS,
+    SUBJECT_AUTHORITY_ITEM_SETS,
+    TOPIC_AUTHORITY_ITEM_SETS,
+)
 from common.reconciliation import (  # noqa: E402
     build_authority_dict,
     reconcile_column_values,
@@ -44,11 +48,6 @@ from common.reconciliation import (  # noqa: E402
     MULTI_WORD_MIN_SIMILARITY,
     DEFAULT_MAX_CANDIDATES,
 )
-
-# Authority item set IDs (same as NER pipeline)
-SPATIAL_AUTHORITY_ITEM_SETS = ["268"]
-SUBJECT_AUTHORITY_ITEM_SETS = ["854", "2", "266"]
-TOPIC_AUTHORITY_ITEM_SETS = ["1"]
 
 # Column names
 SPATIAL_COLUMN = "Spatial AI"
@@ -136,21 +135,14 @@ def main():
     # --- Subject reconciliation (subject + topic authority sets combined) ---
     console.rule("[bold cyan]Step 2: Subject Reconciliation")
 
-    console.print("[dim]Building subject authorities...[/]")
-    subject_dict, subject_ambiguous, subject_metadata = build_authority_dict(
-        client, SUBJECT_AUTHORITY_ITEM_SETS, "SUBJECT"
+    # Build subject + topic authorities in ONE call so ambiguity detection
+    # spans both: merging separately-built dicts silently resolved a term that
+    # maps to different items in each set to whichever dict was merged last.
+    console.print("[dim]Building subject + topic authorities...[/]")
+    combined_dict, combined_ambiguous, combined_metadata = build_authority_dict(
+        client, SUBJECT_AUTHORITY_ITEM_SETS + TOPIC_AUTHORITY_ITEM_SETS, "SUBJECT+TOPIC"
     )
-    display_authority_stats(subject_dict, subject_ambiguous, "Subject")
-
-    console.print("\n[dim]Building topic authorities...[/]")
-    topic_dict, topic_ambiguous, topic_metadata = build_authority_dict(
-        client, TOPIC_AUTHORITY_ITEM_SETS, "TOPIC"
-    )
-    display_authority_stats(topic_dict, topic_ambiguous, "Topic")
-
-    combined_dict = {**subject_dict, **topic_dict}
-    combined_ambiguous = {**subject_ambiguous, **topic_ambiguous}
-    combined_metadata = {**subject_metadata, **topic_metadata}
+    display_authority_stats(combined_dict, combined_ambiguous, "Subject + Topic")
 
     console.print(f"\n[dim]Combined: {len(combined_dict)} terms, {len(combined_ambiguous)} ambiguous[/]")
 

@@ -111,7 +111,7 @@ COUNTRY_ITEM_SETS: Dict[str, List[str]] = {
         "2199", "2200", "23448", "23273", "23449", "5503", "2215", "2214", "2207", "2209", "2210", "2213", "2201", "75969"
     ],
     "Côte d'Ivoire": [
-        "43051", "76357", "62076", "31882", "57945", "63444", "76253", "61684", "76239", "48249", "57943", "57944", "61320", "15845", "76364", "73533", "61289", "45390, 76357, 76534, 77882"
+        "43051", "76357", "62076", "31882", "57945", "63444", "76253", "61684", "76239", "48249", "57943", "57944", "61320", "15845", "76364", "73533", "61289", "45390", "76534", "77882"
     ],
     "Niger": [
         "62021",
@@ -120,6 +120,15 @@ COUNTRY_ITEM_SETS: Dict[str, List[str]] = {
         "67437", "25304", "67399", "9458", "67407", "67460", "67480", "67430", "5498", "67436", "67456", "5499"
     ],
 }
+
+# Fail loudly on malformed entries: a non-numeric string would otherwise be
+# silently skipped at export time, dropping whole collections.
+for _country, _set_ids in COUNTRY_ITEM_SETS.items():
+    for _sid in _set_ids:
+        if not isinstance(_sid, str) or not _sid.isdigit():
+            raise ValueError(
+                f"COUNTRY_ITEM_SETS[{_country!r}] contains a malformed item-set ID: {_sid!r}"
+            )
 
 
 def sanitize_filename(name: str) -> str:
@@ -475,7 +484,7 @@ def fetch_articles_with_subject(client: OmekaClient, subject_item_id: str) -> Tu
     ) as progress:
         task = progress.add_task("Fetching articles...", total=total_refs)
         
-        for idx, ref in enumerate(refs, start=1):
+        for ref in refs:
             if not isinstance(ref, dict):
                 progress.update(task, advance=1)
                 continue
@@ -701,7 +710,7 @@ def process_subject_items(
         articles_by_publisher[publisher_name].append(art)
     
     # Display publisher breakdown
-    pub_table = Table(title=f"📰 Articles by Publisher", box=box.ROUNDED)
+    pub_table = Table(title="📰 Articles by Publisher", box=box.ROUNDED)
     pub_table.add_column("Publisher", style="cyan")
     pub_table.add_column("Articles", style="green", justify="right")
     for pub_name, pub_articles in sorted(articles_by_publisher.items(), key=lambda x: -len(x[1])):

@@ -29,8 +29,8 @@ CONFIGURATION:
    OMEKA_KEY_CREDENTIAL=your_key_credential
 
 2. Omeka S Item Set Configuration:
-   Configure SPATIAL_AUTHORITY_ITEM_SETS, SUBJECT_AUTHORITY_ITEM_SETS, 
-   and TOPIC_AUTHORITY_ITEM_SETS constants to match your setup.
+   SPATIAL_AUTHORITY_ITEM_SETS, SUBJECT_AUTHORITY_ITEM_SETS, and
+   TOPIC_AUTHORITY_ITEM_SETS are shared constants in common/iwac_config.py.
 
 3. Input CSV Format:
    Required columns:
@@ -58,7 +58,7 @@ Date: August 2025
 
 import os
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -71,6 +71,11 @@ console = Console()
 # Shared Omeka client
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from common.omeka_client import OmekaClient
+from common.iwac_config import (
+    SPATIAL_AUTHORITY_ITEM_SETS,
+    SUBJECT_AUTHORITY_ITEM_SETS,
+    TOPIC_AUTHORITY_ITEM_SETS,
+)
 from common.reconciliation import (
     build_authority_dict,
     reconcile_column_values,
@@ -80,13 +85,7 @@ from common.reconciliation import (
     display_reconciliation_stats,
     MULTI_WORD_MIN_SIMILARITY,
     DEFAULT_MAX_CANDIDATES,
-    AMBIGUOUS_MARKER,
 )
-
-# Pipeline-specific item set IDs
-SPATIAL_AUTHORITY_ITEM_SETS = ["268"]
-SUBJECT_AUTHORITY_ITEM_SETS = ["854", "2", "266"]
-TOPIC_AUTHORITY_ITEM_SETS = ["1"]
 
 # Column names in input CSV
 SPATIAL_COLUMN = "Spatial AI"
@@ -112,7 +111,7 @@ def find_input_csv(output_dir: str) -> str | None:
         ]
         if not csv_files:
             return None
-        return max(csv_files, key=lambda x: os.path.getctime(os.path.join(output_dir, x)))
+        return max(csv_files, key=lambda x: os.path.getmtime(os.path.join(output_dir, x)))  # mtime: ctime is not creation time on Linux
     except OSError:
         return None
 
@@ -161,25 +160,15 @@ def run_subject_topic_reconciliation(
     """Run combined subject and topic entity reconciliation."""
     console.rule("[bold cyan]Step 2: Subject & Topic Reconciliation")
 
-    # Build subject authority dictionary
-    console.print("\n[dim]Building subject authorities...[/]")
-    subject_authority_dict, subject_ambiguous_dict, subject_metadata = build_authority_dict(
-        client, SUBJECT_AUTHORITY_ITEM_SETS, "SUBJECT"
+    # Build subject + topic authorities in ONE call so ambiguity detection
+    # spans both: merging separately-built dicts silently resolved a term that
+    # maps to different items in each set to whichever dict was merged last.
+    console.print("\n[dim]Building subject + topic authorities...[/]")
+    combined_authority_dict, combined_ambiguous_dict, combined_metadata = build_authority_dict(
+        client, SUBJECT_AUTHORITY_ITEM_SETS + TOPIC_AUTHORITY_ITEM_SETS, "SUBJECT+TOPIC"
     )
-    display_authority_stats(subject_authority_dict, subject_ambiguous_dict, "Subject")
+    display_authority_stats(combined_authority_dict, combined_ambiguous_dict, "Subject + Topic")
 
-    # Build topic authority dictionary
-    console.print("\n[dim]Building topic authorities...[/]")
-    topic_authority_dict, topic_ambiguous_dict, topic_metadata = build_authority_dict(
-        client, TOPIC_AUTHORITY_ITEM_SETS, "TOPIC"
-    )
-    display_authority_stats(topic_authority_dict, topic_ambiguous_dict, "Topic")
-    
-    # Combine dictionaries
-    combined_authority_dict = {**subject_authority_dict, **topic_authority_dict}
-    combined_ambiguous_dict = {**subject_ambiguous_dict, **topic_ambiguous_dict}
-    combined_metadata = {**subject_metadata, **topic_metadata}
-    
     console.print(f"\n[dim]Combined: {len(combined_authority_dict)} terms, {len(combined_ambiguous_dict)} ambiguous[/]")
     
     # Write combined ambiguous terms

@@ -34,10 +34,8 @@ import random
 import time
 import logging
 from pathlib import Path
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional
 
-if TYPE_CHECKING:
-    from rich.progress import Progress as ProgressType
 from dotenv import load_dotenv
 
 # Rich console output
@@ -53,7 +51,14 @@ console = Console()
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.llm_provider import get_model_option, summary_from_option, LLMConfig
-from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level, extract_text_from_response
+from common.gemini_utils import (
+    INLINE_REQUEST_LIMIT_BYTES,
+    build_generation_config,
+    delete_uploaded_file,
+    extract_text_from_response,
+    get_thinking_level,
+    upload_and_wait_active,
+)
 from common.pdf_utils import extract_pdf_page, get_pdf_page_count
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 
@@ -62,8 +67,8 @@ try:
     from google import genai
     from google.genai import types
     from google.genai import errors as genai_errors
-except ImportError:
-    raise RuntimeError("google-genai package is required for PDF processing")
+except ImportError as exc:
+    raise RuntimeError("google-genai package is required for PDF processing") from exc
 
 # Set up logging configuration for tracking OCR operations and errors
 script_dir = Path(__file__).parent
@@ -74,6 +79,13 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     filename=log_file
+)
+
+# User request sent alongside each page (the system instruction carries the
+# detailed OCR rules); shared by the inline and upload processing paths.
+OCR_USER_PROMPT = (
+    "Please perform complete OCR transcription of this single page. "
+    "Extract all visible text maintaining original formatting and structure."
 )
 
 class GeminiPDFProcessor:
@@ -119,48 +131,36 @@ class GeminiPDFProcessor:
     def _setup_generation_config(self):
         """
         Configure generation parameters for optimal OCR performance.
-        
-        The configuration focuses on:
+
+        Built on ``common.gemini_utils.build_generation_config``, which handles
+        thinking-level resolution, safety settings, and system instructions:
         - Lower temperature for more consistent output
-        - High top_p and top_k for reliable text recognition
         - Sufficient output tokens for long documents
         - Model-appropriate thinking configuration:
           - All Gemini 3 models use thinking_level (cannot be disabled)
           - Gemini Flash: "MINIMAL", "LOW", "MEDIUM", or "HIGH"
           - Gemini Pro: "LOW" or "HIGH" only
-        
+        - HIGH media resolution: best OCR fidelity for dense/archival scans;
+          MEDIUM saturates for clean standard docs but archival PDFs benefit
+          from HIGH. ULTRA_HIGH is not supported at the global config level.
+
         Returns:
             types.GenerateContentConfig: Configured generation config
         """
-        
-        # Load system instruction from file (modern API pattern)
-        system_instruction = self._get_system_instruction()
-        
-        # Use latest SDK with system_instruction in config (per Context7 docs)
-        config_kwargs = {
-            "system_instruction": system_instruction,  # Use proper system_instruction parameter
-            "temperature": self.llm_config.temperature or 0.1,
-            "top_p": 0.95,
-            "top_k": 40,
-            "max_output_tokens": 65535,
-            "response_mime_type": "text/plain",
-            "safety_settings": SAFETY_SETTINGS_NONE,
-            # HIGH gives best OCR fidelity for dense/archival scans; MEDIUM saturates for
-            # clean standard docs but archival PDFs benefit from HIGH. ULTRA_HIGH is not
-            # supported at the global config level.
-            "media_resolution": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
-        }
-        
-        # All Gemini 3 models use thinking_level (cannot be disabled)
+        # Resolved here only for display; build_generation_config resolves it too.
         thinking_level = get_thinking_level(
             self.model_name, override=self.llm_config.thinking_level
         )
-        
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
         console.print(f"  [cyan]🧠 Thinking:[/] level='{thinking_level}' for {self.model_name}")
-        console.print(f"  [cyan]🖼  Media resolution:[/] HIGH")
+        console.print("  [cyan]🖼  Media resolution:[/] HIGH")
 
-        return types.GenerateContentConfig(**config_kwargs)
+        return build_generation_config(
+            self.model_name,
+            thinking_level=self.llm_config.thinking_level,
+            system_instruction=self._get_system_instruction(),
+            temperature=self.llm_config.temperature or 0.1,
+            media_resolution="HIGH",
+        )
     
     def _log_gemini_error(self, error: Exception, context: str, page_num: Optional[int] = None) -> None:
         """
@@ -248,10 +248,65 @@ class GeminiPDFProcessor:
                 exc_info=True
             )
 
-    def _extract_text_from_response(self, response) -> str:
-        """Safely extract text from response, ignoring thought traces."""
-        return extract_text_from_response(response)
-    
+    def _validate_and_extract(self, response, page_num: int) -> Optional[str]:
+        """
+        Validate a Gemini response and extract the OCR text.
+
+        Shared by the inline and upload processing paths. Handles the two
+        finish reasons that need special treatment:
+        - RECITATION: output blocked (potential copyrighted material) — the
+          page is skipped (returns None, no retry).
+        - MAX_TOKENS: output truncated — recovers the partial text (still
+          valuable for OCR) and appends a truncation marker, or returns None
+          if nothing could be extracted.
+
+        Raises:
+            Exception: When the response is structurally invalid or empty,
+                so callers can retry or fall back.
+
+        Returns:
+            Optional[str]: Extracted text, or None when the page should be
+                skipped without retrying (RECITATION / unrecoverable MAX_TOKENS).
+        """
+        if not response.candidates:
+            raise Exception("No candidates in Gemini response")
+
+        candidate = response.candidates[0]
+
+        # Check finish reason for special handling
+        finish_reason = candidate.finish_reason
+        finish_reason_str = str(finish_reason)
+
+        # Check for RECITATION - content blocked due to potential copyright
+        if finish_reason_str == "FinishReason.RECITATION":
+            console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
+            logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
+            return None
+
+        # Check for MAX_TOKENS - partial content available, don't retry
+        if finish_reason_str == "FinishReason.MAX_TOKENS":
+            # Try to extract partial text - it's still valuable for OCR
+            partial_text = extract_text_from_response(response)
+            if partial_text:
+                console.print(f"  [yellow]⚠ Page {page_num} truncated[/] - Output exceeded max tokens (partial text saved)")
+                logging.warning(f"Page {page_num}: MAX_TOKENS - Output truncated but {len(partial_text)} chars recovered")
+                # Add marker indicating truncation so user knows content is incomplete
+                return partial_text + "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
+            else:
+                console.print(f"  [red]✗ Page {page_num}[/] - MAX_TOKENS with no recoverable text")
+                logging.error(f"Page {page_num}: MAX_TOKENS but no text could be extracted")
+                return None
+
+        if not candidate.content or not candidate.content.parts:
+            raise Exception(f"No valid response. Finish reason: {finish_reason}")
+
+        text_content = extract_text_from_response(response)
+        if not text_content:
+            raise Exception("Empty text response from Gemini")
+
+        return text_content
+
+
     def _get_system_instruction(self):
         """
         Get the specialized system instructions for newspaper OCR.
@@ -267,7 +322,7 @@ class GeminiPDFProcessor:
                 return f.read()
         except FileNotFoundError:
             logging.error(f"System prompt file not found: {prompt_file}")
-            raise FileNotFoundError(f"OCR system prompt file not found at {prompt_file}")
+            raise FileNotFoundError(f"OCR system prompt file not found at {prompt_file}") from None
         except Exception as e:
             logging.error(f"Error reading system prompt file: {e}")
             raise
@@ -289,62 +344,19 @@ class GeminiPDFProcessor:
                 data=page_bytes,
                 mime_type='application/pdf'
             )
-            
-            # System instruction is in the config, just provide user request with document
-            user_prompt = (
-                "Please perform complete OCR transcription of this single page. "
-                "Extract all visible text maintaining original formatting and structure."
-            )
 
             self.rate_limiter.wait()
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=[pdf_part, user_prompt],  # Document first, then user request
+                contents=[pdf_part, OCR_USER_PROMPT],  # Document first, then user request
                 config=self.generation_config  # Contains system_instruction
             )
 
-            # Validate response
-            if not response.candidates:
-                raise Exception("No candidates in Gemini response")
-
-            candidate = response.candidates[0]
-
-            # Check finish reason for special handling
-            finish_reason = candidate.finish_reason
-            finish_reason_str = str(finish_reason)
-
-            # Check for RECITATION - content blocked due to potential copyright
-            if finish_reason_str == "FinishReason.RECITATION":
-                console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
-                logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
-                return None
-
-            # Check for MAX_TOKENS - partial content available, don't retry
-            if finish_reason_str == "FinishReason.MAX_TOKENS":
-                # Try to extract partial text - it's still valuable for OCR
-                partial_text = self._extract_text_from_response(response)
-                if partial_text:
-                    console.print(f"  [yellow]⚠ Page {page_num} truncated[/] - Output exceeded max tokens (partial text saved)")
-                    logging.warning(f"Page {page_num}: MAX_TOKENS - Output truncated but {len(partial_text)} chars recovered")
-                    # Add marker indicating truncation so user knows content is incomplete
-                    return partial_text + "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
-                else:
-                    console.print(f"  [red]✗ Page {page_num}[/] - MAX_TOKENS with no recoverable text")
-                    logging.error(f"Page {page_num}: MAX_TOKENS but no text could be extracted")
-                    return None
-
-            if not candidate.content or not candidate.content.parts:
-                raise Exception(f"No valid response. Finish reason: {finish_reason}")
-
-            text_content = self._extract_text_from_response(response)
-            if not text_content:
-                raise Exception("Empty text response from Gemini")
-
-            return text_content
+            return self._validate_and_extract(response, page_num)
 
         except genai_errors.APIError as e:
             if is_quota_exhausted(e):
-                raise QuotaExhaustedError(str(e))
+                raise QuotaExhaustedError(str(e)) from e
             self._log_gemini_error(e, "inline PDF processing", page_num)
             return None
         except Exception as e:
@@ -366,119 +378,30 @@ class GeminiPDFProcessor:
         base_delay = 5
 
         for attempt in range(max_retries):
+            pdf_file = None
             try:
-
-                # Save page bytes to a temporary file for upload (SDK requires file path)
-                import tempfile
-                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-                    tmp_file.write(page_bytes)
-                    tmp_path = tmp_file.name
-                
-                try:
-                    # Upload using file path with UploadFileConfig (per Context7 docs)
-                    pdf_file = self.client.files.upload(
-                        file=tmp_path,
-                        config=types.UploadFileConfig(
-                            mime_type='application/pdf',
-                            display_name=f'page_{page_num}.pdf'
-                        )
-                    )
-                finally:
-                    # Clean up temp file
-                    os.unlink(tmp_path)
-                
-                if not pdf_file or not pdf_file.name:
-                    raise Exception("Failed to upload page to Gemini")
-                
-                processing_attempts = 0
-                max_processing_time = 60
-                
-                # Poll file state using string comparison (per Context7 docs: FileState enum)
-                while processing_attempts < max_processing_time:
-                    file = self.client.files.get(name=pdf_file.name)
-                    # Check state - can be string or enum, handle both
-                    state = file.state if isinstance(file.state, str) else getattr(file.state, 'name', str(file.state))
-                    if state == 'ACTIVE':
-                        break
-                    elif state == 'FAILED':
-                        # Extract detailed error info from file status if available
-                        file_error = getattr(file, 'error', None)
-                        if file_error:
-                            error_code = getattr(file_error, 'code', 'unknown')
-                            error_msg = getattr(file_error, 'message', 'No message')
-                            error_details = getattr(file_error, 'details', [])
-                            logging.error(
-                                f"Page {page_num} file processing failed\n"
-                                f"  Error Code: {error_code}\n"
-                                f"  Message: {error_msg}\n"
-                                f"  Details: {error_details}"
-                            )
-                            raise Exception(f"File processing failed: {error_msg} (code: {error_code})")
-                        raise Exception(f"File processing failed with state: {state}")
-                    elif state not in ['PROCESSING', 'STATE_UNSPECIFIED']:
-                        raise Exception(f"Unexpected file state: {state}")
-                    
-                    processing_attempts += 1
-                    time.sleep(1)
-                
-                if processing_attempts >= max_processing_time:
-                    raise TimeoutError(f"File processing timed out after {max_processing_time} seconds")
-                
-                # System instruction is in the config, just provide user request with document
-                user_prompt = (
-                    "Please perform complete OCR transcription of this single page. "
-                    "Extract all visible text maintaining original formatting and structure."
+                # Upload the page and wait until the Files API reports ACTIVE
+                # (shared upload/poll helper with timeout + FAILED handling).
+                pdf_file = upload_and_wait_active(
+                    self.client,
+                    page_bytes,
+                    mime_type='application/pdf',
+                    max_wait=60,
+                    poll_interval=1.0,
                 )
 
                 self.rate_limiter.wait()
                 response = self.client.models.generate_content(
                     model=self.model_name,
-                    contents=[pdf_file, user_prompt],  # Document first, then user request
+                    contents=[pdf_file, OCR_USER_PROMPT],  # Document first, then user request
                     config=self.generation_config  # Contains system_instruction
                 )
-                
-                # Validate response
-                if not response.candidates:
-                    raise Exception("No candidates in Gemini response")
-                
-                candidate = response.candidates[0]
-                
-                # Check finish reason for special handling
-                finish_reason = candidate.finish_reason
-                finish_reason_str = str(finish_reason)
-                
-                # Check for RECITATION - content blocked due to potential copyright
-                if finish_reason_str == "FinishReason.RECITATION":
-                    console.print(f"  [yellow]⚠ Page {page_num} skipped[/] - Content blocked (potential copyrighted material)")
-                    logging.warning(f"Page {page_num}: RECITATION - Gemini blocked output due to potential copyrighted content")
-                    return None
-                
-                # Check for MAX_TOKENS - partial content available, don't retry
-                if finish_reason_str == "FinishReason.MAX_TOKENS":
-                    # Try to extract partial text - it's still valuable for OCR
-                    partial_text = self._extract_text_from_response(response)
-                    if partial_text:
-                        console.print(f"  [yellow]⚠ Page {page_num} truncated[/] - Output exceeded max tokens (partial text saved)")
-                        logging.warning(f"Page {page_num}: MAX_TOKENS - Output truncated but {len(partial_text)} chars recovered")
-                        # Add marker indicating truncation so user knows content is incomplete
-                        return partial_text + "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
-                    else:
-                        console.print(f"  [red]✗ Page {page_num}[/] - MAX_TOKENS with no recoverable text")
-                        logging.error(f"Page {page_num}: MAX_TOKENS but no text could be extracted")
-                        return None
-                
-                if not candidate.content or not candidate.content.parts:
-                    raise Exception(f"No valid response. Finish reason: {finish_reason}")
-                
-                text_content = self._extract_text_from_response(response)
-                if not text_content:
-                    raise Exception("Empty text response from Gemini")
-                
-                return text_content
-                
+
+                return self._validate_and_extract(response, page_num)
+
             except genai_errors.APIError as e:
                 if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
+                    raise QuotaExhaustedError(str(e)) from e
 
                 self._log_gemini_error(e, f"upload PDF processing (attempt {attempt + 1}/{max_retries})", page_num)
 
@@ -502,34 +425,44 @@ class GeminiPDFProcessor:
                     delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
                     console.print(f"    [dim]Retrying in {delay:.1f}s...[/]")
                     time.sleep(delay)
-        
+
+            finally:
+                # Uploads expire after 48h, but delete eagerly so failed pages
+                # don't leave orphaned files in Gemini storage.
+                if pdf_file is not None:
+                    delete_uploaded_file(self.client, pdf_file)
+
         return None
 
-    def process_pdf(self, pdf_path: Path, output_dir: Path, progress: Optional[Progress] = None) -> None:
+    def process_pdf(self, pdf_path: Path, output_dir: Path, progress: Optional[Progress] = None) -> bool:
         """
         Process a PDF file page-by-page and save results to a text file.
-        
+
         This method:
         1. Gets the page count from the PDF
         2. Extracts and processes each page individually
         3. Combines results with page markers
         4. Saves to output file
-        
+
         Args:
             pdf_path (Path): Path to the PDF file to process
             output_dir (Path): Directory to save the output text file
             progress (Optional[Progress]): Rich progress bar for page tracking
+
+        Returns:
+            bool: True if at least one page was successfully transcribed and
+                an output file was written, False otherwise.
         """
         try:
             console.print()
             console.rule(f"[bold]📄 {pdf_path.name}[/]")
-            
+
             # Verify PDF exists
             if not pdf_path.exists():
                 console.print(f"[red]✗[/] PDF file not found: {pdf_path}")
                 logging.error(f"PDF file not found: {pdf_path}")
-                return
-            
+                return False
+
             file_size_mb = pdf_path.stat().st_size / (1024 * 1024)
             console.print(f"  [dim]Size:[/] {file_size_mb:.2f} MB")
             
@@ -551,7 +484,7 @@ class GeminiPDFProcessor:
             # Create page progress bar if parent progress exists
             page_task = None
             if progress:
-                page_task = progress.add_task(f"[dim]  Pages", total=total_pages, visible=True)
+                page_task = progress.add_task("[dim]  Pages", total=total_pages, visible=True)
 
             for page_idx in range(total_pages):
                 page_num = page_idx + 1  # 1-indexed for display
@@ -559,11 +492,12 @@ class GeminiPDFProcessor:
                 try:
                     # Extract single page as PDF bytes
                     page_bytes = extract_pdf_page(pdf_path, page_idx)
-                    page_size_mb = len(page_bytes) / (1024 * 1024)
 
-                    # Process page (try inline first, then upload if needed)
+                    # Process page (try inline first, then upload if needed).
+                    # Inline requests are capped by the API; larger pages must
+                    # go through the Files API.
                     text = None
-                    if page_size_mb < 20:
+                    if len(page_bytes) <= INLINE_REQUEST_LIMIT_BYTES:
                         text = self.process_pdf_page_inline(page_bytes, page_num)
 
                     # Fallback to upload if inline failed or page too large
@@ -618,7 +552,7 @@ class GeminiPDFProcessor:
                 console.print(f"  [yellow]⚠[/] {successful_pages}/{total_pages} pages (quota exhausted, partial results saved)")
                 console.print(f"  [dim]Output size:[/] {output_size:,} bytes")
             elif quota_exhausted:
-                console.print(f"  [red]✗[/] Quota exhausted before any pages completed - no output file created")
+                console.print("  [red]✗[/] Quota exhausted before any pages completed - no output file created")
             elif successful_pages == 0:
                 console.print(f"  [red]✗[/] All {total_pages} pages failed - no output file created")
             elif failed_pages:
@@ -637,11 +571,14 @@ class GeminiPDFProcessor:
             if quota_exhausted:
                 raise QuotaExhaustedError("Daily quota exhausted")
 
+            return successful_pages > 0
+
         except QuotaExhaustedError:
             raise  # let main() handle it
         except Exception as e:
             console.print(f"[red]✗[/] Error processing PDF {pdf_path}: {e}")
             logging.error(f"Error processing PDF {pdf_path}: {e}", exc_info=True)
+            return False
 
 def main():
     """
@@ -757,21 +694,20 @@ def main():
     ) as progress:
         pdf_task = progress.add_task("[cyan]Processing PDFs...", total=total_pdfs)
         
-        for idx, pdf_path in enumerate(pdf_files, 1):
+        for pdf_path in pdf_files:
             progress.update(pdf_task, description=f"[cyan]Processing {pdf_path.name}...")
 
             try:
-                processor.process_pdf(pdf_path, output_dir, progress)
-
-                # Check if output file has content
-                output_file = output_dir / f"{pdf_path.stem}.txt"
-                if output_file.exists() and output_file.stat().st_size > 100:
+                # process_pdf returns True only when at least one page succeeded
+                # and an output file was written for THIS run (a stale .txt from
+                # a previous run no longer counts as success).
+                if processor.process_pdf(pdf_path, output_dir, progress):
                     overall_stats['processed_pdfs'] += 1
                     overall_stats['total_size_mb'] += pdf_path.stat().st_size / (1024 * 1024)
                     logging.info(f"Successfully processed {pdf_path.name}")
                 else:
                     overall_stats['failed_pdfs'] += 1
-                    logging.warning(f"Output file for {pdf_path.name} is empty or very small")
+                    logging.warning(f"No OCR text produced for {pdf_path.name}")
 
             except QuotaExhaustedError:
                 console.print(Panel(

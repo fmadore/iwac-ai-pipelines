@@ -3,6 +3,7 @@
 Optimized for cost-effective document summarization with low reasoning effort.
 """
 
+import argparse
 import os
 import sys
 import logging
@@ -47,21 +48,33 @@ def load_prompt_template() -> str:
             logging.warning("Prompt template missing '{text}' placeholder.")
         return content
     except FileNotFoundError:
-        raise FileNotFoundError(f"Prompt template not found: {prompt_file}")
+        raise FileNotFoundError(f"Prompt template not found: {prompt_file}") from None
     except Exception as e:
-        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}")
+        raise RuntimeError(f"Failed to read prompt template {prompt_file}: {e}") from e
 
-PROMPT_TEMPLATE = load_prompt_template()
+def split_prompt_template(template: str) -> str:
+    """Return the instruction portion of the template for the system prompt.
+
+    The template ends with a '**Texte:** {text}' block that belongs in the
+    user message; sending the whole template as the system prompt duplicated
+    every instruction on every request.
+    """
+    instructions = template.split('{text}')[0]
+    instructions = instructions.rstrip()
+    for suffix in ('**Texte:**', '---'):
+        if instructions.endswith(suffix):
+            instructions = instructions[: -len(suffix)].rstrip()
+    return instructions
+
 
 # ------------------------------------------------------------------
 # Generation Helper
 # ------------------------------------------------------------------
-def generate_summary(llm_client: BaseLLMClient, text: str) -> Optional[str]:
+def generate_summary(llm_client: BaseLLMClient, text: str, system_prompt: str) -> Optional[str]:
     """Generate a summary using the configured LLM client."""
     if not text.strip():
         return None
-    system_prompt = PROMPT_TEMPLATE
-    user_prompt = system_prompt.format(text=text)
+    user_prompt = f"**Texte:**\n{text}"
     try:
         raw_output = llm_client.generate(system_prompt, user_prompt)
         if raw_output:
@@ -75,30 +88,7 @@ def generate_summary(llm_client: BaseLLMClient, text: str) -> Optional[str]:
 # ------------------------------------------------------------------
 # File Processing
 # ------------------------------------------------------------------
-def process_file(llm_client: BaseLLMClient, input_file_path: str, output_file_path: str):
-    """Process a single text file and generate its summary."""
-    try:
-        with open(input_file_path, 'r', encoding='utf-8') as infile:
-            original_text = infile.read()
-        if not original_text.strip():
-            logging.warning(f"Empty file skipped: {input_file_path}")
-            return
-        logging.info(f"Summarizing: {os.path.basename(input_file_path)}")
-        summary = generate_summary(llm_client, original_text)
-        if summary:
-            with open(output_file_path, 'w', encoding='utf-8') as out:
-                out.write(summary)
-            logging.info(f"Saved: {os.path.basename(output_file_path)}")
-        else:
-            logging.error(f"No summary produced for {input_file_path}")
-    except FileNotFoundError:
-        logging.error(f"File not found: {input_file_path}")
-    except IOError as e:
-        logging.error(f"IO error {input_file_path}: {e}")
-    except Exception as e:
-        logging.error(f"Unexpected error {input_file_path}: {e}")
-
-def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str) -> tuple[int, int]:
+def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str, system_prompt: str) -> tuple[int, int]:
     """Process all text files in input directory. Returns (success_count, error_count)."""
     if not os.path.exists(input_dir):
         console.print(f"[red]✗[/red] Input directory not found: {input_dir}")
@@ -124,7 +114,7 @@ def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str
             if not original_text.strip():
                 tqdm.write(f"  [yellow]⚠[/yellow] Skipped (empty): {fname}")
                 continue
-            summary = generate_summary(llm_client, original_text)
+            summary = generate_summary(llm_client, original_text, system_prompt)
             if summary:
                 with open(output_path, 'w', encoding='utf-8') as out:
                     out.write(summary)
@@ -139,10 +129,20 @@ def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str
     return success_count, error_count
 
 def main():
+    parser = argparse.ArgumentParser(description="Generate French summaries for extracted texts")
+    parser.add_argument(
+        "--model",
+        choices=["gpt-5-mini", "gemini-flash", "ministral-14b"],
+        help="Model key; prompts interactively when omitted",
+    )
+    args = parser.parse_args()
+
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         input_dir = os.path.join(script_dir, 'TXT')
         output_dir = os.path.join(script_dir, 'Summaries_FR_TXT')
+
+        system_prompt = split_prompt_template(load_prompt_template())
         
         # Display header
         console.print(Panel.fit(
@@ -153,7 +153,7 @@ def main():
         console.print()
         
         # Get model selection (restricted to cost-effective models)
-        model_option = get_model_option(None, allowed_keys=["gpt-5-mini", "gemini-flash", "ministral-14b"])
+        model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "ministral-14b"])
         
         # Configure for cost-effective summarization
         config = LLMConfig(
@@ -177,7 +177,7 @@ def main():
         console.print(config_table)
         
         llm_client = build_llm_client(model_option, config=config)
-        success_count, error_count = process_txt_files(llm_client, input_dir, output_dir)
+        success_count, error_count = process_txt_files(llm_client, input_dir, output_dir, system_prompt)
         
         # Display results
         console.print()
@@ -198,7 +198,7 @@ def main():
             ))
         else:
             console.print(Panel.fit(
-                f"[bold red]✗ No files processed[/bold red]",
+                "[bold red]✗ No files processed[/bold red]",
                 border_style="red",
                 box=box.ROUNDED
             ))
@@ -209,6 +209,7 @@ def main():
         console.print("\n[yellow]⚠ Interrupted by user[/yellow]")
     except Exception as exc:
         console.print(f"\n[red]✗ Unexpected failure:[/red] {exc}")
+        console.print_exception()
 
 if __name__ == '__main__':
     main()

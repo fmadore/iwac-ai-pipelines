@@ -94,7 +94,35 @@ except APIError as e:
 
 ### Shared Retry Decorator
 
-`common/retry.py` provides `retry_with_backoff` for wrapping functions with exponential backoff. Automatically skips retry on `QuotaExhaustedError`.
+`common/retry.py` provides `retry_with_backoff` for wrapping functions with exponential backoff. Automatically skips retry on `QuotaExhaustedError`. An optional `is_retryable` predicate can re-raise non-retryable errors immediately.
+
+### Shared Gemini Utilities
+
+`common/gemini_utils.py` centralizes Gemini API plumbing for multimodal scripts:
+- `build_generation_config(model_name, ...)` — builds a `GenerateContentConfig` with the correct thinking/temperature settings per model family
+- `upload_and_wait_active(client, source, ...)` — uploads a file via the Files API and polls until it is ACTIVE
+- `extract_text_from_response(response)` — safely extracts text, skipping `thought=True` parts returned by thinking models
+
+### Shared Prompt Loader
+
+`common/prompt_loader.py` provides prompt discovery and interactive selection (`discover_prompts`, `load_prompt_md`, `select_prompt_interactive`) for pipelines that keep multiple alternative `.md` prompts in a `prompts/` directory (audio transcription, video summaries). Prompt files are named `<number>_<description>.md`.
+
+### Shared PDF Downloader
+
+`common/pdf_downloader.py` is the shared Omeka PDF download step used by `AI_ocr_extraction/01` and `AI_summary_issue/01`: fetches items from an item set, resolves media PDF URLs, and downloads them with consistent naming and progress output.
+
+### IWAC Instance Configuration
+
+`common/iwac_config.py` holds constants specific to the IWAC Omeka S instance so they live in one place instead of being copy-pasted across scripts:
+- Authority item sets: `SPATIAL_AUTHORITY_ITEM_SETS`, `SUBJECT_AUTHORITY_ITEM_SETS`, `TOPIC_AUTHORITY_ITEM_SETS`
+- Property IDs: `DCTERMS_TITLE_PROPERTY_ID`, `DCTERMS_SUBJECT_PROPERTY_ID`, `DCTERMS_TYPE_PROPERTY_ID`, `DCTERMS_SPATIAL_PROPERTY_ID`, `BIBO_CONTENT_PROPERTY_ID`, etc.
+- `AI_MODEL_ITEMS` and `model_annotation_value()` — items/values annotating which AI model produced content
+- `item_api_url(base_url, item_id)` — builds an item's API `@id` (never hardcode `https://islam.zmo.de/...` URLs)
+
+### Other Shared Helpers
+
+- `common/pdf_utils.py` — page-by-page PDF helpers (`extract_pdf_page`, `get_pdf_page_count`) used by OCR, HTR, and magazine extraction
+- `common/ffmpeg_utils.py` — FFmpeg discovery, pydub setup, video-to-audio conversion, audio splitting, and cleanup for audio/video pipelines
 
 ### Multimodal Pipelines (Exception)
 
@@ -109,10 +137,11 @@ Audio, vision, HTR, and OCR scripts use provider clients directly because they r
 | `gemini-flash` | Google | Gemini Flash — fast multimodal, cost-effective |
 | `gemini-flash-lite` | Google | Gemini Flash-Lite — cheapest, lowest latency |
 | `gemini-pro` | Google | Best quality (latest Pro), more expensive |
+| `gemma-4` | Google | Gemma 4 31B open-weights, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, thinking "minimal"/"high" only |
 | `mistral-large` | Mistral | Good quality, moderate cost |
 | `ministral-14b` | Mistral | Budget option ($0.2/M tokens) |
 
-Aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `mistral` → `mistral-large`
+Aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `gemma` → `gemma-4`, `mistral` → `mistral-large`
 
 ### LLMConfig Parameters
 
@@ -204,3 +233,11 @@ response = llm_client.generate_structured(system_prompt, user_prompt, response_s
 2. Set appropriate defaults for reasoning, verbosity, thinking
 3. Update README files and pipeline `--model` choices
 4. No duplication of provider-specific code elsewhere
+
+## Development
+
+```bash
+pip install -e ".[dev]"   # install with pytest + ruff
+pytest tests/             # run the test suite
+ruff check .              # lint
+```

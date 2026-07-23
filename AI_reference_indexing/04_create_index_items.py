@@ -45,6 +45,12 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
+from common.iwac_config import (  # noqa: E402
+    AUTHORITY_RECORD_TYPE_ITEM_ID,
+    DCTERMS_TITLE_PROPERTY_ID,
+    DCTERMS_TYPE_PROPERTY_ID,
+    item_api_url,
+)
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -58,12 +64,14 @@ AUTHORITY_TYPE_CONFIG = {
 }
 
 
-def build_item_payload(term: str, authority_type: str) -> dict:
+def build_item_payload(term: str, authority_type: str, base_url: str) -> dict:
     """Build the Omeka S JSON payload for a new authority item.
 
     Uses the correct item set, resource template, and resource class
     based on the authority type. All authority items also get
-    dcterms:type → "Notice d'autorité" (linked item 67568, customvocab:6).
+    dcterms:type → "Notice d'autorité" (linked authority-record type item,
+    customvocab:6). ``base_url`` is the OmekaClient API base URL, used to
+    build the linked item's ``@id``.
     """
     config = AUTHORITY_TYPE_CONFIG[authority_type]
     return {
@@ -73,7 +81,7 @@ def build_item_payload(term: str, authority_type: str) -> dict:
         "dcterms:title": [
             {
                 "type": "literal",
-                "property_id": 1,
+                "property_id": DCTERMS_TITLE_PROPERTY_ID,
                 "property_label": "Title",
                 "is_public": True,
                 "@value": term,
@@ -82,11 +90,11 @@ def build_item_payload(term: str, authority_type: str) -> dict:
         "dcterms:type": [
             {
                 "type": "customvocab:6",
-                "property_id": 8,
+                "property_id": DCTERMS_TYPE_PROPERTY_ID,
                 "property_label": "Type",
                 "is_public": True,
-                "@id": "https://islam.zmo.de/api/items/67568",
-                "value_resource_id": 67568,
+                "@id": item_api_url(base_url, AUTHORITY_RECORD_TYPE_ITEM_ID),
+                "value_resource_id": AUTHORITY_RECORD_TYPE_ITEM_ID,
                 "value_resource_name": "items",
             }
         ],
@@ -163,7 +171,7 @@ def main():
 
         for row in to_create:
             term = row["Unreconciled Value"].strip()
-            payload = build_item_payload(term, args.type)
+            payload = build_item_payload(term, args.type, client.base_url)
             result = client.create_item(payload)
 
             if result:

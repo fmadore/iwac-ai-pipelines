@@ -31,71 +31,27 @@ def update_item_fields(client: OmekaClient, item_id: str, spatial_ids_str: str |
         result['error'] = True
         return result
 
-    modified = False
-
-    # --- Handle Spatial IDs (dcterms:spatial, property_id: 40) ---
-    if spatial_ids_str:
-        if 'dcterms:spatial' not in item_data or not isinstance(item_data['dcterms:spatial'], list):
-            item_data['dcterms:spatial'] = []
-
-        existing_spatial_resource_ids = set()
-        for entry in item_data['dcterms:spatial']:
-            if isinstance(entry, dict) and 'value_resource_id' in entry:
+    def parse_ids(ids_str: str | None) -> list[int]:
+        ids = []
+        for raw in (ids_str or '').split('|'):
+            raw = raw.strip()
+            if raw:
                 try:
-                    existing_spatial_resource_ids.add(int(entry['value_resource_id']))
+                    ids.append(int(raw))
                 except ValueError:
                     pass
+        return ids
 
-        new_spatial_ids_to_add = [s_id.strip() for s_id in spatial_ids_str.split('|') if s_id.strip()]
-        for s_id_val_str in new_spatial_ids_to_add:
-            try:
-                s_id_int = int(s_id_val_str)
-                if s_id_int not in existing_spatial_resource_ids:
-                    item_data['dcterms:spatial'].append({
-                        "type": "resource:item",
-                        "property_id": 40,
-                        "property_label": "Spatial Coverage",
-                        "is_public": True,
-                        "value_resource_id": s_id_int,
-                        "value_resource_name": "items"
-                    })
-                    modified = True
-                    result['spatial_added'] += 1
-                    existing_spatial_resource_ids.add(s_id_int)
-            except ValueError:
-                pass
-
-    # --- Handle Subject IDs (dcterms:subject, property_id: 3) ---
-    if subject_ids_str:
-        if 'dcterms:subject' not in item_data or not isinstance(item_data['dcterms:subject'], list):
-            item_data['dcterms:subject'] = []
-
-        existing_subject_resource_ids = set()
-        for entry in item_data['dcterms:subject']:
-            if isinstance(entry, dict) and 'value_resource_id' in entry:
-                try:
-                    existing_subject_resource_ids.add(int(entry['value_resource_id']))
-                except ValueError:
-                    pass
-
-        new_subject_ids_to_add = [s_id.strip() for s_id in subject_ids_str.split('|') if s_id.strip()]
-        for s_id_val_str in new_subject_ids_to_add:
-            try:
-                s_id_int = int(s_id_val_str)
-                if s_id_int not in existing_subject_resource_ids:
-                    item_data['dcterms:subject'].append({
-                        "type": "resource:item",
-                        "property_id": 3,
-                        "property_label": "Subject",
-                        "is_public": True,
-                        "value_resource_id": s_id_int,
-                        "value_resource_name": "items"
-                    })
-                    modified = True
-                    result['subject_added'] += 1
-                    existing_subject_resource_ids.add(s_id_int)
-            except ValueError:
-                pass
+    # dcterms:spatial (property_id 40) and dcterms:subject (property_id 3)
+    result['spatial_added'] = OmekaClient.append_resource_links(
+        item_data, 'dcterms:spatial', 40, parse_ids(spatial_ids_str),
+        property_label='Spatial Coverage',
+    )
+    result['subject_added'] = OmekaClient.append_resource_links(
+        item_data, 'dcterms:subject', 3, parse_ids(subject_ids_str),
+        property_label='Subject',
+    )
+    modified = bool(result['spatial_added'] or result['subject_added'])
 
     if modified:
         if client.update_item(int(item_id), item_data):
@@ -165,7 +121,7 @@ def main():
         with open(input_csv_path, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             if not reader.fieldnames:
-                console.print(f"[red]CSV file is empty or header is missing[/]")
+                console.print("[red]CSV file is empty or header is missing[/]")
                 return
 
             required_columns = ['o:id', 'Spatial AI Reconciled ID', 'Subject AI Reconciled ID']

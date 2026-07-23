@@ -28,11 +28,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from common.omeka_client import OmekaClient
 
-# Omeka S property configuration
-DCTERMS_ABSTRACT_PROPERTY_ID = 1  # Property ID for dcterms:abstract in Omeka S
-
-
-def update_item_summary(client: OmekaClient, item_id, new_summary):
+def update_item_summary(client: OmekaClient, item_id, new_summary, abstract_property_id: int):
     """
     Update an Omeka S item with a new French summary in the dcterms:abstract field.
 
@@ -40,6 +36,7 @@ def update_item_summary(client: OmekaClient, item_id, new_summary):
         client: OmekaClient instance
         item_id (str): The unique identifier of the Omeka S item to update
         new_summary (str): The French summary text to add to the item
+        abstract_property_id: Property ID for dcterms:abstract, resolved at runtime
 
     Returns:
         bool: True if update was successful, False otherwise
@@ -49,28 +46,13 @@ def update_item_summary(client: OmekaClient, item_id, new_summary):
         logging.warning(f"No data found for item {item_id}. Skipping update.")
         return False
 
-    if 'dcterms:abstract' not in item_data:
-        item_data['dcterms:abstract'] = []
-
-    summary_found = False
-    for desc in item_data['dcterms:abstract']:
-        if desc.get('property_id') == DCTERMS_ABSTRACT_PROPERTY_ID:
-            desc['@value'] = new_summary
-            desc['type'] = 'literal'
-            desc['property_label'] = 'Abstract'
-            summary_found = True
-            logging.info(f"Updated existing abstract for item {item_id}")
-            break
-
-    if not summary_found:
-        item_data['dcterms:abstract'].append({
-            "type": "literal",
-            "property_id": DCTERMS_ABSTRACT_PROPERTY_ID,
-            "property_label": "Abstract",
-            "is_public": True,
-            "@value": new_summary
-        })
-        logging.info(f"Added new abstract for item {item_id}")
+    changed = OmekaClient.upsert_property_value(
+        item_data, 'dcterms:abstract', abstract_property_id, new_summary,
+        property_label='Abstract',
+    )
+    if not changed:
+        logging.info(f"Abstract for item {item_id} already up to date")
+        return True
 
     return client.update_item(int(item_id), item_data)
 
@@ -102,6 +84,14 @@ def main():
     except ValueError as e:
         logging.error(str(e))
         return 1
+
+    # Resolve the property ID at runtime: IDs vary between Omeka S installs,
+    # and writing with the wrong one stores the summary under another property.
+    abstract_property_id = client.get_property_id("dcterms:abstract")
+    if abstract_property_id is None:
+        logging.error("Could not resolve property ID for dcterms:abstract — aborting.")
+        return 1
+    logging.info(f"Resolved dcterms:abstract to property ID {abstract_property_id}")
 
     # Locate the summary files directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -137,7 +127,7 @@ def main():
             
             # Only proceed if summary_text is not empty
             if summary_text:
-                if update_item_summary(client, item_id, summary_text):
+                if update_item_summary(client, item_id, summary_text, abstract_property_id):
                     success_count += 1
                 else:
                     error_count += 1
@@ -152,7 +142,7 @@ def main():
             error_count += 1
 
     # Final summary of operations
-    logging.info(f"Update process completed:")
+    logging.info("Update process completed:")
     logging.info(f"  - Successfully updated: {success_count} items")
     logging.info(f"  - Errors encountered: {error_count} items")
     logging.info(f"  - Total processed: {len(txt_files)} files")

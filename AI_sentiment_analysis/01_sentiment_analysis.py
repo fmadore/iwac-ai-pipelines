@@ -64,7 +64,9 @@ console = Console()
 # CONFIGURATION
 # ============================================================================
 
-# Model registry keys for the 3 concurrent models
+# Model registry keys for the 3 concurrent models.
+# NOTE: the "mistral" slot runs Ministral 14B (not Mistral Large) — results
+# recorded under the iwac:mistral* Omeka properties come from Ministral 14B.
 MODEL_KEYS = {
     "gemini": "gemini-flash",
     "chatgpt": "gpt-5-mini",
@@ -580,8 +582,10 @@ def main():
         try:
             option = get_model_option(model_key)
             llm_clients[model_name] = build_llm_client(option, config=config)
-        except (RuntimeError, ValueError):
-            logger.debug(f"{model_name} not available (SDK or API key missing)")
+        except (RuntimeError, ValueError) as e:
+            # Visible warning: a typo'd API key would otherwise silently
+            # drop this model from the analysis.
+            console.print(f"[yellow]![/] Skipping [bold]{model_name}[/] — client unavailable: {e}")
 
     available_models = list(llm_clients.keys())
 

@@ -39,12 +39,12 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
+from common.iwac_config import (  # noqa: E402
+    DCTERMS_SPATIAL_PROPERTY_ID,
+    DCTERMS_SUBJECT_PROPERTY_ID,
+)
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
-
-# Property IDs in Omeka S
-SPATIAL_PROPERTY_ID = 40   # dcterms:spatial
-SUBJECT_PROPERTY_ID = 3    # dcterms:subject
 
 
 def load_newly_created_mapping(csv_path: str) -> Dict[str, str]:
@@ -168,7 +168,7 @@ def main():
     console.print()
 
     # Read rows — reconciled CSV may contain large bibo:content fields
-    csv.field_size_limit(sys.maxsize)
+    csv.field_size_limit(10 * 1024 * 1024)  # sys.maxsize overflows C long on Windows
     with open(input_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames:
@@ -249,11 +249,11 @@ def main():
             existing_subject = get_existing_resource_ids(item_data, "dcterms:subject")
 
             s_added = add_resource_links(
-                item_data, "dcterms:spatial", SPATIAL_PROPERTY_ID,
+                item_data, "dcterms:spatial", DCTERMS_SPATIAL_PROPERTY_ID,
                 "Spatial Coverage", spatial_ids, existing_spatial,
             )
             subj_added = add_resource_links(
-                item_data, "dcterms:subject", SUBJECT_PROPERTY_ID,
+                item_data, "dcterms:subject", DCTERMS_SUBJECT_PROPERTY_ID,
                 "Subject", subject_ids, existing_subject,
             )
 

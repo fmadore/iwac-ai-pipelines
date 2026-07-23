@@ -41,21 +41,14 @@ if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
+from common.iwac_config import (  # noqa: E402
+    AI_MODEL_ITEMS,
+    DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID,
+    IWAC_SUMMARY_MODEL_PROPERTY_ID,
+    model_annotation_value,
+)
 
 console = Console()
-
-# Property IDs in Omeka S (verified live against islam.zmo.de)
-TABLE_OF_CONTENTS_PROPERTY_ID = 18   # dcterms:tableOfContents
-SUMMARY_MODEL_PROPERTY_ID = 313      # iwac:summaryModel ("AI Model - Summary")
-
-# Annotation models — Omeka authority items (class 244, "Notice d'autorité").
-# display_title mirrors the actual Omeka item title.
-MODEL_CHOICES = {
-    "1": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
-    "2": {"item_id": 78536, "display_title": "Gemini 3.1 pro"},
-    "3": {"item_id": 78630, "display_title": "Gemini 3.5 flash"},
-    "4": {"item_id": 78631, "display_title": "Gemini 3.1 flash lite"},
-}
 
 
 def format_article_toc(article: dict) -> str:
@@ -95,22 +88,6 @@ def load_from_extractions(extractions_dir: Path) -> list:
     return toc_entries
 
 
-def build_model_annotation(model: dict, base_url: str) -> dict:
-    """Build the iwac:summaryModel resource value used to annotate the TOC value."""
-    item_id = model["item_id"]
-    return {
-        "type": "resource:item",
-        "property_id": SUMMARY_MODEL_PROPERTY_ID,
-        "property_label": "AI Model - Summary",
-        "is_public": True,
-        "@id": f"{base_url}/items/{item_id}",
-        "value_resource_id": item_id,
-        "value_resource_name": "items",
-        "url": None,
-        "display_title": model["display_title"],
-    }
-
-
 def apply_toc(item_data: dict, toc_text: str, model_value: dict) -> None:
     """Set dcterms:tableOfContents on a fetched item *in place*.
 
@@ -121,7 +98,7 @@ def apply_toc(item_data: dict, toc_text: str, model_value: dict) -> None:
     key = "dcterms:tableOfContents"
     new_value = {
         "type": "literal",
-        "property_id": TABLE_OF_CONTENTS_PROPERTY_ID,
+        "property_id": DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID,
         "property_label": "Table Of Contents",
         "is_public": True,
         "@value": toc_text,
@@ -165,23 +142,28 @@ def main():
         console.print(f"[red]✗[/] {e}")
         return
 
-    # Model selection
+    # Model selection — numbered menu over the shared AI model registry
+    model_keys = list(AI_MODEL_ITEMS)
     console.print("\n[bold]Select annotation model:[/]")
-    for key, info in MODEL_CHOICES.items():
-        console.print(f"  {key}. {info['display_title']} (item {info['item_id']})")
+    for i, key in enumerate(model_keys, 1):
+        info = AI_MODEL_ITEMS[key]
+        console.print(f"  {i}. {info['display_title']} (item {info['item_id']})")
     choice = console.input("\nChoice [1]: ").strip() or "1"
-    if choice not in MODEL_CHOICES:
+    if not choice.isdigit() or not 1 <= int(choice) <= len(model_keys):
         console.print(f"[red]Invalid choice: {choice}[/]")
         sys.exit(1)
-    selected_model = MODEL_CHOICES[choice]
-    model_value = build_model_annotation(selected_model, client.base_url)
+    selected_key = model_keys[int(choice) - 1]
+    selected_model = AI_MODEL_ITEMS[selected_key]
+    model_value = model_annotation_value(
+        client.base_url, selected_key, IWAC_SUMMARY_MODEL_PROPERTY_ID, "AI Model - Summary"
+    )
 
     # Confirm before touching live data
     console.print(Panel(
         f"Items to update:  {len(toc_entries)}\n"
         f"Omeka:            {client.base_url}\n"
         f"Annotation model: {selected_model['display_title']} (item {selected_model['item_id']})\n"
-        f"Property written: dcterms:tableOfContents (id {TABLE_OF_CONTENTS_PROPERTY_ID})\n"
+        f"Property written: dcterms:tableOfContents (id {DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID})\n"
         f"Mode:             {'DRY RUN — no writes' if args.dry_run else 'LIVE update'}",
         title="About to update Omeka",
         border_style="cyan" if args.dry_run else "yellow",

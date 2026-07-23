@@ -67,8 +67,8 @@ GENERIC_TERMS = {
 
 STOPWORDS = {
     'de', 'du', 'des', 'la', 'le', 'les', 'et', 'au', 'aux', 'd', 'l',
-    'en', 'pour', 'par', 'sur', 'avec', 'a', 'the', 'of', 'et', 'dans',
-    'au', 'aux', 'un', 'une', 'pour', 'vers', 'islamique', 'islamic',
+    'en', 'pour', 'par', 'sur', 'avec', 'a', 'the', 'of', 'dans',
+    'un', 'une', 'vers', 'islamique', 'islamic',
     'association', 'centre', 'organisation', 'organization', 'fondation',
     'groupe', 'union', 'reseau', 'réseau', 'societe', 'société',
     'gouvernement', 'parti', 'club',
@@ -152,7 +152,8 @@ def build_authority_dict(
 
                 if 'dcterms:title' in item:
                     for title_obj in item['dcterms:title']:
-                        title = title_obj['@value'].strip()
+                        # Linked-resource values carry no '@value'; skip them
+                        title = str(title_obj.get('@value') or '').strip()
                         if title:
                             titles_to_process.append(title)
                             if not metadata['primary_title']:
@@ -160,7 +161,7 @@ def build_authority_dict(
 
                 if 'dcterms:alternative' in item:
                     for alt in item['dcterms:alternative']:
-                        alt_value = alt['@value'].strip()
+                        alt_value = str(alt.get('@value') or '').strip()
                         if alt_value:
                             titles_to_process.append(alt_value)
                             metadata['alternatives'].append(alt_value)
@@ -364,6 +365,7 @@ def create_potential_reconciliation_csv(
 
     except Exception as e:
         console.print(f"[red]✗[/] Error creating potential reconciliation CSV: {e}")
+        raise
 
 
 def reconcile_column_values(
@@ -395,7 +397,8 @@ def reconcile_column_values(
             if not reader.fieldnames:
                 console.print(f"[red]✗[/] CSV file is empty or header is missing: {input_csv_path}")
                 return output_reconciled_csv_path, 0, 0, 0
-            row_count = sum(1 for _ in f)
+            # Count CSV records, not raw lines: quoted fields may span lines
+            row_count = sum(1 for _ in reader)
 
         with open(input_csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
@@ -506,6 +509,7 @@ def write_ambiguous_terms_to_file(ambiguous_dict: Dict[str, List[str]], output_p
         console.print(f"[green]✓[/] Ambiguous terms written to: {os.path.basename(output_path)}")
     except Exception as e:
         console.print(f"[red]✗[/] Error writing ambiguous terms CSV: {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------

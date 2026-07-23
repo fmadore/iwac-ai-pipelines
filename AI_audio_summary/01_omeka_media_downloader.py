@@ -42,10 +42,12 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # Shared Omeka client
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from common.omeka_client import OmekaClient
+from common.ffmpeg_utils import AUDIO_FORMATS, VIDEO_FORMATS
 
-# Supported media formats
-AUDIO_EXTENSIONS: Set[str] = {'.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma'}
-VIDEO_EXTENSIONS: Set[str] = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg', '.3gp'}
+# Supported media formats — derived from common/ffmpeg_utils so the
+# downloader never fetches a format the transcription step cannot handle
+AUDIO_EXTENSIONS: Set[str] = set(AUDIO_FORMATS)
+VIDEO_EXTENSIONS: Set[str] = set(VIDEO_FORMATS)
 SUPPORTED_EXTENSIONS: Set[str] = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 
@@ -98,10 +100,10 @@ class MediaDownloader:
         if not filename:
             return 'unknown'
         extension = Path(filename).suffix.lower()
-        if extension in AUDIO_EXTENSIONS:
-            return 'audio'
-        elif extension in VIDEO_EXTENSIONS:
+        if extension in VIDEO_EXTENSIONS:
             return 'video'
+        elif extension in AUDIO_EXTENSIONS:
+            return 'audio'
         return 'unknown'
 
     @staticmethod
@@ -119,24 +121,36 @@ class MediaDownloader:
         Returns:
             Optional[Path]: Path to downloaded file or None if download failed
         """
+        # Download to a temp name and rename on success so an interrupted
+        # download can never be mistaken for a completed file on the next run.
+        part_path = file_path.with_suffix(file_path.suffix + '.part')
         try:
             # Stream download to handle large files efficiently
             with requests.get(url, stream=True, timeout=timeout) as response:
                 response.raise_for_status()
 
                 # Write file in chunks to avoid memory issues
-                with open(file_path, 'wb') as f:
+                with open(part_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
 
+                expected = response.headers.get('Content-Length')
+                if expected is not None and part_path.stat().st_size != int(expected):
+                    raise requests.RequestException(
+                        f"Incomplete download: got {part_path.stat().st_size} of {expected} bytes"
+                    )
+
+            part_path.rename(file_path)
             return file_path
 
         except requests.Timeout:
             logging.error(f"Timeout downloading {url}")
+            part_path.unlink(missing_ok=True)
             return None
         except requests.RequestException as e:
             logging.error(f"Failed to download {url}: {e}")
+            part_path.unlink(missing_ok=True)
             return None
 
     @staticmethod
@@ -218,6 +232,9 @@ class MediaDownloader:
         try:
             # Get detailed item data including media attachments
             item_data = self.client.get_item(item_id)
+            if not item_data:
+                logging.error(f"Could not fetch item {item_id} from Omeka")
+                return None
             media_urls = []
 
             # Search through media attachments for supported audio/video files

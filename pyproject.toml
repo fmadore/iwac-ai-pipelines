@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iwac-ai-pipelines"
+version = "1.0.0"
+description = "AI-powered document processing workflows for the Islam West Africa Collection (IWAC)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Frédérick Madore" }]
+dependencies = [
+    # AI provider SDKs — pinned to a major version: these break routinely
+    "google-genai>=1.0,<2",
+    "openai>=1.60,<3",
+    "mistralai>=2.5,<3", # 2.x layout: import from mistralai.client and mistralai.client.errors
+    "pydantic>=2.5,<3",
+    # PDF processing
+    "pypdf>=4,<7", # successor of the deprecated PyPDF2
+    # Omeka S integration
+    "requests>=2.31,<3",
+    # Utilities
+    "python-dotenv>=1.0,<2",
+    "tqdm>=4.66,<5",
+    "rich>=13,<15",
+    "pydub>=0.25,<1",
+    "audioop-lts; python_version >= '3.13'", # pydub dependency removed from stdlib in 3.13
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[tool.setuptools]
+# Only common/ is an importable package; pipeline scripts are run directly.
+packages = ["common"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Pragmatic set for a research codebase: real errors and unused code,
+# without imposing wholesale stylistic churn.
+select = ["E4", "E7", "E9", "F", "B", "PLE"]
+ignore = [
+    "E402", # module-level import not at top: scripts must mutate sys.path before importing common/
+    "E731", # lambda assignments are used deliberately in a few scripts
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

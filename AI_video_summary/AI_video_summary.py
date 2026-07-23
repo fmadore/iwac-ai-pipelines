@@ -12,8 +12,6 @@ Supports:
 import argparse
 import logging
 import os
-import random
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -25,9 +23,25 @@ from google.genai import errors as genai_errors
 # Add repo root to path for shared imports
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.gemini_utils import SAFETY_SETTINGS_NONE, get_thinking_level
+from common.gemini_utils import (
+    INLINE_REQUEST_LIMIT_BYTES,
+    build_generation_config,
+    delete_uploaded_file,
+    extract_text_from_response,
+    upload_and_wait_active,
+)
 from common.ffmpeg_utils import VIDEO_FORMATS, get_mime_type
+from common.prompt_loader import select_prompt_interactive
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
+from common.retry import retry_with_backoff
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich import box
+
+# Initialize rich console
+console = Console()
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -35,9 +49,29 @@ load_dotenv()
 # Script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
+# Default prompt (fallback when no prompt file is selected)
+DEFAULT_PROMPT = """
+        Please analyze this video and provide a comprehensive summary of its content.
+        Include information about what is shown visually and any spoken content.
+        """
+
+# Transient Gemini API errors worth retrying with backoff
+RETRYABLE_API_CODES = (429, 500, 503)
+
+
+def _is_retryable_api_error(exc: BaseException) -> bool:
+    """Retry predicate: transient Gemini API errors only."""
+    return isinstance(exc, genai_errors.APIError) and getattr(exc, "code", 0) in RETRYABLE_API_CODES
+
 
 class VideoProcessor:
-    def __init__(self, api_key=None, model='gemini-pro-latest', requests_per_minute: Optional[int] = None):
+    def __init__(
+        self,
+        api_key=None,
+        model="gemini-pro-latest",
+        requests_per_minute: Optional[int] = None,
+        processing_prompt: Optional[str] = None,
+    ):
         """
         Initialize the Video Processor with Gemini API.
 
@@ -46,6 +80,8 @@ class VideoProcessor:
             model (str, optional): Model to use. Either 'gemini-pro-latest' or 'gemini-flash-latest'.
                                    Default is 'gemini-pro-latest'.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
+            processing_prompt: The processing prompt to use (selected in ``main()``);
+                falls back to ``DEFAULT_PROMPT``.
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
@@ -59,237 +95,163 @@ class VideoProcessor:
 
         # Rate limiter for proactive throttling
         self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))
-        
-        # Default prompt (fallback)
-        self.default_prompt = """
-        Please analyze this video and provide a comprehensive summary of its content.
-        Include information about what is shown visually and any spoken content.
-        """
-        
-        # Load prompt from file or user selection
-        self.processing_prompt = self.select_prompt()
-        
-        # Maximum file size for inline upload (20MB)
-        self.max_inline_size = 20 * 1024 * 1024
+
+        # Prompt is injected by main() so constructing the class never blocks on stdin.
+        self.processing_prompt = processing_prompt or DEFAULT_PROMPT
 
     def get_video_files(self, video_folder="video"):
         """
         Get all supported video files from the specified folder.
-        
+
         Args:
             video_folder (str): Path to the video folder (relative to script directory)
-            
+
         Returns:
             list: List of video file paths
         """
         # Resolve video folder relative to script directory
         video_path = SCRIPT_DIR / video_folder
         if not video_path.exists():
-            print(f"Video folder '{video_path}' not found!")
+            console.print(f"[red]✗[/] Video folder '[cyan]{video_path}[/]' not found!")
             return []
-        
+
         video_files = []
         for file_path in video_path.iterdir():
             if file_path.is_file() and file_path.suffix.lower() in VIDEO_FORMATS:
                 video_files.append(file_path)
-        
+
         return sorted(video_files)
-    
-    def upload_video_file(self, video_file_path):
-        """
-        Upload a video file to the Gemini Files API.
-        
-        Args:
-            video_file_path (Path): Path to the video file
-            
-        Returns:
-            File object or None if error
-        """
-        try:
-            print(f"  Uploading video to Gemini Files API...")
-            uploaded_file = self.client.files.upload(file=str(video_file_path))
-            
-            # Poll until the video is processed (state becomes ACTIVE)
-            print(f"  Waiting for video processing...")
-            while not uploaded_file.state or uploaded_file.state.name != "ACTIVE":
-                print(f"    Processing... (state: {uploaded_file.state})")
-                time.sleep(5)
-                uploaded_file = self.client.files.get(name=uploaded_file.name)
-            
-            print(f"  Video ready for processing.")
-            return uploaded_file
-            
-        except Exception as e:
-            print(f"  Error uploading video file: {e}")
-            return None
-    
-    def process_video_inline(self, video_file_path, max_retries=3):
-        """
-        Process a small video file by sending bytes inline.
 
-        Args:
-            video_file_path (Path): Path to the video file
-            max_retries (int): Maximum retry attempts for transient errors
+    def _generate_from_part(self, media_part) -> Optional[str]:
+        """Generate text from one media part (inline bytes or an uploaded file).
+
+        Single generation path shared by the inline and Files API transports.
+        Transient API errors (429/500/503) are retried with exponential
+        backoff; quota exhaustion always propagates as ``QuotaExhaustedError``.
 
         Returns:
-            str: Generated text or None if error
+            The generated text, or ``None`` on failure.
         """
-        print(f"  Reading video file...")
-        with open(video_file_path, 'rb') as f:
-            video_bytes = f.read()
-
-        mime_type = get_mime_type(video_file_path)
-        if not mime_type:
-            print(f"  Unsupported video format: {video_file_path.suffix}")
-            return None
-
-        base_delay = 5
-        for attempt in range(max_retries):
+        def _call() -> str:
+            self.rate_limiter.wait()
             try:
-                print(f"  Sending to Gemini API (inline mode)...")
-                self.rate_limiter.wait()
                 response = self.client.models.generate_content(
                     model=self.model,
-                    contents=types.Content(
-                        parts=[
-                            types.Part(
-                                inline_data=types.Blob(data=video_bytes, mime_type=mime_type)
-                            ),
-                            types.Part(text=self.processing_prompt)
-                        ]
+                    contents=[media_part, self.processing_prompt],
+                    config=build_generation_config(
+                        self.model,
+                        temperature=0.2,
+                        max_output_tokens=65536,
                     ),
-                    config=types.GenerateContentConfig(
-                        temperature=0.2,
-                        max_output_tokens=65536,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_level=get_thinking_level(self.model)
-                        ),
-                        safety_settings=SAFETY_SETTINGS_NONE,
-                    )
                 )
-
-                return response.text.strip()
-
             except genai_errors.APIError as e:
                 if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
-                error_code = getattr(e, 'code', 0)
-                is_retryable = error_code in [429, 500, 503]
-                if attempt < max_retries - 1 and is_retryable:
-                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
-                    print(f"  Retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    print(f"  Error processing video inline: {e}")
-                    return None
+                    raise QuotaExhaustedError(str(e)) from e
+                raise
+            # Safely skips thought-parts and empty candidates (bare
+            # response.text.strip() breaks on both).
+            return extract_text_from_response(response)
 
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
-                    print(f"  Error: {e} — retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    print(f"  Error processing video inline: {e}")
-                    return None
-
-        return None
-    
-    def process_video_uploaded(self, video_file_path, max_retries=3):
-        """
-        Process a video file by uploading to Files API first.
-
-        Args:
-            video_file_path (Path): Path to the video file
-            max_retries (int): Maximum retry attempts for transient errors
-
-        Returns:
-            str: Generated text or None if error
-        """
-        # Upload the video
-        uploaded_file = self.upload_video_file(video_file_path)
-        if not uploaded_file:
+        try:
+            text = retry_with_backoff(
+                max_retries=3,
+                base_delay=5.0,
+                exceptions=(genai_errors.APIError,),
+                is_retryable=_is_retryable_api_error,
+            )(_call)()
+        except QuotaExhaustedError:
+            raise
+        except Exception as e:
+            console.print(f"  [red]✗[/] Error generating content from video: {e}")
             return None
 
-        base_delay = 5
-        for attempt in range(max_retries):
-            try:
-                print(f"  Generating content from video...")
-                self.rate_limiter.wait()
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=[uploaded_file, self.processing_prompt],
-                    config=types.GenerateContentConfig(
-                        temperature=0.2,
-                        max_output_tokens=65536,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_level=get_thinking_level(self.model)
-                        ),
-                        safety_settings=SAFETY_SETTINGS_NONE,
-                    )
-                )
+        if not text:
+            console.print("  [red]✗[/] Empty response from Gemini")
+            return None
+        return text
 
-                # Optionally delete the uploaded file after processing
-                try:
-                    self.client.files.delete(name=uploaded_file.name)
-                    print(f"  Cleaned up uploaded file.")
-                except Exception:
-                    pass  # Non-critical if deletion fails
+    def _upload_video(self, video_file_path) -> Optional[object]:
+        """Upload a video via the Files API and wait until it is ACTIVE.
 
-                return response.text.strip()
+        Delegates the upload/poll loop (with timeout and FAILED handling) to
+        ``common.gemini_utils.upload_and_wait_active``.
 
-            except genai_errors.APIError as e:
-                if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e))
-                error_code = getattr(e, 'code', 0)
-                is_retryable = error_code in [429, 500, 503]
-                if attempt < max_retries - 1 and is_retryable:
-                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
-                    print(f"  Retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    print(f"  Error processing uploaded video: {e}")
-                    return None
+        Returns:
+            The ACTIVE file object, or ``None`` on failure.
+        """
+        console.print("  [cyan]☁[/] Uploading video to Gemini Files API...")
+        try:
+            uploaded_file = upload_and_wait_active(
+                self.client,
+                video_file_path,
+                poll_interval=5.0,
+            )
+        except genai_errors.APIError as e:
+            if is_quota_exhausted(e):
+                raise QuotaExhaustedError(str(e)) from e
+            console.print(f"  [red]✗[/] Error uploading video file: {e}")
+            return None
+        except (RuntimeError, TimeoutError) as e:
+            console.print(f"  [red]✗[/] Error uploading video file: {e}")
+            return None
 
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
-                    print(f"  Error: {e} — retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    print(f"  Error processing uploaded video: {e}")
-                    return None
+        console.print("  [green]✓[/] Video ready for processing.")
+        return uploaded_file
 
-        return None
-    
     def process_video(self, video_file_path):
         """
         Process a single video file using the appropriate method based on file size.
-        
+
+        Small files are sent inline; anything above the 20 MB request cap is
+        uploaded via the Files API and always cleaned up afterwards (uploads
+        are potentially GBs; never leak them on failure paths).
+
         Args:
             video_file_path (Path): Path to the video file
-            
+
         Returns:
             str: Generated text or None if error
         """
-        print(f"Processing: {video_file_path.name}")
-        
+        console.print(f"[cyan]🎬[/] Processing: [bold]{video_file_path.name}[/]")
+
         # Check file size
         file_size = video_file_path.stat().st_size
         file_size_mb = file_size / (1024 * 1024)
-        print(f"  File size: {file_size_mb:.1f} MB")
-        
-        if file_size <= self.max_inline_size:
-            # Small file - process inline
-            return self.process_video_inline(video_file_path)
-        else:
-            # Large file - upload first
-            print(f"  File exceeds {self.max_inline_size / (1024*1024):.0f}MB, using Files API upload...")
-            return self.process_video_uploaded(video_file_path)
-    
+        console.print(f"  [dim]File size: {file_size_mb:.1f} MB[/]")
+
+        if file_size <= INLINE_REQUEST_LIMIT_BYTES:
+            # Small file — send bytes inline
+            mime_type = get_mime_type(video_file_path)
+            if not mime_type:
+                console.print(f"  [red]✗[/] Unsupported video format: {video_file_path.suffix}")
+                return None
+
+            console.print("  [cyan]→[/] Sending to Gemini API (inline mode)...")
+            with open(video_file_path, "rb") as f:
+                video_bytes = f.read()
+            media_part = types.Part.from_bytes(data=video_bytes, mime_type=mime_type)
+            return self._generate_from_part(media_part)
+
+        # Large file — upload first
+        console.print(
+            f"  [dim]File exceeds {INLINE_REQUEST_LIMIT_BYTES / (1024 * 1024):.0f} MB, "
+            f"using Files API upload...[/]"
+        )
+        uploaded_file = self._upload_video(video_file_path)
+        if not uploaded_file:
+            return None
+
+        try:
+            console.print("  [cyan]→[/] Generating content from video...")
+            return self._generate_from_part(uploaded_file)
+        finally:
+            delete_uploaded_file(self.client, uploaded_file)
+            console.print("  [dim]🧹 Cleaned up uploaded file.[/]")
+
     def save_output(self, output_text, video_file_path, output_folder="output"):
         """
         Save processed output to a text file.
-        
+
         Args:
             output_text (str): Generated text
             video_file_path (Path): Original video file path
@@ -298,52 +260,61 @@ class VideoProcessor:
         # Create output folder relative to script directory if it doesn't exist
         output_path = SCRIPT_DIR / output_folder
         output_path.mkdir(exist_ok=True)
-        
+
         # Create output filename
         output_filename = video_file_path.stem + "_processed.txt"
         output_file_path = output_path / output_filename
-        
+
         try:
-            with open(output_file_path, 'w', encoding='utf-8') as f:
+            with open(output_file_path, "w", encoding="utf-8") as f:
                 # Write header with metadata
                 f.write(f"Video Processing Output: {video_file_path.name}\n")
                 f.write(f"Generated using: Google {self.model}\n")
                 f.write("=" * 60 + "\n\n")
                 f.write(output_text)
-            
-            print(f"  Output saved: {output_file_path}")
+
+            console.print(f"  [green]✓[/] Output saved: [cyan]{output_file_path}[/]")
             return output_file_path
-        
+
         except Exception as e:
-            print(f"  Error saving output: {e}")
+            console.print(f"  [red]✗[/] Error saving output: {e}")
             return None
-    
+
     def process_all_video_files(self, video_folder="video", output_folder="output"):
         """
         Process all video files in the specified folder.
-        
+
         Args:
             video_folder (str): Path to the video folder
             output_folder (str): Output folder for results
         """
         video_files = self.get_video_files(video_folder)
-        
+
         if not video_files:
-            print("No supported video files found in the video folder.")
-            print(f"Supported formats: {', '.join(VIDEO_FORMATS.keys())}")
+            console.print("[yellow]⚠[/] No supported video files found in the video folder.")
+            console.print(f"[dim]Supported formats: {', '.join(VIDEO_FORMATS.keys())}[/]")
             return
-        
-        print(f"Found {len(video_files)} video file(s) to process:")
+
+        # Display files table
+        files_table = Table(title="📁 Videos to Process", box=box.ROUNDED)
+        files_table.add_column("Filename", style="green")
+        files_table.add_column("Size", justify="right", style="dim")
         for file_path in video_files:
-            print(f"  - {file_path.name}")
-        
-        print("\nStarting video processing...\n")
-        
+            size_mb = file_path.stat().st_size / (1024 * 1024)
+            files_table.add_row(file_path.name, f"{size_mb:.1f} MB")
+        console.print(files_table)
+
+        console.print(f"\n[bold]Summary:[/] [cyan]{len(video_files)}[/] file(s) to process")
+        console.print()
+        console.rule("[bold]Starting Video Processing", style="cyan")
+        console.print()
+
         successful_processes = 0
         failed_processes = 0
-        
+
         for video_file in video_files:
             try:
+                console.rule(f"[dim]{video_file.name}[/]", style="dim")
                 output_text = self.process_video(video_file)
 
                 if output_text:
@@ -356,178 +327,32 @@ class VideoProcessor:
                     failed_processes += 1
 
             except QuotaExhaustedError:
-                print("\n" + "="*60)
-                print("API QUOTA EXHAUSTED — stopping all processing.")
-                print("Partial results (if any) have been saved.")
-                print("Wait for your quota to reset or upgrade your plan.")
-                print("="*60)
+                console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
+                console.print("[red]Partial results (if any) have been saved.[/]")
+                console.print("[red]Wait for your quota to reset or upgrade your plan.[/]")
                 break
 
             except Exception as e:
-                print(f"  Unexpected error processing {video_file.name}: {e}")
+                console.print(f"[red]✗[/] Unexpected error processing [cyan]{video_file.name}[/]: {e}")
                 failed_processes += 1
 
-            print()  # Add spacing between files
-        
+            console.print()  # Add spacing between files
+
         # Summary
-        print("=" * 60)
-        print("PROCESSING SUMMARY")
-        print("=" * 60)
-        print(f"Total files processed: {len(video_files)}")
-        print(f"Successful: {successful_processes}")
-        print(f"Failed: {failed_processes}")
-        
+        console.print()
+        console.rule("[bold]Processing Summary", style="cyan")
+
+        summary_table = Table(title="📊 Results", box=box.ROUNDED)
+        summary_table.add_column("Metric", style="dim")
+        summary_table.add_column("Value", style="green")
+        summary_table.add_row("Total files processed", str(len(video_files)))
+        summary_table.add_row("Successful", f"[green]{successful_processes}[/]")
+        summary_table.add_row("Failed", f"[red]{failed_processes}[/]" if failed_processes > 0 else "0")
+        summary_table.add_row("Output folder", output_folder)
+        console.print(summary_table)
+
         if successful_processes > 0:
-            print(f"\nOutput saved in the '{output_folder}' folder.")
-    
-    def get_available_prompts(self, prompts_folder="prompts"):
-        """
-        Get all available prompt files from the prompts folder.
-        
-        Args:
-            prompts_folder (str): Path to the prompts folder (relative to script directory)
-            
-        Returns:
-            list: List of tuples (number, description, filepath)
-        """
-        # Resolve prompts folder relative to script directory
-        prompts_path = SCRIPT_DIR / prompts_folder
-        if not prompts_path.exists():
-            print(f"Warning: Prompts folder '{prompts_path}' not found.")
-            return []
-        
-        prompt_files = []
-        for file_path in prompts_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() == '.md':
-                # Extract description from filename (remove number prefix and extension)
-                name_part = file_path.stem
-                if '_' in name_part:
-                    number_part, description = name_part.split('_', 1)
-                    try:
-                        number = int(number_part)
-                        description = description.replace('_', ' ').title()
-                        prompt_files.append((number, description, file_path))
-                    except ValueError:
-                        # If no number prefix, use filename as description
-                        description = name_part.replace('_', ' ').title()
-                        prompt_files.append((0, description, file_path))
-                else:
-                    description = name_part.replace('_', ' ').title()
-                    prompt_files.append((0, description, file_path))
-        
-        return sorted(prompt_files, key=lambda x: x[0])
-    
-    def display_prompt_menu(self, available_prompts):
-        """
-        Display the prompt selection menu.
-        
-        Args:
-            available_prompts (list): List of available prompts
-        """
-        print("\n" + "=" * 60)
-        print("PROMPT SELECTION")
-        print("=" * 60)
-        print("Available processing modes:")
-        print()
-        
-        for number, description, _ in available_prompts:
-            if number > 0:
-                print(f"{number}. {description}")
-            else:
-                print(f"   {description}")
-        
-        print()
-    
-    def load_prompt_content(self, prompt_file_path):
-        """
-        Load prompt content from a markdown file.
-        
-        Args:
-            prompt_file_path (Path): Path to the prompt file
-            
-        Returns:
-            str: The prompt content or default prompt if error
-        """
-        try:
-            with open(prompt_file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Extract content after the first markdown header
-            lines = content.split('\n')
-            prompt_lines = []
-            found_header = False
-            
-            for line in lines:
-                if line.startswith('# ') and not found_header:
-                    found_header = True
-                    continue
-                elif found_header and line.strip():
-                    prompt_lines.append(line)
-            
-            if prompt_lines:
-                return '\n'.join(prompt_lines).strip()
-            else:
-                return content.strip()
-                
-        except Exception as e:
-            print(f"Error loading prompt from '{prompt_file_path}': {e}")
-            return self.default_prompt
-    
-    def select_prompt(self, prompts_folder="prompts"):
-        """
-        Allow user to select a processing prompt.
-        
-        Args:
-            prompts_folder (str): Path to the prompts folder
-            
-        Returns:
-            str: The selected prompt content
-        """
-        available_prompts = self.get_available_prompts(prompts_folder)
-        
-        if not available_prompts:
-            print("No prompt files found. Using default prompt.")
-            return self.default_prompt
-        
-        # Display menu
-        self.display_prompt_menu(available_prompts)
-        
-        # Get user selection
-        numbered_prompts = [(num, desc, path) for num, desc, path in available_prompts if num > 0]
-        
-        if not numbered_prompts:
-            print("No numbered prompts found. Using default prompt.")
-            return self.default_prompt
-        
-        while True:
-            try:
-                choice = input(f"Select a mode (1-{len(numbered_prompts)}) or press Enter for default: ").strip()
-                
-                if not choice:
-                    print("Using default prompt.")
-                    return self.default_prompt
-                
-                choice_num = int(choice)
-                
-                # Find the prompt with the selected number
-                selected_prompt = None
-                for num, desc, path in numbered_prompts:
-                    if num == choice_num:
-                        selected_prompt = (num, desc, path)
-                        break
-                
-                if selected_prompt:
-                    prompt_num, description, prompt_path = selected_prompt
-                    print(f"Selected: {description}")
-                    return self.load_prompt_content(prompt_path)
-                else:
-                    print(f"Invalid choice. Please select a number between 1 and {len(numbered_prompts)}.")
-                    
-            except ValueError:
-                print("Invalid input. Please enter a number.")
-            except KeyboardInterrupt:
-                print("\nUsing default prompt.")
-                return self.default_prompt
+            console.print(f"\n[green]✓[/] Output saved in the '[cyan]{output_folder}[/]' folder.")
 
 
 def parse_args():
@@ -542,6 +367,7 @@ Examples:
   python AI_video_summary.py
   python AI_video_summary.py --model gemini-flash-latest
   python AI_video_summary.py --video-folder my_videos --output-folder results
+  python AI_video_summary.py --rpm 5
         """
     )
     parser.add_argument(
@@ -551,7 +377,8 @@ Examples:
         help="Model to use for processing (default: interactive selection)"
     )
     parser.add_argument(
-        "--video-folder",
+        "--video-folder", "--video-dir",
+        dest="video_folder",
         default="video",
         help="Folder containing video files (default: video)"
     )
@@ -560,6 +387,12 @@ Examples:
         default="output",
         help="Folder for output files (default: output)"
     )
+    parser.add_argument(
+        "--rpm",
+        type=int,
+        default=None,
+        help="Rate limit: maximum requests per minute (default: no limit)"
+    )
     return parser.parse_args()
 
 
@@ -567,10 +400,17 @@ def select_model_interactive():
     """
     Interactively select a model if not provided via CLI.
     """
-    print("\nAvailable models:")
-    print("1. gemini-pro-latest (Higher quality, best for detailed transcription)")
-    print("2. gemini-flash-latest (Faster, good for summaries)")
-    model_choice = input("\nSelect a model (1 or 2) or press Enter for default (gemini-pro-latest): ").strip()
+    models_table = Table(title="🤖 Available Models", box=box.ROUNDED)
+    models_table.add_column("#", style="cyan", justify="right")
+    models_table.add_column("Model", style="green")
+    models_table.add_column("Description", style="dim")
+    models_table.add_row("1", "gemini-pro-latest", "Higher quality, best for detailed transcription")
+    models_table.add_row("2", "gemini-flash-latest", "Faster, good for summaries")
+    console.print(models_table)
+
+    model_choice = console.input(
+        "\n[bold]Select a model (1 or 2) or press Enter for default (gemini-pro-latest):[/] "
+    ).strip()
 
     if model_choice == '2':
         return 'gemini-flash-latest'
@@ -582,38 +422,67 @@ def main():
     Main function to run the video processing script.
     """
     args = parse_args()
-    
-    print("Video Processing using Google Gemini")
-    print("=" * 60)
-    
+
+    # Display welcome banner
+    console.print(Panel(
+        "Summarize or transcribe video files using Google Gemini AI",
+        title="🎬 Video Processing using Google Gemini",
+        border_style="cyan"
+    ))
+
     try:
         # Select model via CLI or interactive
         if args.model:
             selected_model = args.model
-            print(f"\nUsing model: {selected_model}")
+            console.print(f"\n[green]✓[/] Using model: [cyan]{selected_model}[/]")
         else:
             selected_model = select_model_interactive()
-            print(f"Selected: {selected_model}")
-        
-        # Initialize processor (prompt chosen interactively)
-        processor = VideoProcessor(model=selected_model)
-        
-        # Process all video files
+            console.print(f"[green]✓[/] Selected: [cyan]{selected_model}[/]")
+
+        # Select the processing prompt up front, then inject it into the
+        # processor (constructing the class never blocks on stdin).
+        processing_prompt, _prompt_number = select_prompt_interactive(
+            SCRIPT_DIR / "prompts",
+            console,
+            default_prompt=DEFAULT_PROMPT,
+            title="Available Processing Modes",
+        )
+
+        # Display configuration
+        console.print()
+        config_table = Table(title="⚙️ Configuration", box=box.ROUNDED)
+        config_table.add_column("Setting", style="dim")
+        config_table.add_column("Value", style="green")
+        config_table.add_row("Model", selected_model)
+        config_table.add_row("Video Folder", args.video_folder)
+        config_table.add_row("Output Folder", args.output_folder)
+        config_table.add_row("Rate Limit", f"{args.rpm} RPM" if args.rpm else "None")
+        console.print(config_table)
+        console.print()
+
+        # Initialize processor and run
+        processor = VideoProcessor(
+            model=selected_model,
+            requests_per_minute=args.rpm,
+            processing_prompt=processing_prompt,
+        )
+
         processor.process_all_video_files(
             video_folder=args.video_folder,
             output_folder=args.output_folder
         )
-        
+
     except ValueError as e:
-        print(f"Configuration Error: {e}")
-        print("\nTo use this script, you need to set your Gemini API key:")
-        print("1. Get your API key from: https://aistudio.google.com/app/api-keys")
-        print("2. Create or edit a .env file in this directory")
-        print("3. Add: GEMINI_API_KEY=your-api-key-here")
-        print("4. Save the file and run this script again")
-        
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+        console.print(f"\n[red]✗ Configuration Error:[/] {e}")
+        console.print("\n[bold]To use this script, you need to set your Gemini API key:[/]")
+        console.print("  1. Get your API key from: [link=https://aistudio.google.com/app/api-keys]https://aistudio.google.com/app/api-keys[/link]")
+        console.print("  2. Create or edit a .env file in this directory")
+        console.print("  3. Add: GEMINI_API_KEY=your-api-key-here")
+        console.print("  4. Save the file and run this script again")
+
+    except Exception:
+        console.print("\n[red]✗ Unexpected error:[/]")
+        console.print_exception()
 
 
 if __name__ == "__main__":
