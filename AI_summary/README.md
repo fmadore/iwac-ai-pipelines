@@ -35,14 +35,24 @@ python 02_AI_generate_summaries.py --model gemini-flash
 | Model | Provider | Speed | Cost |
 |-------|----------|-------|------|
 | `gemini-flash` | Google | Fast | Low |
-| `gpt-5-mini` | OpenAI | Fast | Low |
+| `gpt-5.6-luna` | OpenAI | Fast | Low |
 | `ministral-14b` | Mistral | Fast | Very low ($0.2/M tokens) |
 
 All models produce comparable summary quality for this task.
 
 ## Output
 
-Summaries are saved to `Summaries_FR_TXT/` as `.txt` files, then uploaded to the `dcterms:abstract` field in Omeka S.
+Summaries are saved to `Summaries_FR_TXT/` as `.txt` files, then uploaded to the `bibo:shortDescription` field in Omeka S — the AI-summary property for articles and documents, exported to Hugging Face as `descriptionAI`.
+
+> `dcterms:abstract` is a different field: it holds publisher/author abstracts on issues and scholarly references, and the HF `documents` subset exports it as a separate `abstract` column. Do not write generated summaries there.
+
+Each summary carries an `iwac:summaryModel` value annotation naming the model that produced it, linked to its authority item (class 244, item set 267). Step 03 prompts for the model, or takes `--model`:
+
+```bash
+python 03_omeka_update_summaries.py --model gpt-5.6-luna --dry-run
+```
+
+Available keys come from `AI_MODEL_ITEMS` in `common/iwac_config.py`. Add a new one there after creating its authority item in Omeka.
 
 ## Limitations
 

@@ -116,7 +116,7 @@ except APIError as e:
 `common/iwac_config.py` holds constants specific to the IWAC Omeka S instance so they live in one place instead of being copy-pasted across scripts:
 - Authority item sets: `SPATIAL_AUTHORITY_ITEM_SETS`, `SUBJECT_AUTHORITY_ITEM_SETS`, `TOPIC_AUTHORITY_ITEM_SETS`
 - Property IDs: `DCTERMS_TITLE_PROPERTY_ID`, `DCTERMS_SUBJECT_PROPERTY_ID`, `DCTERMS_TYPE_PROPERTY_ID`, `DCTERMS_SPATIAL_PROPERTY_ID`, `BIBO_CONTENT_PROPERTY_ID`, etc.
-- `AI_MODEL_ITEMS` and `model_annotation_value()` — items/values annotating which AI model produced content
+- `AI_MODEL_ITEMS`, `select_model_key()` and `model_annotation_value()` — the authority items, interactive picker, and value object used to annotate which AI model produced content (`iwac:ocrModel` / `iwac:summaryModel`)
 - `item_api_url(base_url, item_id)` — builds an item's API `@id` (never hardcode `https://islam.zmo.de/...` URLs)
 
 ### Other Shared Helpers

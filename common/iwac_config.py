@@ -11,7 +11,7 @@ installations — resolve unknown terms at runtime with
 ``OmekaClient.get_property_id()`` instead of guessing.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # Authority item sets (used by NER reconciliation and reference indexing)
@@ -42,13 +42,21 @@ IWAC_SUMMARY_MODEL_PROPERTY_ID = 313  # iwac:summaryModel ("AI Model - Summary")
 # "Notice d'autorité" authority-record type item (linked via customvocab:6)
 AUTHORITY_RECORD_TYPE_ITEM_ID = 67568
 
-# AI model annotation items (class 244, "Notice d'autorité").
+# AI model annotation items (class 244, "Notice d'autorité", item set 267).
 # display_title mirrors the actual Omeka item title.
+#
+# Keys match the ``common.llm_provider`` registry keys where one exists, so a
+# pipeline can map the model it just ran straight to its annotation item.
+#
+# Superseded models keep their Omeka items so historical annotations still
+# resolve (e.g. 78053 "Gemini 3.0 flash", 78630 "Gemini 3.5 flash"); they are
+# dropped from this dict once no longer offered for new writes.
 AI_MODEL_ITEMS: Dict[str, Dict] = {
     "claude-opus": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
     "gemini-pro": {"item_id": 78536, "display_title": "Gemini 3.1 pro"},
-    "gemini-flash": {"item_id": 78630, "display_title": "Gemini 3.5 flash"},
+    "gemini-flash": {"item_id": 79608, "display_title": "Gemini 3.6 flash"},
     "gemini-flash-lite": {"item_id": 78631, "display_title": "Gemini 3.1 flash lite"},
+    "gpt-5.6-luna": {"item_id": 79609, "display_title": "GPT-5.6 Luna"},
 }
 
 
@@ -59,6 +67,28 @@ def item_api_url(base_url: str, item_id: int) -> str:
     URLs so that a changed ``OMEKA_BASE_URL`` keeps working.
     """
     return f"{base_url.rstrip('/')}/items/{item_id}"
+
+
+def select_model_key(default: Optional[str] = None) -> Optional[str]:
+    """Prompt for the AI model that produced the content being written.
+
+    Returns the chosen ``AI_MODEL_ITEMS`` key, or ``None`` if the input was
+    invalid. Plain print/input keeps this module dependency-free, matching
+    ``llm_provider.prompt_for_model_choice``.
+    """
+    keys = list(AI_MODEL_ITEMS)
+    default_index = keys.index(default) + 1 if default in AI_MODEL_ITEMS else 1
+
+    print("Select the AI model that produced this content:")
+    for number, key in enumerate(keys, start=1):
+        model = AI_MODEL_ITEMS[key]
+        print(f"  {number}) {model['display_title']} (item {model['item_id']})")
+
+    choice = input(f"Enter choice [{default_index}]: ").strip() or str(default_index)
+    if choice.isdigit() and 1 <= int(choice) <= len(keys):
+        return keys[int(choice) - 1]
+    print("Invalid choice.")
+    return None
 
 
 def model_annotation_value(
