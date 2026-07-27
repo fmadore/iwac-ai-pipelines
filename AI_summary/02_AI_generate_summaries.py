@@ -1,4 +1,4 @@
-"""French Summary Generation using OpenAI GPT-5 mini or Gemini Flash.
+"""French Summary Generation using OpenAI GPT-5.6 Luna or Gemini Flash.
 
 Optimized for cost-effective document summarization with low reasoning effort.
 """
@@ -34,6 +34,11 @@ from common.llm_provider import (  # noqa: E402
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 load_dotenv()
 console = Console()
+
+# Restricted to the cost-effective tiers — summarization does not need a flagship.
+ALLOWED_MODEL_KEYS = ["gpt-5.6-luna", "gemini-flash", "ministral-14b"]
+# Retired keys still accepted on the CLI; normalize_model_key() maps them forward.
+LEGACY_MODEL_KEYS = ["gpt-5-mini"]
 
 # ------------------------------------------------------------------
 # Prompt Loading
@@ -132,7 +137,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate French summaries for extracted texts")
     parser.add_argument(
         "--model",
-        choices=["gpt-5-mini", "gemini-flash", "ministral-14b"],
+        choices=ALLOWED_MODEL_KEYS + LEGACY_MODEL_KEYS,
         help="Model key; prompts interactively when omitted",
     )
     args = parser.parse_args()
@@ -153,7 +158,7 @@ def main():
         console.print()
         
         # Get model selection (restricted to cost-effective models)
-        model_option = get_model_option(args.model, allowed_keys=["gpt-5-mini", "gemini-flash", "ministral-14b"])
+        model_option = get_model_option(args.model, allowed_keys=ALLOWED_MODEL_KEYS)
         
         # Configure for cost-effective summarization
         config = LLMConfig(

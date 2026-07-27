@@ -38,7 +38,7 @@ python 03_Omeka_update.py
 |-------|----------|-------|------|
 | `gemini-flash` | Google | Fast | Low |
 | `gemma-4` | Google (Gemma 4 31B, open-weights via Gemini API) | Fast | Low |
-| `gpt-5-mini` | OpenAI | Fast | Low |
+| `gpt-5.6-luna` | OpenAI | Fast | Low |
 | `mistral-large` | Mistral | Medium | Medium |
 | `ministral-14b` | Mistral | Fast | Low |
 

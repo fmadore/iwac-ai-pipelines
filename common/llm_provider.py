@@ -48,8 +48,14 @@ PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_MISTRAL = "mistral"
 
-DEFAULT_OPENAI_MODEL = "gpt-5-mini"
-OPENAI_FULL_MODEL = "gpt-5.1"
+# OpenAI GPT-5.6 family (released 2026-07-09): three durable capability tiers
+# replacing the old numbered lineup. There is no mini/nano variant in this
+# generation. The bare "gpt-5.6" id routes to Sol.
+OPENAI_SOL_MODEL = "gpt-5.6-sol"      # flagship   — $5 / $30 per 1M tokens
+OPENAI_TERRA_MODEL = "gpt-5.6-terra"  # balanced   — $2.50 / $15 per 1M tokens
+OPENAI_LUNA_MODEL = "gpt-5.6-luna"    # high-volume — $1 / $6 per 1M tokens
+DEFAULT_OPENAI_MODEL = OPENAI_LUNA_MODEL
+OPENAI_FULL_MODEL = OPENAI_SOL_MODEL
 DEFAULT_GEMINI_FLASH = "gemini-flash-latest"  # rolling alias -> newest stable Flash
 DEFAULT_GEMINI_FLASH_LITE = "gemini-flash-lite-latest"  # rolling alias -> newest stable Flash-Lite
 DEFAULT_GEMINI_PRO = "gemini-pro-latest"  # rolling alias -> newest stable Pro
@@ -66,7 +72,7 @@ class ModelOption:
     description: str
     default_temperature: float = 0.2
     # OpenAI-specific defaults
-    default_reasoning_effort: str = "low"  # "low", "medium", "high"
+    default_reasoning_effort: str = "low"  # GPT-5.6: none/low/medium/high/xhigh/max
     default_text_verbosity: str = "low"    # "low", "medium", "high"
     # Gemini-specific defaults
     default_thinking_level: Optional[str] = None  # For Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
@@ -78,7 +84,11 @@ class LLMConfig:
     Scripts can create instances of this class to customize behavior per use case.
     
     OpenAI parameters:
-        reasoning_effort: "low", "medium", or "high" - controls reasoning depth
+        reasoning_effort: controls reasoning depth. GPT-5.6 accepts "none", "low",
+                          "medium", "high", "xhigh" or "max" (API default "medium";
+                          this project defaults to "low" for cost). When migrating,
+                          OpenAI advises testing your current level and one lower —
+                          GPT-5.6 often holds quality with fewer reasoning tokens.
         text_verbosity: "low", "medium", or "high" - controls response length
     
     Gemini parameters:
@@ -115,19 +125,26 @@ class LLMConfig:
         })
 
 MODEL_REGISTRY: Dict[str, ModelOption] = {
-    "gpt-5-mini": ModelOption(
-        key="gpt-5-mini",
+    "gpt-5.6-luna": ModelOption(
+        key="gpt-5.6-luna",
         provider=PROVIDER_OPENAI,
-        model=DEFAULT_OPENAI_MODEL,
-        label="ChatGPT (GPT-5 mini)",
-        description="OpenAI Responses API — cost-optimized gpt-5-mini"
+        model=OPENAI_LUNA_MODEL,
+        label="ChatGPT (GPT-5.6 Luna)",
+        description="OpenAI Responses API — cost-optimized tier ($1/$6 per 1M tokens)"
     ),
-    "gpt-5.1": ModelOption(
-        key="gpt-5.1",
+    "gpt-5.6-terra": ModelOption(
+        key="gpt-5.6-terra",
         provider=PROVIDER_OPENAI,
-        model=OPENAI_FULL_MODEL,
-        label="ChatGPT (GPT-5.1 full)",
-        description="OpenAI Responses API — flagship gpt-5.1"
+        model=OPENAI_TERRA_MODEL,
+        label="ChatGPT (GPT-5.6 Terra)",
+        description="OpenAI Responses API — balanced tier ($2.50/$15 per 1M tokens)"
+    ),
+    "gpt-5.6-sol": ModelOption(
+        key="gpt-5.6-sol",
+        provider=PROVIDER_OPENAI,
+        model=OPENAI_SOL_MODEL,
+        label="ChatGPT (GPT-5.6 Sol)",
+        description="OpenAI Responses API — flagship tier ($5/$30 per 1M tokens)"
     ),
     "gemini-flash": ModelOption(
         key="gemini-flash",
@@ -187,17 +204,30 @@ MODEL_ALIASES = {
     "gemini-flash-lite-3.1": "gemini-flash-lite",
     "gemini-3.1-flash-lite": "gemini-flash-lite",  # pinned (explicit version)
     "gemini-3.1-flash-lite-preview": "gemini-flash-lite",  # legacy preview id
-    "openai": "gpt-5-mini",  # Legacy generic name
-    "openai:gpt-5-mini": "gpt-5-mini",
-    "openai:gpt-5.1": "gpt-5.1",
-    # Legacy aliases for decommissioned models/flags
-    "openai-mini": "gpt-5-mini",
-    "gpt-5.1-mini": "gpt-5-mini",  # Legacy incorrect naming
-    "openai:gpt-5.1-mini": "gpt-5-mini",
-    "gpt-5": "gpt-5.1",  # gpt-5 is previous flagship, maps to 5.1
-    "openai:gpt-5": "gpt-5.1",
-    "openai-5": "gpt-5.1",  # Legacy key name
-    "openai-5.1": "gpt-5.1",  # Legacy key name
+    # OpenAI GPT-5.6 tier aliases
+    "openai": "gpt-5.6-luna",  # Generic name -> cost-optimized tier
+    "gpt-5.6": "gpt-5.6-sol",  # Bare id routes to Sol, per OpenAI
+    "sol": "gpt-5.6-sol",
+    "terra": "gpt-5.6-terra",
+    "luna": "gpt-5.6-luna",
+    "openai:gpt-5.6": "gpt-5.6-sol",
+    "openai:gpt-5.6-sol": "gpt-5.6-sol",
+    "openai:gpt-5.6-terra": "gpt-5.6-terra",
+    "openai:gpt-5.6-luna": "gpt-5.6-luna",
+    # Legacy OpenAI keys. The GPT-5/5.1 snapshots shut down 2026-10-23; these
+    # keep older invocations, docs and muscle memory working.
+    "gpt-5-mini": "gpt-5.6-luna",
+    "openai:gpt-5-mini": "gpt-5.6-luna",
+    "openai-mini": "gpt-5.6-luna",
+    "gpt-5-nano": "gpt-5.6-luna",
+    "gpt-5.1-mini": "gpt-5.6-luna",  # Legacy incorrect naming
+    "openai:gpt-5.1-mini": "gpt-5.6-luna",
+    "gpt-5.1": "gpt-5.6-sol",  # Previous flagship
+    "openai:gpt-5.1": "gpt-5.6-sol",
+    "gpt-5": "gpt-5.6-sol",
+    "openai:gpt-5": "gpt-5.6-sol",
+    "openai-5": "gpt-5.6-sol",  # Legacy key name
+    "openai-5.1": "gpt-5.6-sol",  # Legacy key name
     "gemini-flash-latest": "gemini-flash",
     "gemini-3.5-flash": "gemini-flash",  # pinned (explicit version)
     "gemini-3-flash-preview": "gemini-flash",  # legacy (Gemini 3 Flash)

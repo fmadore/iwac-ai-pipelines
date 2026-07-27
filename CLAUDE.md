@@ -32,7 +32,7 @@ python 03_script.py    # Step 3 (typically: update Omeka)
 Most scripts support both interactive mode (prompts guide selection) and CLI flags:
 ```bash
 python 02_AI_generate_summaries.py --model gemini-flash
-python 01_NER_AI.py --item-set-id 123 --model gpt-5-mini --async --batch-size 20
+python 01_NER_AI.py --item-set-id 123 --model gpt-5.6-luna --async --batch-size 20
 ```
 
 ## Architecture
@@ -60,7 +60,7 @@ Text-only pipelines **must** route through `common/llm_provider.py`:
 ```python
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, summary_from_option
 
-model_option = get_model_option(args.model, allowed_keys=["gemini-flash", "gpt-5-mini"])
+model_option = get_model_option(args.model, allowed_keys=["gemini-flash", "gpt-5.6-luna"])
 config = LLMConfig(reasoning_effort="medium", thinking_level="low")
 llm_client = build_llm_client(model_option, config)
 response = llm_client.generate(system_prompt, user_prompt)
@@ -132,8 +132,9 @@ Audio, vision, HTR, and OCR scripts use provider clients directly because they r
 
 | Key | Provider | Use Case |
 |-----|----------|----------|
-| `gpt-5-mini` | OpenAI | Fast, cost-effective text processing |
-| `gpt-5.1` | OpenAI | Higher quality, slower |
+| `gpt-5.6-luna` | OpenAI | GPT-5.6 Luna — cost-optimized tier, fast, high-volume text processing ($1/$6 per 1M tokens) |
+| `gpt-5.6-terra` | OpenAI | GPT-5.6 Terra — balanced tier ($2.50/$15 per 1M tokens) |
+| `gpt-5.6-sol` | OpenAI | GPT-5.6 Sol — flagship tier, highest quality, slower ($5/$30 per 1M tokens) |
 | `gemini-flash` | Google | Gemini Flash — fast multimodal, cost-effective |
 | `gemini-flash-lite` | Google | Gemini Flash-Lite — cheapest, lowest latency |
 | `gemini-pro` | Google | Best quality (latest Pro), more expensive |
@@ -141,11 +142,13 @@ Audio, vision, HTR, and OCR scripts use provider clients directly because they r
 | `mistral-large` | Mistral | Good quality, moderate cost |
 | `ministral-14b` | Mistral | Budget option ($0.2/M tokens) |
 
-Aliases: `openai` → `gpt-5-mini`, `gemini` → `gemini-flash`, `gemma` → `gemma-4`, `mistral` → `mistral-large`
+Aliases: `openai` → `gpt-5.6-luna`, `luna`/`terra`/`sol` → the matching tier, `gpt-5.6` → `gpt-5.6-sol`, `gemini` → `gemini-flash`, `gemma` → `gemma-4`, `mistral` → `mistral-large`
+
+The retired OpenAI keys still resolve — `gpt-5-mini` → `gpt-5.6-luna`, `gpt-5.1`/`gpt-5` → `gpt-5.6-sol` — but their snapshots shut down on 2026-10-23, so use the tier keys in new code.
 
 ### LLMConfig Parameters
 
-- **OpenAI:** `reasoning_effort` ("low"/"medium"/"high"), `text_verbosity` ("low"/"medium"/"high")
+- **OpenAI:** `reasoning_effort` (GPT-5.6 accepts "none"/"low"/"medium"/"high"/"xhigh"/"max"; API default "medium", this project defaults to "low"), `text_verbosity` ("low"/"medium"/"high")
 - **Gemini 3:** `thinking_level` — Flash: "minimal"/"low"/"medium"/"high"; Pro: "low"/"high" — cannot be disabled
 - **Mistral:** `temperature` (0.0-1.0)
 

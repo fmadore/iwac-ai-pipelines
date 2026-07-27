@@ -163,8 +163,9 @@ The provider supports these models via the `MODEL_REGISTRY`:
 
 | Key | Provider | Model ID | Label | Description |
 |-----|----------|----------|-------|-------------|
-| `gpt-5-mini` | OpenAI | `gpt-5-mini` | ChatGPT (GPT-5 mini) | Cost-optimized, fast |
-| `gpt-5.1` | OpenAI | `gpt-5.1` | ChatGPT (GPT-5.1 full) | Flagship model |
+| `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Cost-optimized tier, $1/$6 per 1M tokens |
+| `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2.50/$15 per 1M tokens |
+| `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Flagship tier, $5/$30 per 1M tokens |
 | `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Fast, cost-effective |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality |
@@ -177,10 +178,18 @@ For convenience, these aliases are also supported:
 
 | Alias | Resolves To |
 |-------|-------------|
-| `openai` | `gpt-5-mini` |
+| `openai` | `gpt-5.6-luna` |
+| `luna` | `gpt-5.6-luna` |
+| `terra` | `gpt-5.6-terra` |
+| `sol` | `gpt-5.6-sol` |
+| `gpt-5.6` | `gpt-5.6-sol` |
 | `gemini` | `gemini-flash` |
 | `mistral` | `mistral-large` |
 | `ministral` | `ministral-14b` |
+
+The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-5.6-luna`, and
+`gpt-5.1` / `gpt-5` → `gpt-5.6-sol`. Their underlying snapshots shut down on
+2026-10-23, so prefer the new tier keys in new code.
 
 See `MODEL_ALIASES` in `llm_provider.py` for the full list of legacy aliases.
 
@@ -492,7 +501,7 @@ A: OpenAI's Responses API uses fixed configuration. Use `reasoning_effort` and `
 A: Enable debug logging: `logging.basicConfig(level=logging.DEBUG)` to see the actual parameters sent to each provider.
 
 **Q: What model keys can I use with `--model`?**  
-A: Use registry keys like `gpt-5-mini`, `gpt-5.1`, `gemini-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `gemini`, `mistral` also work.
+A: Use registry keys like `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
 
 **Q: How do I restrict which models a pipeline can use?**  
 A: Use `allowed_keys` in `get_model_option()`:

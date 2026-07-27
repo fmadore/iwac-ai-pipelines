@@ -69,7 +69,7 @@ console = Console()
 # recorded under the iwac:mistral* Omeka properties come from Ministral 14B.
 MODEL_KEYS = {
     "gemini": "gemini-flash",
-    "chatgpt": "gpt-5-mini",
+    "chatgpt": "gpt-5.6-luna",
     "mistral": "ministral-14b",
 }
 

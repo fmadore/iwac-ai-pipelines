@@ -15,7 +15,8 @@ The approach:
 Supports multiple models via --model flag:
 - gemini-flash (default): Gemini Flash - fast, cost-effective
 - gemini-pro: Gemini Pro - highest quality
-- gpt-5-mini: OpenAI GPT-5 mini - cost-optimized
+- gpt-5.6-luna: OpenAI GPT-5.6 Luna - cost-optimized tier
+- gpt-5.6-sol: OpenAI GPT-5.6 Sol - flagship tier
 - mistral-large: Mistral Large 3 - multimodal MoE
 """
 
@@ -61,11 +62,13 @@ console = Console()
 ALLOWED_MODELS = [
     "gemini-flash",
     "gemini-pro",
-    "gpt-5-mini",
-    "gpt-5.1",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
     "mistral-large",
     "ministral-14b",
 ]
+# Retired keys still accepted on the CLI; normalize_model_key() maps them forward.
+LEGACY_MODELS = ["gpt-5-mini", "gpt-5.1"]
 
 # ALTO XML namespaces (common versions)
 ALTO_NAMESPACES = {
@@ -643,7 +646,7 @@ Examples:
     )
     parser.add_argument(
         "--model",
-        choices=ALLOWED_MODELS,
+        choices=ALLOWED_MODELS + LEGACY_MODELS,
         default=None,
         help="AI model to use for correction (default: interactive selection)",
     )

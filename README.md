@@ -94,7 +94,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 
 | Provider | Key | Notes |
 |----------|-----|-------|
-| OpenAI | `gpt-5-mini`, `gpt-5.1` | Text pipelines only |
+| OpenAI | `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol` | Text pipelines only. GPT-5.6 tiers: Luna (cheapest), Terra (balanced), Sol (flagship). Legacy `gpt-5-mini` / `gpt-5.1` keys still resolve to Luna / Sol. |
 | Gemini | `gemini-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
@@ -120,7 +120,6 @@ The approach assumes you have digitized materials and need to make them searchab
 ## Related Resources
 
 - [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) — The digital collection
-- [IWAC Dashboard](https://fmadore.github.io/IWAC-Dashboard/) — Interactive exploration interface
 - [AI-NER-Validator](https://github.com/fmadore/AI-NER-Validator) — Web app for reviewing and validating NER results
 - [Leibniz-Zentrum Moderner Orient](https://www.zmo.de/en) — Host institution
 

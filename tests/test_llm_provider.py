@@ -12,10 +12,26 @@ from common.llm_provider import (
 
 def test_alias_normalization():
     assert normalize_model_key("gemini") == "gemini-flash"
-    assert normalize_model_key("openai") == "gpt-5-mini"
+    assert normalize_model_key("openai") == "gpt-5.6-luna"
     assert normalize_model_key("mistral") == "mistral-large"
     assert normalize_model_key("GEMINI") == "gemini-flash"
     assert normalize_model_key(None) is None
+
+
+def test_gpt_56_tier_aliases():
+    assert normalize_model_key("luna") == "gpt-5.6-luna"
+    assert normalize_model_key("terra") == "gpt-5.6-terra"
+    assert normalize_model_key("sol") == "gpt-5.6-sol"
+    # The bare id routes to Sol, matching OpenAI's own routing.
+    assert normalize_model_key("gpt-5.6") == "gpt-5.6-sol"
+
+
+def test_retired_openai_keys_map_forward():
+    # GPT-5/5.1 snapshots shut down 2026-10-23; old keys must keep resolving.
+    assert normalize_model_key("gpt-5-mini") == "gpt-5.6-luna"
+    assert normalize_model_key("gpt-5.1") == "gpt-5.6-sol"
+    assert normalize_model_key("gpt-5") == "gpt-5.6-sol"
+    assert get_model_option("gpt-5-mini").model == "gpt-5.6-luna"
 
 
 def test_get_model_option_by_key():
@@ -31,7 +47,7 @@ def test_get_model_option_via_alias():
 def test_allowed_keys_accept_aliases():
     # allowed_keys entries are normalized too: 'gemini' used to be rejected
     # even when the resolved key was allowed.
-    option = get_model_option("gemini", allowed_keys=["gemini-flash", "gpt-5-mini"])
+    option = get_model_option("gemini", allowed_keys=["gemini-flash", "gpt-5.6-luna"])
     assert option.key == "gemini-flash"
 
 
