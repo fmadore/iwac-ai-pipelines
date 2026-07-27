@@ -1,18 +1,19 @@
 import csv
 import os
 import sys
+from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich import box
 
 # Initialize rich console
 console = Console()
 
 # Shared Omeka client
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
+from common.console_utils import standard_progress
 
 
 def update_item_fields(client: OmekaClient, item_id: str, spatial_ids_str: str | None, subject_ids_str: str | None) -> dict:
@@ -136,14 +137,7 @@ def main():
 
         console.rule("[bold cyan]Processing Items")
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-            console=console
-        ) as progress:
+        with standard_progress(console) as progress:
             task = progress.add_task("[cyan]Updating Omeka items...", total=len(rows_to_process))
 
             for row in rows_to_process:

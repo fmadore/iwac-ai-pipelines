@@ -16,8 +16,7 @@ pytest tests/
 ruff check .
 ```
 
-Three tests in `tests/test_pdf_downloader.py` fail on Windows — a helper opens
-`/dev/null`. Pre-existing, unrelated to whatever you are changing.
+The test suite is green on Windows and Linux; a red test is a real signal.
 
 ## Layout
 
@@ -41,9 +40,13 @@ Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provide
 |---|---|
 | `iwac_config.py` | IWAC-instance constants: property IDs, authority item sets, `AI_MODEL_ITEMS` |
 | `gemini_utils.py` | Gemini plumbing for multimodal scripts: generation config, Files API upload, text extraction that skips `thought` parts |
+| `gemini_page_processor.py` | The page-by-page Gemini PDF loop shared by OCR and HTR: inline→Files-API fallback, retry policy, `finish_reason` handling, page markers, batch driver |
+| `omeka_text_updater.py` | The `03` write step shared by summary/OCR/correction/transcription: change detection, `@annotation` re-attachment, `--dry-run`, confirmation gate |
+| `console_utils.py` | `standard_progress()`, `key_value_table()`, `count_table()` — one definition of the rich furniture every pipeline prints |
+| `downloader.py` | `stream_download()` — streaming download via a `.part` temp file, used by the PDF and media downloaders |
 | `prompt_loader.py` | Discovery and interactive selection for pipelines holding several `prompts/*.md` |
 | `pdf_downloader.py` | Shared Omeka PDF download step (`AI_ocr_extraction/01`, `AI_summary_issue/01`) |
-| `pdf_utils.py` | Page-by-page PDF extraction and page counts |
+| `pdf_utils.py` | `PdfPageSource` (parse once, serve many pages) plus one-off page extraction and page counts |
 | `reconciliation.py` | Fuzzy matching of extracted entities against authority records |
 
 ## Architecture rules
@@ -57,6 +60,11 @@ Never instantiate `openai.OpenAI()`, `google.genai.Client()`, or
 `mistralai.Mistral()` in a text script. Models and their config defaults live in
 `MODEL_REGISTRY` / `MODEL_ALIASES` — read them there rather than from a table in a
 doc, and add new models there first so every pipeline picks them up.
+
+**Pipelines pick a model *tier*, not a list of keys.** `TEXT_ECONOMY_MODELS`,
+`TEXT_EXTENDED_MODELS`, `TEXT_FULL_MODELS` and `GEMINI_DOCUMENT_MODELS` live in
+`llm_provider`; a pipeline's `ALLOWED_MODELS` should be one of them. Retiring a
+model is then a one-line change instead of a grep across five pipelines.
 
 **Multimodal pipelines are the exception** and call provider SDKs directly, because
 they need capabilities the shared provider does not expose. They must still use
@@ -84,8 +92,10 @@ reduce payload size — a timeout is the better problem to have.
 **`upsert_property_value()` drops `@annotation`.** It rebuilds the value object from
 five keys when appending to a property that has no literal yet, so value annotations
 (`iwac:summaryModel`, `iwac:ocrModel` — which AI model produced the content) are
-silently lost. Re-attach them explicitly after calling it. Before any bulk write,
-dump the pre-write payloads to JSON; that backup is the only route back.
+silently lost. `common/omeka_text_updater.apply_text_value()` re-attaches them and is
+what the `03` steps use; call `upsert_property_value()` directly only if you re-attach
+the annotation yourself. Before any bulk write, dump the pre-write payloads to JSON;
+that backup is the only route back.
 
 **AI summaries go in `bibo:shortDescription`**, exported to Hugging Face as
 `descriptionAI`. Not `dcterms:abstract`, which holds publisher abstracts on issues
@@ -102,7 +112,9 @@ template 3, item set 267, `dcterms:type` → "Notice d'autorité").
 
 Prompts live beside their pipeline as `.md` files, loaded at runtime. Structured
 extraction uses `generate_structured()` with a Pydantic schema rather than parsing
-JSON by hand. Terminal output uses `rich`. Beyond that, match the surrounding code.
+JSON by hand. Terminal output uses `rich`, via `common/console_utils.py` for
+progress bars and the standard tables. Beyond that, match the surrounding code.
 
-Model keys are duplicated in each pipeline's `--model` choices, so a registry change
-means grepping for the old key across pipelines, READMEs, and `.env.example`.
+Scripts put the repo root on `sys.path` with one canonical line —
+`sys.path.insert(0, str(Path(__file__).resolve().parent.parent))`. `insert`, not
+`append`: with `append`, a same-named module earlier on the path shadows `common`.

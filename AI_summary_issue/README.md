@@ -79,6 +79,12 @@ rolling `gemini-pro-latest` / `gemini-flash-latest` aliases, so they always trac
 the newest stable models. The Gemini version produces significantly better
 results than Mistral; use Mistral only for experimentation.
 
+The Mistral version extracts each page in a single request, passing the schema as
+`document_annotation_format` on `ocr.process`. It previously called `ocr.process`
+for markdown and then `chat.parse` to structure it — twice the latency and twice
+the rate-limit pressure per page, with the layout information flattened away in
+between.
+
 ## Output
 
 ```

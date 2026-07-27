@@ -24,6 +24,18 @@ python 02_gemini_ocr_processor.py   # Extract text (or use Mistral version)
 python 03_omeka_content_updater.py  # Update Omeka S items
 ```
 
+Step 03 prompts for the OCR model (recorded as an `iwac:ocrModel` annotation) and
+asks for confirmation before writing. Preview first with `--dry-run`; skip the
+prompts with `--model` and `--yes`:
+
+```bash
+python 03_omeka_content_updater.py --model gemini-flash --dry-run
+```
+
+Pages are sent at `ULTRA_HIGH` media resolution, which is only available per-Part
+— `GenerateContentConfig` caps at `HIGH`. Archival newspaper scans are dense
+enough for the difference to show.
+
 ## Provider Comparison
 
 | Provider | Approach | Best For |

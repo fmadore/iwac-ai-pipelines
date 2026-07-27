@@ -14,13 +14,14 @@ The script will automatically detect and join segments in numerical order.
 
 Usage:
     python 03_omeka_transcription_updater.py
+    python 03_omeka_transcription_updater.py --dry-run
 
 Requirements:
     - Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
     - Transcriptions directory with .txt files following the naming convention
 """
 
-import os
+import argparse
 import re
 import sys
 import logging
@@ -31,7 +32,6 @@ from collections import defaultdict
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich import box
 
 # Initialize rich console
@@ -41,12 +41,16 @@ console = Console()
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 # Shared Omeka client
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.iwac_config import BIBO_CONTENT_PROPERTY_ID, DCTERMS_IDENTIFIER_PROPERTY_ID
 from common.omeka_client import OmekaClient
+from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
 
-# Property IDs (may vary by Omeka S installation)
-BIBO_CONTENT_PROPERTY_ID = 91  # bibo:content
-DCTERMS_IDENTIFIER_PROPERTY_ID = 10  # dcterms:identifier
+CONTENT_TARGET = PropertyTarget(
+    term='bibo:content',
+    property_id=BIBO_CONTENT_PROPERTY_ID,
+    property_label='content',
+)
 
 
 def search_item_by_identifier(client: OmekaClient, identifier: str) -> Optional[Dict]:
@@ -64,33 +68,6 @@ def search_item_by_identifier(client: OmekaClient, identifier: str) -> Optional[
     """
     items = client.search_items_by_property(DCTERMS_IDENTIFIER_PROPERTY_ID, identifier, per_page=1)
     return items[0] if items else None
-
-
-def update_item_content(client: OmekaClient, item_id: int, content: str) -> bool:
-    """
-    Update an Omeka S item with new bibo:content while preserving all other metadata.
-
-    Args:
-        client: OmekaClient instance
-        item_id: The ID of the item to update
-        content: The transcription content to add/update
-
-    Returns:
-        True if update succeeded, False otherwise
-    """
-    item_data = client.get_item(item_id)
-    if not item_data:
-        logging.error(f"Could not retrieve item {item_id} for update")
-        return False
-
-    changed = OmekaClient.upsert_property_value(
-        item_data, 'bibo:content', BIBO_CONTENT_PROPERTY_ID, content,
-        property_label='content',
-    )
-    if not changed:
-        return True  # already up to date
-
-    return client.update_item(item_id, item_data)
 
 
 class TranscriptionProcessor:
@@ -204,51 +181,55 @@ def setup_logging(log_folder: Path) -> None:
     )
 
 
-def print_summary(results: Dict[str, str]) -> None:
-    """Print a summary of the update results."""
-    console.print()
-    console.rule("[bold]Update Summary", style="cyan")
+def resolve_updates(
+    client: OmekaClient,
+    processor: "TranscriptionProcessor",
+    groups: Dict[str, List[Tuple[Path, Optional[int]]]],
+) -> List[TextUpdate]:
+    """Resolve each identifier to an item and join its transcription segments.
 
-    success_count = sum(1 for status in results.values() if status == 'success')
-    not_found_count = sum(1 for status in results.values() if status == 'not_found')
-    failed_count = sum(1 for status in results.values() if status == 'failed')
+    Unlike the other text updaters, files here are named after a
+    dcterms:identifier rather than an item ID, so the lookup happens up front.
+    Unresolved identifiers keep ``item_id=None`` and are reported as
+    ``not_found`` by the shared runner.
+    """
+    updates: List[TextUpdate] = []
+    with console.status("[cyan]Matching identifiers to Omeka items...[/]"):
+        for identifier, files in groups.items():
+            item = search_item_by_identifier(client, identifier)
+            if not item:
+                logging.warning(f"No item found with identifier: {identifier}")
+                updates.append(TextUpdate(label=identifier, item_id=None, text=""))
+                continue
 
-    # Create summary table
-    summary_table = Table(title="Results", box=box.ROUNDED)
-    summary_table.add_column("Status", style="dim")
-    summary_table.add_column("Count", justify="right")
-    summary_table.add_row("Total identifiers processed", str(len(results)))
-    summary_table.add_row("[green]Successfully updated[/]", f"[green]{success_count}[/]")
-    summary_table.add_row("[yellow]Item not found[/]", f"[yellow]{not_found_count}[/]")
-    summary_table.add_row("[red]Failed to update[/]", f"[red]{failed_count}[/]")
-    console.print(summary_table)
-
-    if not_found_count > 0:
-        console.print()
-        not_found_table = Table(title="[yellow]Identifiers Not Found in Omeka[/]", box=box.ROUNDED)
-        not_found_table.add_column("Identifier", style="yellow")
-        for identifier, status in results.items():
-            if status == 'not_found':
-                not_found_table.add_row(identifier)
-        console.print(not_found_table)
-
-    if failed_count > 0:
-        console.print()
-        failed_table = Table(title="[red]Failed Updates[/]", box=box.ROUNDED)
-        failed_table.add_column("Identifier", style="red")
-        for identifier, status in results.items():
-            if status == 'failed':
-                failed_table.add_row(identifier)
-        console.print(failed_table)
+            item_id = item.get('o:id')
+            logging.info(f"Found item {item_id} for identifier {identifier}")
+            updates.append(TextUpdate(
+                label=identifier,
+                item_id=int(item_id),
+                text=processor.read_and_join_transcriptions(files),
+            ))
+    return updates
 
 
-def main():
+def main() -> int:
     """Main function to process transcriptions and update Omeka S items."""
-    # Setup
+    parser = argparse.ArgumentParser(
+        description="Update Omeka S items with audio transcriptions (bibo:content)."
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Fetch each item and report what would change, but write nothing.",
+    )
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="Skip the interactive confirmation before writing.",
+    )
+    args = parser.parse_args()
+
     setup_logging(SCRIPT_DIR / 'log')
     transcriptions_folder = SCRIPT_DIR / 'Transcriptions'
 
-    # Display welcome banner
     console.print(Panel(
         "Process transcription files and update Omeka S items with transcribed content",
         title="Omeka S Transcription Updater",
@@ -256,103 +237,57 @@ def main():
     ))
 
     try:
-        # Initialize shared Omeka client
         client = OmekaClient.from_env()
         processor = TranscriptionProcessor(transcriptions_folder)
 
-        # Get grouped transcription files
         with console.status("[cyan]Scanning transcription files...[/]"):
             groups = processor.get_transcription_groups()
 
         if not groups:
             console.print(f"\n[yellow]No transcription files found in: [cyan]{transcriptions_folder}[/][/]")
-            return
+            return 0
 
-        # Display files table
         files_table = Table(title="Identifiers to Process", box=box.ROUNDED)
         files_table.add_column("Identifier", style="cyan")
         files_table.add_column("Segments", justify="right", style="green")
-
         for identifier, files in groups.items():
             file_count = len(files)
-            segment_info = f"{file_count} segment(s)" if file_count > 1 else "1 file"
-            files_table.add_row(identifier, segment_info)
-
+            files_table.add_row(identifier, f"{file_count} segment(s)" if file_count > 1 else "1 file")
         console.print(files_table)
         console.print(f"\n[bold]Total:[/] [cyan]{len(groups)}[/] unique identifier(s)")
 
-        # Confirm before proceeding
-        console.print("\n[dim]This will update the bibo:content property for matching Omeka S items.[/]")
-        confirm = console.input("[bold]Continue? (y/n):[/] ").strip().lower()
-        if confirm != 'y':
-            console.print("[yellow]Operation cancelled.[/]")
-            return
+        updates = resolve_updates(client, processor, groups)
+        unresolved = sum(1 for u in updates if u.item_id is None)
+        if unresolved:
+            console.print(f"[yellow]⚠[/] {unresolved} identifier(s) had no matching Omeka item")
 
-        console.print()
-        console.rule("[bold]Processing Transcriptions", style="cyan")
-        console.print()
+        stats = run_text_updates(
+            client, updates, CONTENT_TARGET,
+            console=console,
+            dry_run=args.dry_run,
+            require_confirmation=not args.yes,
+            extra_confirm_lines=[f"Source folder:    {transcriptions_folder}"],
+            description="Updating transcriptions...",
+        )
+        if not stats:
+            return 1  # operator declined
 
-        results = {}
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("[cyan]Updating items...", total=len(groups))
-
-            for identifier, files in groups.items():
-                logging.info(f"Processing identifier: {identifier}")
-
-                # Search for the item in Omeka
-                item = search_item_by_identifier(client, identifier)
-
-                if not item:
-                    logging.warning(f"No item found with identifier: {identifier}")
-                    results[identifier] = 'not_found'
-                    progress.update(task, advance=1)
-                    continue
-
-                item_id = item.get('o:id')
-                logging.info(f"Found item {item_id} for identifier {identifier}")
-
-                # Read and join transcription content
-                content = processor.read_and_join_transcriptions(files)
-
-                if not content:
-                    logging.warning(f"No content found for identifier: {identifier}")
-                    results[identifier] = 'failed'
-                    progress.update(task, advance=1)
-                    continue
-
-                # Update the item
-                if update_item_content(client, item_id, content):
-                    results[identifier] = 'success'
-                else:
-                    results[identifier] = 'failed'
-
-                progress.update(task, advance=1)
-
-        # Print summary
-        print_summary(results)
-
-        success_count = sum(1 for status in results.values() if status == 'success')
-        console.print(f"\n[green]{chr(10003)}[/] Transcription update process completed. [cyan]{success_count}[/] item(s) updated.")
         logging.info("Transcription update process completed")
+        return 0 if stats["failed"] == 0 else 1
 
     except ValueError as e:
         console.print(f"\n[red]Configuration Error:[/] {e}")
         logging.error(f"Configuration error: {e}")
+        return 1
     except KeyboardInterrupt:
         console.print("\n\n[yellow]Operation cancelled by user.[/]")
         logging.info("Operation cancelled by user")
+        return 1
     except Exception as e:
         console.print(f"\n[red]Unexpected error:[/] {e}")
         logging.exception(f"Unexpected error: {e}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

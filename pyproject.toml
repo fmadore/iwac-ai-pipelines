@@ -12,7 +12,8 @@ license = { text = "MIT" }
 authors = [{ name = "Frédérick Madore" }]
 dependencies = [
     # AI provider SDKs — pinned to a major version: these break routinely
-    "google-genai>=1.0,<2",
+    # 2.x broke only the Interactions API; generate_content is unchanged.
+    "google-genai>=1.59,<3",
     "openai>=1.60,<3",
     "mistralai>=2.5,<3", # 2.x layout: import from mistralai.client and mistralai.client.errors
     "pydantic>=2.5,<3",
@@ -23,7 +24,7 @@ dependencies = [
     # Utilities
     "python-dotenv>=1.0,<2",
     "tqdm>=4.66,<5",
-    "rich>=13,<15",
+    "rich>=13,<16",
     "pydub>=0.25,<1",
     "audioop-lts; python_version >= '3.13'", # pydub dependency removed from stdlib in 3.13
 ]

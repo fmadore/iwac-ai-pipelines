@@ -45,21 +45,14 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    BarColumn,
-    TaskProgressColumn,
-    TimeElapsedColumn,
-)
 from rich import box
 
 # Shared proactive throttler + quota handling (provider-agnostic; only spaces
 # requests when --rpm is set) and the shared exponential-backoff retry decorator.
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted
 from common.retry import retry_with_backoff
+from common.console_utils import standard_progress
 
 try:
     from mistralai.client import Mistral
@@ -401,14 +394,7 @@ def main():
 
     console.print()
     console.rule("[bold cyan]📄 Processing PDFs[/]")
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task("[cyan]Processing PDFs...", total=total_pdfs)
         for pdf_path in pdf_files:
             progress.update(task, description=f"[cyan]Processing {pdf_path.name}...")

@@ -22,7 +22,7 @@ from mistralai.client import Mistral
 
 # Add repo root to path for shared imports
 import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent.parent))
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.rate_limiter import QuotaExhaustedError, is_mistral_quota_exhausted
 from common.ffmpeg_utils import get_ffmpeg_paths
 

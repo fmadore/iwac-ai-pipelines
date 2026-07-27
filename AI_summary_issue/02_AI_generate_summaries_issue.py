@@ -61,7 +61,7 @@ from rich import box
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+    sys.path.insert(0, REPO_ROOT)
 
 from common.llm_provider import (  # noqa: E402
     LLMConfig,
@@ -79,9 +79,9 @@ from magazine_extraction import (  # noqa: E402
     PageExtraction,
     PdfPageSource,
     console,
-    get_input_pdfs,
     load_extraction_prompt,
     run_extraction_pipeline,
+    run_magazine_batch,
 )
 
 # Import Gemini types for PDF processing
@@ -404,10 +404,9 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
 # ------------------------------------------------------------------
 # Main Entry Point
 # ------------------------------------------------------------------
-def main():
+def main() -> int:
     """Main entry point of the script."""
     try:
-        # Load environment variables
         load_dotenv()
 
         # Parse CLI args. When neither --profile nor --light is given, the user
@@ -431,18 +430,6 @@ def main():
         )
         args = parser.parse_args()
 
-        # Verify Gemini API key
-        if not os.getenv("GEMINI_API_KEY"):
-            console.print(Panel(
-                "[red]GEMINI_API_KEY not found in environment variables![/]\n\n"
-                "Please set your API key in a .env file or environment.",
-                title="✗ Configuration Error",
-                border_style="red"
-            ))
-            return
-
-        script_dir = Path(__file__).parent
-
         # Resolve the model profile: a CLI flag wins, otherwise ask interactively.
         if args.light:
             profile = "light"
@@ -451,20 +438,17 @@ def main():
         else:
             profile = choose_profile()
 
-        # Display welcome banner
         step1_label = "Gemini Flash" if profile == "light" else "Gemini Pro"
-        step2_label = "Gemini Flash"
-        intro_text = (
+        intro_panel = Panel(
             "[bold cyan]Islamic Magazine Article Extraction Pipeline[/]\n\n"
             f"[dim]Using Gemini's native PDF understanding — profile: {profile}[/]\n\n"
             f"📖 [white]Step 1:[/] Page-by-page extraction [dim]({step1_label})[/]\n"
-            f"📊 [white]Step 2:[/] Magazine-level consolidation [dim]({step2_label})[/]"
+            "📊 [white]Step 2:[/] Magazine-level consolidation [dim](Gemini Flash)[/]",
+            title="🚀 Pipeline Started", border_style="cyan", padding=(1, 2),
         )
-        console.print(Panel(intro_text, title="🚀 Pipeline Started", border_style="cyan", padding=(1, 2)))
 
         logging.info("=== Magazine Article Extraction Pipeline ===")
 
-        # Model selection (Gemini only)
         model_step1, model_step2 = get_model_pair(profile)
 
         # Rate limiter shared across the whole batch (None = no throttling)
@@ -472,80 +456,24 @@ def main():
         if args.rpm:
             console.print(f"[cyan]⏱[/] Rate limiting: {args.rpm} requests/minute")
 
-        # Get the list of PDFs to process
-        pdf_files = get_input_pdfs(script_dir)
-
-        # Display file list
-        file_table = Table(title=f"📚 Found {len(pdf_files)} PDF file(s)", box=box.ROUNDED)
-        file_table.add_column("#", style="dim", width=4)
-        file_table.add_column("Filename", style="white")
-        file_table.add_column("Size", justify="right", style="cyan")
-
-        for i, pdf_path in enumerate(pdf_files, 1):
-            size_mb = pdf_path.stat().st_size / (1024 * 1024)
-            file_table.add_row(str(i), pdf_path.name, f"{size_mb:.1f} MB")
-
-        console.print(file_table)
-        console.print()
-
-        # Process each PDF
-        success_count = 0
-        error_count = 0
-
-        for i, pdf_path in enumerate(pdf_files, 1):
-            console.rule(f"[bold]PDF {i}/{len(pdf_files)}[/]", style="blue")
-
-            logging.info(f"Processing PDF {i}/{len(pdf_files)}: {pdf_path.name}")
-
-            # Use the filename as magazine ID
-            magazine_id = pdf_path.stem
-
-            # Define the output directory
-            output_dir = script_dir / "Magazine_Extractions" / magazine_id
-
-            try:
-                # Execute the pipeline for this PDF
-                process_magazine(model_step1, model_step2, pdf_path, output_dir, magazine_id,
-                                 rate_limiter=rate_limiter)
-                success_count += 1
-                console.print(f"\n[green]✓[/] PDF {i}/{len(pdf_files)} completed: [bold]{pdf_path.name}[/]")
-            except QuotaExhaustedError:
-                error_count += 1
-                console.print(Panel(
-                    "[red bold]API quota exhausted — stopping all processing.[/]\n"
-                    "Partial results have been saved (processed pages are cached\n"
-                    "in step1_page_extractions/ and will be reused on the next run).\n"
-                    "Wait for your quota to reset or upgrade your plan.",
-                    title="Quota Exhausted",
-                    border_style="red"
-                ))
-                logging.error("Quota exhausted — aborting remaining PDFs.")
-                break
-            except Exception as e:
-                error_count += 1
-                console.print(f"\n[red]✗[/] PDF {i}/{len(pdf_files)} failed: {pdf_path.name}")
-                logging.error(f"Failed to process {pdf_path.name}: {e}")
-
-        # Final summary
-        console.print()
-        summary_table = Table(box=box.ROUNDED, title="🏁 Pipeline Complete", title_style="bold green")
-        summary_table.add_column("Status", style="bold")
-        summary_table.add_column("Count", justify="right")
-        summary_table.add_row("[green]✓ Processed[/]", str(success_count))
-        if error_count > 0:
-            summary_table.add_row("[red]✗ Failed[/]", str(error_count))
-        summary_table.add_row("[cyan]Total[/]", str(len(pdf_files)))
-        console.print(summary_table)
-
-        logging.info(f"Pipeline completed: {success_count} success, {error_count} errors")
+        return run_magazine_batch(
+            lambda pdf_path, output_dir, magazine_id: process_magazine(
+                model_step1, model_step2, pdf_path, output_dir, magazine_id,
+                rate_limiter=rate_limiter,
+            ),
+            script_dir=Path(__file__).resolve().parent,
+            intro_panel=intro_panel,
+            api_key_env="GEMINI_API_KEY",
+        )
 
     except KeyboardInterrupt:
         console.print("\n[yellow]⚠[/] Process interrupted by user")
         logging.info("Process interrupted by user")
+        return 1
     except Exception as e:
         console.print(f"\n[red]✗ Pipeline failed:[/] {e}")
         logging.error(f"Pipeline failed: {e}", exc_info=True)
         raise
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

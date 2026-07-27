@@ -1,96 +1,25 @@
-"""Tests for common.pdf_downloader against mocked Omeka client and HTTP layer."""
+"""Tests for common.pdf_downloader against a mocked Omeka client.
 
+The ``.part`` download semantics moved to test_downloader.py when the routine
+was extracted into common/downloader.py; what remains here is the Omeka-facing
+half — media discovery, the item-set loop, and the resource-class filters.
+"""
+
+import io
 from unittest.mock import MagicMock, patch
 
-import requests
 from rich.console import Console
 
-import common.pdf_downloader as pdf_downloader
 from common.pdf_downloader import PDFDownloader, download_pdfs_from_item_set
 
 
-def make_response(chunks, headers=None, status=200):
-    """Build a mock streaming requests response usable as a context manager."""
-    resp = MagicMock()
-    resp.iter_content.return_value = iter(chunks)
-    resp.headers = headers or {}
-    resp.status_code = status
-    if status >= 400:
-        resp.raise_for_status.side_effect = requests.HTTPError(response=resp)
-    else:
-        resp.raise_for_status.return_value = None
-    resp.__enter__.return_value = resp
-    resp.__exit__.return_value = False
-    return resp
-
-
 def quiet_console():
-    return Console(file=open("/dev/null", "w"), force_terminal=False)
+    """Console that swallows output.
 
-
-# ---------------------------------------------------------------------------
-# download_pdf: .part temp file semantics
-# ---------------------------------------------------------------------------
-
-def test_download_pdf_streams_via_part_file_and_renames(tmp_path):
-    target = tmp_path / "123.pdf"
-    part = tmp_path / "123.pdf.part"
-    seen = {}
-
-    def iter_content(chunk_size):
-        yield b"%PDF-"
-        # Mid-stream, data goes to the .part file — never to the final path.
-        seen["part_exists"] = part.exists()
-        seen["target_exists"] = target.exists()
-        yield b"body"
-
-    resp = make_response([])
-    resp.iter_content.side_effect = iter_content
-
-    with patch.object(pdf_downloader.requests, "get", return_value=resp):
-        result = PDFDownloader.download_pdf("http://x/123.pdf", target)
-
-    assert seen == {"part_exists": True, "target_exists": False}
-    assert result == target
-    assert target.read_bytes() == b"%PDF-body"
-    assert not part.exists()
-
-
-def test_download_pdf_failure_removes_part_and_returns_none(tmp_path):
-    target = tmp_path / "123.pdf"
-    resp = make_response([b"%PDF-", b"trunc"], headers={"Content-Length": "999999"})
-
-    with patch.object(pdf_downloader.requests, "get", return_value=resp):
-        result = PDFDownloader.download_pdf("http://x/123.pdf", target)
-
-    assert result is None
-    assert not target.exists()
-    assert not (tmp_path / "123.pdf.part").exists()
-
-
-def test_download_pdf_http_error_leaves_no_files(tmp_path):
-    target = tmp_path / "123.pdf"
-    resp = make_response([], status=404)
-
-    with patch.object(pdf_downloader.requests, "get", return_value=resp):
-        result = PDFDownloader.download_pdf("http://x/123.pdf", target)
-
-    assert result is None
-    assert not target.exists()
-    assert not (tmp_path / "123.pdf.part").exists()
-
-
-def test_truncated_leftover_is_not_mistaken_for_complete_download(tmp_path):
-    """A failed run must never leave a partial file at the final path."""
-    target = tmp_path / "42.pdf"
-
-    def explode(*args, **kwargs):
-        raise requests.ConnectionError("connection dropped")
-
-    with patch.object(pdf_downloader.requests, "get", side_effect=explode):
-        assert PDFDownloader.download_pdf("http://x/42.pdf", target) is None
-
-    assert not target.exists()
+    An in-memory buffer rather than ``/dev/null``: the latter does not exist
+    on Windows, and opening it leaked a file handle per test.
+    """
+    return Console(file=io.StringIO(), force_terminal=False)
 
 
 # ---------------------------------------------------------------------------

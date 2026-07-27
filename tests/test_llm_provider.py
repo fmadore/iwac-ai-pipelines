@@ -1,10 +1,15 @@
 """Tests for common.llm_provider model selection and config merging."""
 
+from typing import Optional
+from unittest.mock import MagicMock
+
 import pytest
+from pydantic import BaseModel, Field
 
 from common.llm_provider import (
     LLMConfig,
     MODEL_REGISTRY,
+    OpenAIResponsesClient,
     get_model_option,
     normalize_model_key,
 )
@@ -76,6 +81,12 @@ def test_merged_over_honors_zero_temperature():
     assert merged.temperature == 0.0
 
 
+def test_merged_over_honors_store_false():
+    # store=False is falsy but explicitly set; it must NOT fall back to the default.
+    merged = LLMConfig(store=False).merged_over(LLMConfig(store=True))
+    assert merged.store is False
+
+
 def test_registry_and_aliases_are_consistent():
     from common.llm_provider import MODEL_ALIASES
 
@@ -83,3 +94,63 @@ def test_registry_and_aliases_are_consistent():
         assert target in MODEL_REGISTRY, f"alias {alias!r} points to unknown key {target!r}"
     for key, option in MODEL_REGISTRY.items():
         assert option.key == key
+
+
+# ---------------------------------------------------------------------------
+# OpenAI structured output
+# ---------------------------------------------------------------------------
+
+class _Sample(BaseModel):
+    """Schema with a defaulted field — the case that broke the hand-rolled path."""
+
+    required_field: str
+    optional_field: Optional[int] = Field(default=None)
+
+
+def _openai_client_with_stub(monkeypatch, parsed=None, output=None):
+    """Build an OpenAIResponsesClient whose SDK client is a stub."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("common.llm_provider.OpenAI", MagicMock())
+
+    client = OpenAIResponsesClient(MODEL_REGISTRY["gpt-5.6-luna"])
+    stub = MagicMock()
+    stub.responses.parse.return_value = MagicMock(output_parsed=parsed, output=output or [])
+    client._client = stub
+    return client, stub
+
+
+def test_structured_output_uses_parse_with_pydantic_model(monkeypatch):
+    """The schema must go through responses.parse, not a hand-built json_schema.
+
+    model_json_schema() emits no additionalProperties:false and drops defaulted
+    fields from `required`, both of which OpenAI's strict mode rejects.
+    """
+    expected = _Sample(required_field="ok")
+    client, stub = _openai_client_with_stub(monkeypatch, parsed=expected)
+
+    result = client.generate_structured("system", "user", _Sample)
+
+    assert result is expected
+    stub.responses.create.assert_not_called()
+    kwargs = stub.responses.parse.call_args.kwargs
+    assert kwargs["text_format"] is _Sample
+    # No hand-rolled schema smuggled in via text=
+    assert "format" not in kwargs.get("text", {})
+
+
+def test_structured_output_does_not_store_by_default(monkeypatch):
+    """Full archival documents should not be retained server-side."""
+    client, stub = _openai_client_with_stub(monkeypatch, parsed=_Sample(required_field="ok"))
+
+    client.generate_structured("system", "user", _Sample)
+
+    assert stub.responses.parse.call_args.kwargs["store"] is False
+
+
+def test_structured_output_surfaces_refusal(monkeypatch):
+    """A refusal must not be reported as an empty response."""
+    refusal_item = MagicMock(content=[MagicMock(refusal="cannot comply")])
+    client, _ = _openai_client_with_stub(monkeypatch, parsed=None, output=[refusal_item])
+
+    with pytest.raises(ValueError, match="refused"):
+        client.generate_structured("system", "user", _Sample)

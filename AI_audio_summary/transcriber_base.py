@@ -15,9 +15,13 @@ import logging
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
-# Add repo root to path for shared imports
+# Add repo root to path for shared imports, and this pipeline's own directory
+# for the sibling modules below. The latter only happened implicitly before,
+# via the directory Python prepends for the *entry-point* script — so importing
+# this module any other way (a test, another pipeline) failed on `segments`.
 import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent.parent))
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.ffmpeg_utils import (
     AUDIO_FORMATS, VIDEO_FORMATS,
     get_ffmpeg_paths, setup_pydub,

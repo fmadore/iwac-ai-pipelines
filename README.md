@@ -105,13 +105,13 @@ These tools were built for IWAC but can be modified for other collections:
 
 - **Prompts** are stored as `.md` files in each pipeline directory and can be edited for different contexts, languages, or document types
 - **Pipelines** are modular and can be used independently
-- **Shared utilities** (`common/`) centralize Omeka S API access (`omeka_client.py`) and model configuration (`llm_provider.py`)
+- **Shared utilities** (`common/`) centralize Omeka S API access (`omeka_client.py`), model configuration (`llm_provider.py`), the page-by-page Gemini PDF loop (`gemini_page_processor.py`) and the Omeka write step (`omeka_text_updater.py`) — so a pipeline is mostly its prompts and its choice of model
 
 The approach assumes you have digitized materials and need to make them searchable. It is designed for institutions and researchers managing substantial digital collections with limited resources.
 
 ## Documentation
 
-- [Shared Utilities](common/README.md) — OmekaClient and LLM provider configuration
+- [Shared Utilities](common/README.md) — OmekaClient, LLM provider configuration, the Gemini page processor and the Omeka text updater
 - [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini, Mistral, or Claude agent)
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Full dataset

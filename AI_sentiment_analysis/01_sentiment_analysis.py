@@ -31,7 +31,6 @@ GEMINI_API_KEY        Google Gemini API key
 OPENAI_API_KEY        OpenAI API key
 MISTRAL_API_KEY       Mistral API key
 """
-import os
 import sys
 import json
 import time
@@ -47,15 +46,15 @@ from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich.logging import RichHandler
 from rich.prompt import Prompt
 from rich import box
 
 # Shared Omeka client and LLM provider
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
+from common.console_utils import standard_progress
 
 # Global Rich console
 console = Console()
@@ -672,14 +671,7 @@ def main():
 
     console.rule("[bold cyan]Processing Items")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task(
             "[cyan]Analyzing sentiment...",
             total=len(items_with_content)

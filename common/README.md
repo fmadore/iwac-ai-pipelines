@@ -144,6 +144,102 @@ Features:
 
 ---
 
+## Gemini Page Processor (`gemini_page_processor.py`)
+
+The page-by-page Gemini PDF loop, shared by `AI_ocr_extraction/02` and
+`AI_htr_extraction`. Handles splitting the PDF, the inline→Files-API fallback,
+retrying only transient failures, interpreting `finish_reason`, joining pages
+with `--- Page N ---` markers, and aborting the batch on quota exhaustion.
+
+```python
+from common.gemini_page_processor import GeminiPageProcessor, PagePolicy, process_pdf_batch
+
+processor = GeminiPageProcessor(
+    client, model_name, generation_config,
+    PagePolicy(
+        user_prompt="Transcribe this page.",
+        media_resolution="ULTRA_HIGH",   # per-Part only; the config caps at HIGH
+        on_blocked=my_recitation_fallback,  # optional
+    ),
+    rate_limiter=RateLimiter(rpm),
+    console=console,
+)
+batch = process_pdf_batch(processor, pdf_files, output_dir, progress=progress)
+```
+
+Behaviour worth knowing:
+
+- Inline requests are gated on `INLINE_REQUEST_LIMIT_BYTES`, not a hand-picked
+  megabyte figure. Larger pages go straight to the Files API.
+- `MAX_TOKENS` salvages the partial transcription and appends a truncation marker.
+- `RECITATION` calls `PagePolicy.on_blocked` if set, otherwise skips the page.
+- Failures are recorded in `PdfResult`, never written into the output text — an
+  `[ERROR: ...]` placeholder in an archival transcript would end up in Omeka.
+- No output file is written unless at least one page succeeded, so `PdfResult.ok`
+  means "this run produced something", not "a file of some size exists".
+
+---
+
+## Omeka Text Updater (`omeka_text_updater.py`)
+
+The `03` write step shared by `AI_summary`, `AI_ocr_extraction`,
+`AI_ocr_correction` and `AI_audio_summary`.
+
+```python
+from common.omeka_text_updater import PropertyTarget, run_text_updates, updates_from_directory
+
+target = PropertyTarget(
+    term="bibo:shortDescription",
+    property_id=summary_property_id,
+    property_label="shortDescription",
+    annotation_term="iwac:summaryModel",
+    annotation_value=model_value,
+)
+stats = run_text_updates(
+    client, updates_from_directory(Path("Summaries_FR_TXT")), target,
+    console=console, dry_run=args.dry_run, require_confirmation=not args.yes,
+)
+```
+
+Every pipeline using it gets: the full item fetched and PATCHed back (never a
+trimmed payload), `@annotation` re-attached after `upsert_property_value`,
+unchanged items skipped rather than re-PATCHed, and a `--dry-run` plus
+confirmation gate. `updates_from_directory` reads `<item_id>.txt` files;
+build `TextUpdate` objects yourself when items are matched some other way (the
+transcription updater resolves `dcterms:identifier` first).
+
+---
+
+## Console Utilities (`console_utils.py`)
+
+One definition of the rich furniture every pipeline prints.
+
+```python
+from common.console_utils import count_table, key_value_table, print_file_table, standard_progress
+
+with standard_progress(console) as progress:
+    task = progress.add_task("[cyan]Working...", total=len(items))
+    ...
+    progress.update(task, advance=1)
+
+console.print(key_value_table([("Model", "gemini-flash"), ("Items", "42")]))
+```
+
+Rows whose value is `None` are skipped, so optional settings can be expressed
+inline rather than guarded with an `if` around each `add_row`.
+
+---
+
+## Streaming Downloader (`downloader.py`)
+
+`stream_download(url, path, timeout=...)` — writes to a `.part` temp file and
+renames on success, checking `Content-Length` where the server provides it. Used
+by `pdf_downloader.py` and `AI_audio_summary/01`. The temp file is the point:
+these pipelines re-run against the same output directory, and a transfer
+interrupted halfway must not be mistaken for a finished file next time.
+
+---
+
 # LLM Provider Configuration Guide
 
 This guide explains how to use `llm_provider.py` to configure AI model behavior for different pipeline use cases.
@@ -259,6 +355,24 @@ print(result.locations)     # ['Paris', 'France']
 4. **Better prompts**: Schema descriptions guide the model's output
 5. **Cleaner code**: Remove boilerplate JSON extraction and error handling
 
+### Never hand-build the JSON schema
+
+Each provider gets the Pydantic class itself, not `model_json_schema()`:
+
+| Provider | Call |
+|---|---|
+| OpenAI | `responses.parse(text_format=Model)` |
+| Gemini | `GenerateContentConfig(response_schema=Model)` |
+| Mistral | `chat.parse(response_format=Model)` |
+
+This matters for OpenAI in particular. Its `strict` mode requires
+`additionalProperties: false` on every object and *every* property listed in
+`required`, and `model_json_schema()` emits neither — it drops any field that has
+a default from `required`. Passing that raw schema with `strict: true` is rejected
+by the API, and a caller's retry loop will report it as a generic failure.
+`responses.parse()` runs the SDK's own `to_strict_json_schema()` transform, so the
+schema is always valid.
+
 ### When to Use Structured vs. Text Output
 
 | Use Case | Method | Why |
@@ -276,8 +390,9 @@ print(result.locations)     # ['Paris', 'France']
 
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
-| `reasoning_effort` | `"low"`, `"medium"`, `"high"` | `"low"` | Controls reasoning depth and quality |
+| `reasoning_effort` | `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` | `"low"` | Controls reasoning depth and quality. `"none"` makes the model behave like a non-reasoning one — the cheapest option for mechanical work |
 | `text_verbosity` | `"low"`, `"medium"`, `"high"` | `"low"` | Controls response length and detail |
+| `store` | `True`, `False` | `False` | Whether OpenAI retains the request/response server-side. Off by default: these pipelines send full archival documents |
 
 **Note**: OpenAI's Responses API ignores `temperature` - use `reasoning_effort` and `text_verbosity` instead.
 

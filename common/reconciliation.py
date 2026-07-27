@@ -30,17 +30,10 @@ from typing import Dict, List, Tuple
 
 from rich.console import Console
 from rich.table import Table
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    BarColumn,
-    TaskProgressColumn,
-    TimeElapsedColumn,
-)
 from rich import box
 
 from common.omeka_client import OmekaClient
+from common.console_utils import standard_progress
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -126,11 +119,7 @@ def build_authority_dict(
     potential_lookups: List[tuple] = []
     authority_metadata: Dict[str, Dict] = {}
 
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-        BarColumn(), TaskProgressColumn(), TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task(
             f"[cyan]Building {authority_type} authority dictionary...", total=None,
         )
@@ -316,11 +305,7 @@ def create_potential_reconciliation_csv(
         with open(unreconciled_csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
 
-            with Progress(
-                SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                BarColumn(), TaskProgressColumn(), TimeElapsedColumn(),
-                console=console,
-            ) as progress:
+            with standard_progress(console) as progress:
                 task = progress.add_task("[cyan]Finding potential matches...", total=row_count)
 
                 for row in reader:
@@ -415,11 +400,7 @@ def reconcile_column_values(
                         processed[target_column_name] = ""
                     rows_processed.append(processed)
             else:
-                with Progress(
-                    SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                    BarColumn(), TaskProgressColumn(), TimeElapsedColumn(),
-                    console=console,
-                ) as progress:
+                with standard_progress(console) as progress:
                     task = progress.add_task(f"[cyan]Reconciling {source_column_name}...", total=row_count)
 
                     for row in reader:

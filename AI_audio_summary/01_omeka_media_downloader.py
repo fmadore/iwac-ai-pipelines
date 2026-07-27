@@ -22,7 +22,6 @@ import os
 import re
 import sys
 import logging
-import requests
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,7 +29,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich import box
 
 # Initialize rich console
@@ -40,9 +38,11 @@ console = Console()
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 # Shared Omeka client
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
+from common.downloader import stream_download
 from common.ffmpeg_utils import AUDIO_FORMATS, VIDEO_FORMATS
+from common.console_utils import standard_progress
 
 # Supported media formats — derived from common/ffmpeg_utils so the
 # downloader never fetches a format the transcription step cannot handle
@@ -111,7 +111,8 @@ class MediaDownloader:
         """
         Download a media file from a URL to local storage.
 
-        Uses streaming to handle large files efficiently and avoid memory issues.
+        Thin wrapper over :func:`common.downloader.stream_download`. The default
+        timeout is generous because audio and video files are large.
 
         Args:
             url (str): URL of the media file to download
@@ -121,37 +122,7 @@ class MediaDownloader:
         Returns:
             Optional[Path]: Path to downloaded file or None if download failed
         """
-        # Download to a temp name and rename on success so an interrupted
-        # download can never be mistaken for a completed file on the next run.
-        part_path = file_path.with_suffix(file_path.suffix + '.part')
-        try:
-            # Stream download to handle large files efficiently
-            with requests.get(url, stream=True, timeout=timeout) as response:
-                response.raise_for_status()
-
-                # Write file in chunks to avoid memory issues
-                with open(part_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-
-                expected = response.headers.get('Content-Length')
-                if expected is not None and part_path.stat().st_size != int(expected):
-                    raise requests.RequestException(
-                        f"Incomplete download: got {part_path.stat().st_size} of {expected} bytes"
-                    )
-
-            part_path.rename(file_path)
-            return file_path
-
-        except requests.Timeout:
-            logging.error(f"Timeout downloading {url}")
-            part_path.unlink(missing_ok=True)
-            return None
-        except requests.RequestException as e:
-            logging.error(f"Failed to download {url}: {e}")
-            part_path.unlink(missing_ok=True)
-            return None
+        return stream_download(url, file_path, timeout=timeout)
 
     @staticmethod
     def sanitize_filename(filename: str) -> str:
@@ -351,14 +322,7 @@ def download_media_from_item_set(item_set_id: str, media_folder: Path,
 
     # Process items concurrently with thread pool
     results = []
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task("[cyan]Downloading media...", total=len(items))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

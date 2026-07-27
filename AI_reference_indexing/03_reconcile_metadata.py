@@ -30,7 +30,7 @@ console = Console()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+    sys.path.insert(0, REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.iwac_config import (  # noqa: E402

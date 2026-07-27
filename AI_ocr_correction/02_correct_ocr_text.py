@@ -21,14 +21,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 from rich.table import Table
 from rich import box
 
@@ -36,11 +28,14 @@ from rich import box
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.llm_provider import (
+    LEGACY_CLI_MODEL_KEYS,
+    TEXT_FULL_MODELS,
     LLMConfig,
     build_llm_client,
     get_model_option,
     summary_from_option,
 )
+from common.console_utils import standard_progress
 
 # Load environment variables from .env file
 load_dotenv()
@@ -49,9 +44,8 @@ load_dotenv()
 console = Console()
 
 # Allowed models for this pipeline
-ALLOWED_MODELS = ["gemini-flash", "gemini-pro", "gpt-5.6-luna", "gpt-5.6-sol", "mistral-large", "ministral-14b"]
-# Retired keys still accepted on the CLI; normalize_model_key() maps them forward.
-LEGACY_MODELS = ["gpt-5-mini", "gpt-5.1"]
+ALLOWED_MODELS = TEXT_FULL_MODELS
+LEGACY_MODELS = LEGACY_CLI_MODEL_KEYS
 
 
 def get_system_instruction() -> str:
@@ -221,14 +215,7 @@ def process_txt_files(
     success_count = 0
     error_count = 0
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task("Processing files...", total=len(txt_files))
         
         for txt_file in txt_files:

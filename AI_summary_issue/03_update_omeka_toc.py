@@ -30,15 +30,12 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import (
-    Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn,
-)
 from rich import box
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+    sys.path.insert(0, REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.iwac_config import (  # noqa: E402
@@ -47,6 +44,7 @@ from common.iwac_config import (  # noqa: E402
     IWAC_SUMMARY_MODEL_PROPERTY_ID,
     model_annotation_value,
 )
+from common.console_utils import standard_progress  # noqa: E402
 
 console = Console()
 
@@ -177,10 +175,7 @@ def main():
     stats = {"updated": 0, "would_update": 0, "not_found": 0, "failed": 0}
     results = []
 
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-        BarColumn(), TaskProgressColumn(), TimeElapsedColumn(), console=console,
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task("[cyan]Processing items...", total=len(toc_entries))
         for entry in toc_entries:
             item_id = entry["item_id"]

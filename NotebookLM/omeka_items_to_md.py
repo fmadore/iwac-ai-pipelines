@@ -75,6 +75,7 @@ Notes
 import os
 import re
 import sys
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Union, Tuple
 
 from rich.console import Console
@@ -87,7 +88,7 @@ from rich import box
 console = Console()
 
 # Shared Omeka client
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 
 # Lightweight aliases to make intent clearer when reading types

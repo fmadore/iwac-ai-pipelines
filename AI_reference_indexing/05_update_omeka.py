@@ -17,15 +17,11 @@ import argparse
 import csv
 import os
 import sys
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import (
-    Progress, SpinnerColumn, TextColumn, BarColumn,
-    TaskProgressColumn, TimeElapsedColumn,
-)
 from rich import box
 
 if sys.platform == "win32":
@@ -36,13 +32,14 @@ console = Console()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+    sys.path.insert(0, REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.iwac_config import (  # noqa: E402
     DCTERMS_SPATIAL_PROPERTY_ID,
     DCTERMS_SUBJECT_PROPERTY_ID,
 )
+from common.console_utils import standard_progress  # noqa: E402
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -77,55 +74,18 @@ def find_latest_reconciled_csv() -> Optional[str]:
         return None
 
 
-def get_existing_resource_ids(item_data: dict, prop: str) -> Set[int]:
-    """Extract existing resource IDs from an item's property."""
-    ids = set()
-    for entry in item_data.get(prop, []):
-        if isinstance(entry, dict) and "value_resource_id" in entry:
-            try:
-                ids.add(int(entry["value_resource_id"]))
-            except (ValueError, TypeError):
-                pass
-    return ids
-
-
-def add_resource_links(
-    item_data: dict,
-    prop: str,
-    property_id: int,
-    property_label: str,
-    ids_str: str,
-    existing_ids: Set[int],
-) -> int:
-    """Add resource links to item_data, skipping duplicates. Returns count added."""
-    if not ids_str:
-        return 0
-
-    if prop not in item_data or not isinstance(item_data[prop], list):
-        item_data[prop] = []
-
-    added = 0
-    for raw_id in ids_str.split("|"):
+def parse_id_list(ids_str: str) -> List[int]:
+    """Parse a pipe-separated ID column into ints, dropping unparseable entries."""
+    ids: List[int] = []
+    for raw_id in (ids_str or "").split("|"):
         raw_id = raw_id.strip()
         if not raw_id:
             continue
         try:
-            int_id = int(raw_id)
+            ids.append(int(raw_id))
         except ValueError:
             continue
-        if int_id in existing_ids:
-            continue
-        item_data[prop].append({
-            "type": "resource:item",
-            "property_id": property_id,
-            "property_label": property_label,
-            "is_public": True,
-            "value_resource_id": int_id,
-            "value_resource_name": "items",
-        })
-        existing_ids.add(int_id)
-        added += 1
-    return added
+    return ids
 
 
 def main():
@@ -192,11 +152,7 @@ def main():
 
     console.rule("[bold cyan]Processing Items")
 
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-        BarColumn(), TaskProgressColumn(), TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task("[cyan]Updating Omeka items...", total=len(rows))
 
         for row in rows:
@@ -245,16 +201,15 @@ def main():
                 progress.update(task, advance=1)
                 continue
 
-            existing_spatial = get_existing_resource_ids(item_data, "dcterms:spatial")
-            existing_subject = get_existing_resource_ids(item_data, "dcterms:subject")
-
-            s_added = add_resource_links(
+            # append_resource_links already skips IDs the item carries, so the
+            # dedupe pass this script used to do by hand is redundant.
+            s_added = OmekaClient.append_resource_links(
                 item_data, "dcterms:spatial", DCTERMS_SPATIAL_PROPERTY_ID,
-                "Spatial Coverage", spatial_ids, existing_spatial,
+                parse_id_list(spatial_ids), property_label="Spatial Coverage",
             )
-            subj_added = add_resource_links(
+            subj_added = OmekaClient.append_resource_links(
                 item_data, "dcterms:subject", DCTERMS_SUBJECT_PROPERTY_ID,
-                "Subject", subject_ids, existing_subject,
+                parse_id_list(subject_ids), property_label="Subject",
             )
 
             if s_added or subj_added:

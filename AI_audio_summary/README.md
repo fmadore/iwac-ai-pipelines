@@ -25,7 +25,7 @@ python 01_omeka_media_downloader.py          # Download from Omeka S item set
 python 02_AI_transcribe_audio.py             # Transcribe with Gemini
 # or
 python 02b_AI_transcribe_audio_voxtral.py    # Transcribe with Voxtral
-python 03_omeka_transcription_updater.py     # Update Omeka S
+python 03_omeka_transcription_updater.py     # Update Omeka S (--dry-run to preview)
 ```
 
 Or process local files by placing them in `Audio/` and running step 2.

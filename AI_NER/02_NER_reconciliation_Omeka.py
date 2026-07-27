@@ -58,6 +58,7 @@ Date: August 2025
 
 import os
 import sys
+from pathlib import Path
 from typing import Dict, Tuple
 
 from rich.console import Console
@@ -69,7 +70,7 @@ from rich import box
 console = Console()
 
 # Shared Omeka client
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.iwac_config import (
     SPATIAL_AUTHORITY_ITEM_SETS,

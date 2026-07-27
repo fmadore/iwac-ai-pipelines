@@ -17,7 +17,6 @@ Requirements:
 """
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -29,7 +28,7 @@ from rich.prompt import Prompt
 console = Console()
 
 # Shared Omeka client and PDF downloader
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.pdf_downloader import download_pdfs_from_item_set
 

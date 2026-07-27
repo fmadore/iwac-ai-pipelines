@@ -74,6 +74,10 @@ class ModelOption:
     # OpenAI-specific defaults
     default_reasoning_effort: str = "low"  # GPT-5.6: none/low/medium/high/xhigh/max
     default_text_verbosity: str = "low"    # "low", "medium", "high"
+    # Do not retain request/response bodies server-side by default: these
+    # pipelines send full archival documents, and there is no need for a
+    # 30-day copy of the collection on the provider's side.
+    default_store: bool = False
     # Gemini-specific defaults
     default_thinking_level: Optional[str] = None  # For Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
 
@@ -86,11 +90,15 @@ class LLMConfig:
     OpenAI parameters:
         reasoning_effort: controls reasoning depth. GPT-5.6 accepts "none", "low",
                           "medium", "high", "xhigh" or "max" (API default "medium";
-                          this project defaults to "low" for cost). When migrating,
-                          OpenAI advises testing your current level and one lower —
-                          GPT-5.6 often holds quality with fewer reasoning tokens.
+                          this project defaults to "low" for cost). "none" makes the
+                          model behave like a non-reasoning one — the cheapest option
+                          for mechanical work (OCR correction, summarization). When
+                          migrating, OpenAI advises testing your current level and one
+                          lower — GPT-5.6 often holds quality with fewer reasoning tokens.
         text_verbosity: "low", "medium", or "high" - controls response length
-    
+        store: whether OpenAI retains the request/response server-side (default
+               False; these pipelines send full archival documents)
+
     Gemini parameters:
         temperature: 0.0-1.0 - controls randomness (OpenAI ignores this)
         
@@ -115,6 +123,7 @@ class LLMConfig:
     temperature: Optional[float] = None
     reasoning_effort: Optional[str] = None
     text_verbosity: Optional[str] = None
+    store: Optional[bool] = None
     thinking_level: Optional[str] = None  # Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
 
     def merged_over(self, base: "LLMConfig") -> "LLMConfig":
@@ -248,6 +257,37 @@ MODEL_ALIASES = {
     "ministral-14b-2512": "ministral-14b",
 }
 
+# ---------------------------------------------------------------------------
+# Model tiers
+#
+# Pipelines used to each carry their own ``ALLOWED_MODELS`` literal, so adding
+# or retiring a model meant grepping for the old key across every pipeline,
+# README and .env.example. Pick a tier here instead; the lists below reproduce
+# what each pipeline previously declared, so interactive menu ordering is
+# unchanged.
+# ---------------------------------------------------------------------------
+
+#: Cost-optimized tiers. Enough for mechanical work: summarization, correction.
+TEXT_ECONOMY_MODELS: List[str] = ["gpt-5.6-luna", "gemini-flash", "ministral-14b"]
+
+#: Economy tiers plus the open-weights and flagship Mistral options (NER).
+TEXT_EXTENDED_MODELS: List[str] = [
+    "gpt-5.6-luna", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b",
+]
+
+#: Every text model, including the quality tiers, for output-quality-critical work.
+TEXT_FULL_MODELS: List[str] = [
+    "gemini-flash", "gemini-pro", "gpt-5.6-luna", "gpt-5.6-sol",
+    "mistral-large", "ministral-14b",
+]
+
+#: Models served via the Gemini API that accept native PDF/vision input.
+GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-flash", "gemini-pro", "gemma-4"]
+
+#: Retired keys still accepted on the CLI; ``normalize_model_key`` maps them forward.
+LEGACY_CLI_MODEL_KEYS: List[str] = ["gpt-5-mini", "gpt-5.1", "gpt-5", "gpt-5-nano"]
+
+
 class BaseLLMClient:
     """Minimal interface implemented by provider-specific clients."""
 
@@ -258,6 +298,7 @@ class BaseLLMClient:
             temperature=option.default_temperature,
             reasoning_effort=option.default_reasoning_effort,
             text_verbosity=option.default_text_verbosity,
+            store=option.default_store,
             thinking_level=option.default_thinking_level,
         )
         self.config = (config or LLMConfig()).merged_over(model_defaults)
@@ -354,7 +395,7 @@ class OpenAIResponsesClient(BaseLLMClient):
             },
             reasoning={"effort": reasoning_effort},
             tools=[],
-            store=True,
+            store=bool(effective_config.store),
         )
         raw_output = getattr(response, "output_text", None)
         if raw_output:
@@ -376,61 +417,53 @@ class OpenAIResponsesClient(BaseLLMClient):
         config: Optional[LLMConfig] = None
     ) -> T:
         """Generate structured output using OpenAI's native JSON schema support.
-        
-        Uses the Responses API with structured output format to guarantee valid JSON
-        matching the provided Pydantic schema.
+
+        Delegates to ``responses.parse(text_format=...)`` rather than building the
+        JSON schema by hand. That matters: OpenAI's ``strict`` mode requires
+        ``additionalProperties: false`` on every object and *every* property listed
+        in ``required``, and ``model_json_schema()`` emits neither — it omits any
+        field with a default from ``required``. Sending that raw schema with
+        ``strict: true`` is rejected by the API, which the callers' retry loops then
+        swallow as a generic failure. ``parse()`` runs the SDK's own
+        ``to_strict_json_schema()`` transform, so the schema is always valid.
         """
         if BaseModel is None:
             raise RuntimeError("pydantic package is required for structured outputs")
-        
+
         effective_config = self._get_effective_config(config)
         reasoning_effort = effective_config.reasoning_effort
         text_verbosity = effective_config.text_verbosity
-        
-        # Get JSON schema from Pydantic model
-        json_schema = response_schema.model_json_schema()
-        
+
         LOGGER.debug(
             f"OpenAI structured request with schema={response_schema.__name__}, "
             f"reasoning_effort={reasoning_effort}"
         )
-        
-        response = self._client.responses.create(
+
+        response = self._client.responses.parse(
             model=self.option.model,
             input=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": response_schema.__name__,
-                    "schema": json_schema,
-                    "strict": True
-                },
-                "verbosity": text_verbosity,
-            },
+            text_format=response_schema,
+            text={"verbosity": text_verbosity},
             reasoning={"effort": reasoning_effort},
-            tools=[],
-            store=True,
+            store=bool(effective_config.store),
         )
-        
-        raw_output = getattr(response, "output_text", None)
-        if not raw_output:
-            # Try to extract from output segments
-            segments: List[str] = []
-            for seg in getattr(response, "output", []) or []:
-                if isinstance(seg, dict):
-                    content = seg.get("content")
-                    if isinstance(content, str):
-                        segments.append(content)
-            raw_output = "\n".join(filter(None, segments)).strip()
-        
-        if not raw_output:
-            raise ValueError("No output received from OpenAI structured response")
-        
-        # Parse and validate with Pydantic
-        return response_schema.model_validate_json(raw_output)
+
+        parsed = getattr(response, "output_parsed", None)
+        if parsed is not None:
+            return parsed
+
+        # A structured request can come back refused rather than parsed; surface
+        # the reason instead of a bare "no output".
+        for item in getattr(response, "output", []) or []:
+            for content in getattr(item, "content", []) or []:
+                refusal = getattr(content, "refusal", None)
+                if refusal:
+                    raise ValueError(f"OpenAI refused the structured request: {refusal}")
+
+        raise ValueError("No output received from OpenAI structured response")
 
 class GeminiGenerateContentClient(BaseLLMClient):
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:

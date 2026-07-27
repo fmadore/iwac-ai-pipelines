@@ -23,19 +23,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
-import requests
 from rich import box
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 from rich.table import Table
 
+from common.console_utils import standard_progress
+from common.downloader import stream_download
 from common.omeka_client import OmekaClient
 
 LOGGER = logging.getLogger(__name__)
@@ -64,9 +57,8 @@ class PDFDownloader:
         """
         Download a PDF file from a URL to local storage.
 
-        Streams to a ``.part`` temp file and renames on success, so an
-        interrupted download can never be mistaken for a completed file on
-        the next run.
+        Thin wrapper over :func:`common.downloader.stream_download`, which
+        handles the ``.part`` temp file and the truncation check.
 
         Args:
             url (str): URL of the PDF file to download
@@ -76,31 +68,7 @@ class PDFDownloader:
         Returns:
             Optional[Path]: Path to downloaded file or None if download failed
         """
-        part_path = pdf_path.with_suffix(pdf_path.suffix + '.part')
-        try:
-            # Stream download to handle large files efficiently
-            with requests.get(url, stream=True, timeout=timeout) as response:
-                response.raise_for_status()
-
-                # Write file in chunks to avoid memory issues
-                with open(part_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-
-                expected = response.headers.get('Content-Length')
-                if expected is not None and part_path.stat().st_size != int(expected):
-                    raise requests.RequestException(
-                        f"Incomplete download: got {part_path.stat().st_size} of {expected} bytes"
-                    )
-
-            part_path.rename(pdf_path)
-            return pdf_path
-
-        except (requests.RequestException, OSError) as e:
-            LOGGER.error("Failed to download %s: %s", url, e)
-            part_path.unlink(missing_ok=True)
-            return None
+        return stream_download(url, pdf_path, timeout=timeout, logger=LOGGER)
 
     @staticmethod
     def create_valid_filename(item_data: Dict[str, Any]) -> str:
@@ -275,14 +243,7 @@ def download_pdfs_from_item_set(
     results = []
     failed_count = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task("[cyan]Downloading PDFs...", total=len(items))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

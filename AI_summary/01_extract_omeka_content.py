@@ -29,6 +29,7 @@ OUTPUT:
 
 import os
 import sys
+from pathlib import Path
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
@@ -43,7 +44,7 @@ MAX_WORKERS = 5  # Maximum number of concurrent threads for processing items
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Shared Omeka client
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 
 

@@ -29,8 +29,14 @@ Corrects text while maintaining word-level coordinates. Essential when coordinat
 ```bash
 python 01_extract_ocr_text.py      # Extract text from Omeka S
 python 02_correct_ocr_text.py      # Apply AI corrections
-python 03_update_database.py       # Update Omeka S
+python 03_update_database.py       # Update Omeka S (--dry-run to preview)
 ```
+
+Step 03 asks for confirmation before writing; `--dry-run` reports what would
+change without PATCHing, and `--yes` skips the prompt. It writes no
+`iwac:ocrModel` annotation of its own: correction rewrites text another model
+OCR'd, and the existing literal is mutated in place so the original OCR
+provenance survives.
 
 ### ALTO XML Workflow
 

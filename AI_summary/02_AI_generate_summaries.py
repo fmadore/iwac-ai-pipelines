@@ -18,9 +18,11 @@ from rich import box
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+    sys.path.insert(0, REPO_ROOT)
 
 from common.llm_provider import (  # noqa: E402
+    LEGACY_CLI_MODEL_KEYS,
+    TEXT_ECONOMY_MODELS,
     BaseLLMClient,
     LLMConfig,
     build_llm_client,
@@ -36,9 +38,8 @@ load_dotenv()
 console = Console()
 
 # Restricted to the cost-effective tiers — summarization does not need a flagship.
-ALLOWED_MODEL_KEYS = ["gpt-5.6-luna", "gemini-flash", "ministral-14b"]
-# Retired keys still accepted on the CLI; normalize_model_key() maps them forward.
-LEGACY_MODEL_KEYS = ["gpt-5-mini"]
+ALLOWED_MODEL_KEYS = TEXT_ECONOMY_MODELS
+LEGACY_MODEL_KEYS = LEGACY_CLI_MODEL_KEYS
 
 # ------------------------------------------------------------------
 # Prompt Loading

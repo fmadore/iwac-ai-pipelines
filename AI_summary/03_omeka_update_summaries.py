@@ -14,13 +14,8 @@ Each summary is annotated with the AI model that produced it, as an
 provenance convention AI_ocr_extraction/03 uses for ``iwac:ocrModel``. The model is
 chosen interactively, or with --model.
 
-The script:
-1. Reads all .txt files from the Summaries_FR_TXT directory
-2. For each summary file, extracts the item ID from the filename
-3. Fetches the current item data from Omeka S to preserve existing fields
-4. Updates or adds the bibo:shortDescription field with the generated summary
-5. Attaches the iwac:summaryModel annotation naming the model used
-6. Sends the updated data back to Omeka S via PATCH request
+The write step itself lives in ``common/omeka_text_updater.py``, shared with the
+OCR, OCR-correction and transcription updaters.
 
 Requirements:
 - Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
@@ -34,17 +29,19 @@ Usage:
 """
 
 import argparse
-import os
-import sys
-from tqdm import tqdm
 import logging
+import sys
+from pathlib import Path
+
+from rich.console import Console
 
 # Configure logging to track script execution and errors
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Shared Omeka client and IWAC instance configuration
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
+from common.omeka_text_updater import PropertyTarget, run_text_updates, updates_from_directory
 from common.iwac_config import (
     AI_MODEL_ITEMS,
     IWAC_SUMMARY_MODEL_PROPERTY_ID,
@@ -57,93 +54,11 @@ from common.iwac_config import (
 SUMMARY_TERM = 'bibo:shortDescription'
 SUMMARY_MODEL_TERM = 'iwac:summaryModel'
 
-
-def apply_summary(item_data, new_summary, description_property_id, model_value):
-    """
-    Set the summary on a fetched item *in place*, preserving other metadata.
-
-    upsert_property_value builds a bare literal, so the iwac:summaryModel
-    annotation must be attached afterwards — it is not carried across.
-
-    Returns:
-        bool: True if the text or the annotation changed.
-    """
-    changed = OmekaClient.upsert_property_value(
-        item_data, SUMMARY_TERM, description_property_id, new_summary,
-        property_label='shortDescription',
-    )
-
-    annotation = {SUMMARY_MODEL_TERM: [dict(model_value)]}
-    for value in item_data.get(SUMMARY_TERM, []) or []:
-        if (
-            isinstance(value, dict)
-            and value.get('property_id') == description_property_id
-            and value.get('type', 'literal') == 'literal'
-            and value.get('@value') == new_summary
-        ):
-            if value.get('@annotation') != annotation:
-                value['@annotation'] = annotation
-                changed = True
-            break
-
-    return changed
+console = Console()
 
 
-def update_item_summary(client: OmekaClient, item_id, new_summary, description_property_id,
-                        model_value, dry_run=False):
-    """
-    Update an Omeka S item with a new French summary in the bibo:shortDescription field.
-
-    Args:
-        client: OmekaClient instance
-        item_id (str): The unique identifier of the Omeka S item to update
-        new_summary (str): The French summary text to add to the item
-        description_property_id: Property ID for bibo:shortDescription, resolved at runtime
-        model_value (dict): The iwac:summaryModel annotation value object
-        dry_run (bool): When True, fetch and report only — never PATCH
-
-    Returns:
-        bool: True if the item is in the desired state (or would be), False on failure
-    """
-    item_data = client.get_item(int(item_id))
-    if not item_data:
-        logging.warning(f"No data found for item {item_id}. Skipping update.")
-        return False
-
-    changed = apply_summary(item_data, new_summary, description_property_id, model_value)
-    if not changed:
-        logging.info(f"Summary for item {item_id} already up to date")
-        return True
-
-    if dry_run:
-        logging.info(f"[dry-run] Would update item {item_id}")
-        return True
-
-    return client.update_item(int(item_id), item_data)
-
-
-def main():
-    """
-    Main execution function for updating Omeka S items with French summaries.
-    
-    This function orchestrates the entire update process:
-    1. Validates environment variables
-    2. Resolves the target property and the AI model used for annotation
-    3. Locates the summary files directory
-    4. Processes each summary file to update corresponding Omeka S items
-    5. Provides progress tracking and error reporting
-
-    The function expects summary files to be named with the pattern: {item_id}.txt
-    where item_id corresponds to the Omeka S item identifier.
-
-    Environment Variables Required:
-        - OMEKA_BASE_URL: Base URL for the Omeka S API
-        - OMEKA_KEY_IDENTITY: API key identity for authentication
-        - OMEKA_KEY_CREDENTIAL: API key credential for authentication
-
-    Returns:
-        None: Exits with status code 0 on success, 1 on error
-    """
+def main() -> int:
+    """Upload the generated summaries, annotated with the model that wrote them."""
     parser = argparse.ArgumentParser(
         description="Upload French summaries to Omeka S with iwac:summaryModel provenance."
     )
@@ -155,9 +70,12 @@ def main():
         "--dry-run", action="store_true",
         help="Fetch each item and report what would change, but write nothing.",
     )
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="Skip the interactive confirmation before writing.",
+    )
     args = parser.parse_args()
 
-    # Initialize shared Omeka client
     try:
         client = OmekaClient.from_env()
     except ValueError as e:
@@ -177,73 +95,44 @@ def main():
     if model_key is None:
         return 1
     model = AI_MODEL_ITEMS[model_key]
-    model_value = model_annotation_value(
-        client.base_url, model_key, IWAC_SUMMARY_MODEL_PROPERTY_ID, "AI Model - Summary"
+    target = PropertyTarget(
+        term=SUMMARY_TERM,
+        property_id=description_property_id,
+        property_label='shortDescription',
+        annotation_term=SUMMARY_MODEL_TERM,
+        annotation_value=model_annotation_value(
+            client.base_url, model_key, IWAC_SUMMARY_MODEL_PROPERTY_ID, "AI Model - Summary"
+        ),
     )
     logging.info(
         f"Annotating with {SUMMARY_MODEL_TERM} -> {model['display_title']} (item {model['item_id']})"
     )
-    if args.dry_run:
-        logging.info("DRY RUN — no writes.")
 
-    # Locate the summary files directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    summary_folder = os.path.join(script_dir, "Summaries_FR_TXT")
-
-    if not os.path.exists(summary_folder):
+    summary_folder = Path(__file__).resolve().parent / "Summaries_FR_TXT"
+    if not summary_folder.exists():
         logging.error(f"Summary folder not found: {summary_folder}")
         logging.error("Please run 02_AI_generate_summaries.py first to generate summary files.")
         return 1
 
-    # Get all .txt files in the summary folder
-    txt_files = [f for f in os.listdir(summary_folder) if f.endswith('.txt')]
-
-    if not txt_files:
+    updates = updates_from_directory(summary_folder)
+    if not updates:
         logging.warning(f"No .txt files found in {summary_folder}")
         return 0
+    logging.info(f"Found {len(updates)} summary files to process")
 
-    logging.info(f"Found {len(txt_files)} summary files to process")
+    stats = run_text_updates(
+        client, updates, target,
+        console=console,
+        dry_run=args.dry_run,
+        require_confirmation=not args.yes,
+        extra_confirm_lines=[f"Source folder:    {summary_folder}"],
+        description="Updating summaries...",
+    )
+    if not stats:
+        return 1  # operator declined
 
-    # Process each summary file
-    success_count = 0
-    error_count = 0
-    
-    for txt_file in tqdm(txt_files, desc="Updating Omeka S items with summaries"):
-        # Extract item ID from filename (remove .txt extension)
-        item_id = os.path.splitext(txt_file)[0]
-        txt_path = os.path.join(summary_folder, txt_file)
-
-        try:
-            # Read the summary content
-            with open(txt_path, 'r', encoding='utf-8') as f:
-                summary_text = f.read().strip()
-            
-            # Only proceed if summary_text is not empty
-            if summary_text:
-                if update_item_summary(client, item_id, summary_text, description_property_id,
-                                       model_value, dry_run=args.dry_run):
-                    success_count += 1
-                else:
-                    error_count += 1
-            else:
-                logging.warning(f"Skipping item {item_id}: Summary file is empty")
-                
-        except FileNotFoundError:
-            logging.error(f"Summary file not found: {txt_path}")
-            error_count += 1
-        except Exception as e:
-            logging.error(f"Error processing file {txt_path}: {e}")
-            error_count += 1
-
-    # Final summary of operations
-    logging.info("Update process completed:")
-    logging.info(f"  - Successfully updated: {success_count} items")
-    logging.info(f"  - Errors encountered: {error_count} items")
-    logging.info(f"  - Total processed: {len(txt_files)} files")
-    
-    return 0 if error_count == 0 else 1
+    return 0 if stats["failed"] == 0 else 1
 
 
 if __name__ == "__main__":
-    exit_code = main()
-    exit(exit_code)
+    sys.exit(main())

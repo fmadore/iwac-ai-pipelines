@@ -23,10 +23,6 @@ from typing import Any, Dict, List
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import (
-    Progress, SpinnerColumn, TextColumn, BarColumn,
-    TaskProgressColumn, TimeElapsedColumn,
-)
 from rich import box
 
 if sys.platform == "win32":
@@ -37,7 +33,7 @@ console = Console()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+    sys.path.insert(0, REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.iwac_config import (  # noqa: E402
@@ -45,6 +41,7 @@ from common.iwac_config import (  # noqa: E402
     SUBJECT_AUTHORITY_ITEM_SETS,
     TOPIC_AUTHORITY_ITEM_SETS,
 )
+from common.console_utils import standard_progress  # noqa: E402
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -88,11 +85,7 @@ def export_authority_index(
     Returns number of terms exported.
     """
     rows = []
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-        BarColumn(), TaskProgressColumn(), TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task(f"[cyan]Fetching {label} authorities...", total=None)
         for item_set_id in item_set_ids:
             progress.update(task, description=f"[cyan]Fetching {label} set {item_set_id}...")

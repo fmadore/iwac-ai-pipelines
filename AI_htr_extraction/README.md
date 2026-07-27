@@ -20,10 +20,20 @@ The script extracts individual pages from each PDF and sends them directly to Ge
 2. Run the script:
    ```bash
    python gemini_htr_processor.py
+   # or skip the prompts:
+   python gemini_htr_processor.py --model gemini-pro --language arabic --rpm 5
    ```
 3. Select language mode (French, Arabic, or Multilingual)
 4. Select model (Flash or Pro)
 5. Find transcriptions in `OCR_Results/`
+
+Pages are sent at `ULTRA_HIGH` media resolution — available per-Part only, since
+`GenerateContentConfig` caps at `HIGH` — because stroke detail is what
+distinguishes letters in handwriting.
+
+A page that fails is reported in the run summary and left out of the transcript.
+It is never represented by an `[ERROR: ...]` placeholder in the text: that string
+would otherwise be uploaded to Omeka as page content by a later `03` step.
 
 ## Language Modes
 

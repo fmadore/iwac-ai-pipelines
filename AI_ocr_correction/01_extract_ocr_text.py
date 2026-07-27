@@ -5,21 +5,22 @@ It handles pagination, concurrent processing, and includes error handling and lo
 
 import os
 import sys
+from pathlib import Path
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich import box
 
 # Initialize Rich console
 console = Console()
 
 # Shared Omeka client
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
+from common.console_utils import standard_progress
 
 # Output directory is set relative to the script's location for portability
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TXT")
@@ -75,14 +76,7 @@ def process_items(items, output_dir):
     skipped_count = 0
     error_count = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console
-    ) as progress:
+    with standard_progress(console) as progress:
         task = progress.add_task("[cyan]Extracting OCR text...", total=len(items))
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:

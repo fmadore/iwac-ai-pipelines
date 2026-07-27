@@ -26,7 +26,7 @@ from typing import List, Optional, Sequence, Tuple
 
 # Add repo root to path for shared imports
 import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent.parent))
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.ffmpeg_utils import cleanup_files, sanitize_stem, split_audio
 
 from rich.console import Console

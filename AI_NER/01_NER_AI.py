@@ -66,11 +66,13 @@ console = Console()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+    sys.path.insert(0, REPO_ROOT)
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
 from common.llm_provider import (  # noqa: E402
+    LEGACY_CLI_MODEL_KEYS,
+    TEXT_EXTENDED_MODELS,
     BaseLLMClient,
     ModelOption,
     LLMConfig,
@@ -93,9 +95,8 @@ load_dotenv()
 # Constants & Types
 # ---------------------------------------------------------------------------
 BATCH_SIZE = 10
-ALLOWED_MODEL_KEYS = ["gpt-5.6-luna", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b"]
-# Retired keys still accepted on the CLI; normalize_model_key() maps them forward.
-LEGACY_MODEL_KEYS = ["gpt-5-mini"]
+ALLOWED_MODEL_KEYS = TEXT_EXTENDED_MODELS
+LEGACY_MODEL_KEYS = LEGACY_CLI_MODEL_KEYS
 CSV_FIELDNAMES = ['o:id', 'Title', 'bibo:content', 'Subject AI', 'Spatial AI']
 
 class NERResult(BaseModel):
