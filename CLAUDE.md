@@ -3,7 +3,8 @@
 AI document-processing pipelines for the Islam West Africa Collection (IWAC), a
 digital archive of 14,500+ items in Omeka S. Each pipeline automates one task —
 OCR extraction and correction, summarization, NER, transcription, HTR, sentiment —
-against Gemini, OpenAI, or Mistral.
+against Gemini, OpenAI, Mistral, or the open-weights models (Qwen, DeepSeek)
+reached through OpenRouter.
 
 ## Setup
 
@@ -62,9 +63,17 @@ Never instantiate `openai.OpenAI()`, `google.genai.Client()`, or
 doc, and add new models there first so every pipeline picks them up.
 
 **Pipelines pick a model *tier*, not a list of keys.** `TEXT_ECONOMY_MODELS`,
-`TEXT_EXTENDED_MODELS`, `TEXT_FULL_MODELS` and `GEMINI_DOCUMENT_MODELS` live in
-`llm_provider`; a pipeline's `ALLOWED_MODELS` should be one of them. Retiring a
-model is then a one-line change instead of a grep across five pipelines.
+`TEXT_EXTENDED_MODELS`, `TEXT_FULL_MODELS`, `TEXT_OPEN_MODELS` and
+`GEMINI_DOCUMENT_MODELS` live in `llm_provider`; a pipeline's `ALLOWED_MODELS`
+should be one of them. Retiring a model is then a one-line change instead of a
+grep across five pipelines.
+
+**OpenRouter models carry a routing policy, not just a key.** Every request is
+pinned to `data_collection: "deny"` and `require_parameters` via
+`OPENROUTER_PROVIDER_PREFS` — the first because these pipelines send whole
+archival documents to third-party backends, the second because `json_schema`
+support varies by backend. Add models by extending `MODEL_REGISTRY`, never by
+letting a pipeline pass an arbitrary `vendor/model` slug through.
 
 **Multimodal pipelines are the exception** and call provider SDKs directly, because
 they need capabilities the shared provider does not expose. They must still use
