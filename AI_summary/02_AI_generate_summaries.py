@@ -166,7 +166,7 @@ def main():
             reasoning_effort="low",      # OpenAI: quick summarization
             text_verbosity="low",        # OpenAI: concise output
             thinking_level="MINIMAL",    # Gemini Flash: minimal thinking for speed
-            temperature=0.3              # Gemini: some creativity for natural summaries
+            # No temperature: MODEL_REGISTRY holds each vendor's recommendation.
         )
         
         # Display configuration table
@@ -179,7 +179,6 @@ def main():
         config_table.add_row("Reasoning Effort", config.reasoning_effort or "default")
         config_table.add_row("Text Verbosity", config.text_verbosity or "default")
         config_table.add_row("Thinking Level", config.thinking_level or "default")
-        config_table.add_row("Temperature", str(config.temperature) if config.temperature else "default")
         console.print(config_table)
         
         llm_client = build_llm_client(model_option, config=config)

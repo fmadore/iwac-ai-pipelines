@@ -142,8 +142,9 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Conf
     llm_config = LLMConfig(
         reasoning_effort="medium",      # OpenAI: balanced reasoning (cost-effective)
         text_verbosity="medium",        # OpenAI: detailed entity context
-        thinking_level="minimal",        # Gemini 3: minimal thinking sufficient for NER extraction
-        temperature=0.2                 # Gemini/Mistral: consistent, low-variance results
+        thinking_level="minimal",       # Gemini 3: minimal thinking sufficient for NER extraction
+        # No temperature: each model's vendor-recommended value comes from
+        # MODEL_REGISTRY. Consistency comes from the schema and the prompt.
     )
 
     return Config(

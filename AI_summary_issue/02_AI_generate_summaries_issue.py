@@ -308,16 +308,12 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     # Configure for each step - all Gemini 3 models use thinking_level.
     # Step 1 (per-page extraction) is the quality-critical step - Pro (standard)
     # or Flash (light) - so it gets LOW thinking.
-    config_step1 = LLMConfig(
-        thinking_level="LOW",
-        temperature=0.2
-    )
+    # Neither step sets a temperature: Google recommends sending none for
+    # Gemini 3, since lowering it can send the model into a loop.
+    config_step1 = LLMConfig(thinking_level="LOW")
 
     # Step 2 (consolidation): Gemini Flash (both profiles) - MINIMAL thinking for speed
-    config_step2 = LLMConfig(
-        thinking_level="MINIMAL",
-        temperature=0.3
-    )
+    config_step2 = LLMConfig(thinking_level="MINIMAL")
 
     # Load the extraction prompt
     extraction_prompt = load_extraction_prompt()
@@ -351,7 +347,6 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
             system_instruction=extraction_prompt,
             max_output_tokens=8192,
             response_schema=PageExtraction,
-            temperature=config_step1.temperature or 0.2,
         )
         logging.info(f"Using Gemini 3 with thinking_level={config_step1.thinking_level} for step 1")
 
@@ -370,7 +365,6 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
                 system_instruction=system_prompt,
                 max_output_tokens=8192,
                 response_schema=MagazineIndex,
-                temperature=config_step2.temperature or 0.3,
             )
             return generate_consolidation_with_gemini(
                 client, model_step2.model, extracted_json, step2_gen_config, rate_limiter

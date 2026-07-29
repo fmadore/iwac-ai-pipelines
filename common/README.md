@@ -249,10 +249,13 @@ This guide explains how to use `llm_provider.py` to configure AI model behavior 
 The `LLMConfig` class allows individual scripts to customize AI behavior without modifying the shared provider code. You can now configure:
 
 - **OpenAI**: `reasoning_effort` and `text_verbosity`
-- **Gemini Flash**: `temperature` and `thinking_level` ("minimal", "low", "medium", or "high")
-- **Gemini Pro**: `temperature` and `thinking_level` ("low" or "high")
-- **Mistral**: `temperature`
-- **OpenRouter**: `temperature`, plus `reasoning_effort` on the models that accept one
+- **Gemini Flash**: `thinking_level` ("minimal", "low", "medium", or "high")
+- **Gemini Pro**: `thinking_level` ("low" or "high")
+- **Mistral**: no per-script parameters
+- **OpenRouter**: `reasoning_effort` on the models that accept one
+
+`temperature` is deliberately absent from that list. See
+[Temperature](#temperature-dont-set-it) below.
 
 ## Available Models
 
@@ -407,6 +410,35 @@ schema is always valid.
 
 **Note**: OpenAI's Responses API ignores `temperature` - use `reasoning_effort` and `text_verbosity` instead.
 
+### Temperature: don't set it
+
+Every model's temperature is decided by its vendor and recorded once in
+`MODEL_REGISTRY`. Pipelines should not pass one, because a pipeline picks a model
+*tier* and cannot know which vendor's model the run will land on — and the right
+value differs sharply between them:
+
+| Model | Sent | Why |
+|---|---|---|
+| Gemini 3.x, Gemma 4 | *nothing at all* | Google: "we strongly recommend keeping the temperature parameter at its default value of `1.0`"; below 1.0 "may lead to unexpected behavior, such as looping or degraded performance" |
+| DeepSeek V4 Flash/Pro | `1.0` | DeepSeek's V4 card gives one recipe for all modes: `temperature = 1.0, top_p = 1.0` |
+| Qwen3.7 Flash | `0.7` | Qwen's published non-thinking recipe; Qwen warns near-greedy decoding causes "performance degradation and endless repetitions" |
+| Mistral Large 3, Ministral 3 | `0.2` | The one vendor here recommending a low value — 0.05-0.20 for non-creative instruct work |
+| GPT-5.6 (all tiers) | n/a | The Responses API ignores it |
+
+Looping is the failure that motivates this. In these pipelines it shows up as a
+transcript repeating a paragraph for the rest of a 90-minute interview, or OCR
+stalling on one line until `max_output_tokens` — expensive, and silent until
+someone reads the output. Note that "send nothing" and "send `1.0`" are different
+requests; for Gemini the key is omitted entirely.
+
+`top_p` and `top_k` are never set anywhere in this repo, which matches Google's
+advice to remove them too. When output needs to be constrained, do it with
+explicit rules in the system prompt or with a structured-output schema — not with
+sampling parameters.
+
+`LLMConfig(temperature=...)` still works and still overrides the default. It is
+an escape hatch for a one-off experiment, not something to leave in a script.
+
 ### Gemini Parameters
 
 Both Gemini 3 models use `thinking_level` to control how much reasoning the model does before answering. Thinking cannot be disabled — these models always reason to some degree.
@@ -415,14 +447,12 @@ Both Gemini 3 models use `thinking_level` to control how much reasoning the mode
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness (lower = more consistent) |
 | `thinking_level` | `str` | `"minimal"` | `"minimal"` = fastest, least reasoning<br>`"low"` / `"medium"` = balanced<br>`"high"` = deepest reasoning |
 
 #### Gemini Pro
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness (lower = more consistent) |
 | `thinking_level` | `str` | `"low"` | `"low"` = faster, less reasoning<br>`"high"` = deeper reasoning, slower |
 
 #### Model Comparison
@@ -434,9 +464,8 @@ Both Gemini 3 models use `thinking_level` to control how much reasoning the mode
 
 ### Mistral Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
+Mistral takes no per-script parameters; its `temperature` of `0.2` comes from
+`MODEL_REGISTRY`.
 
 **Available Mistral Models**:
 - **`mistral-large`**: Mistral Large 3 — flagship 41B active params MoE model
@@ -453,7 +482,6 @@ dependency.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
 | `reasoning_effort` | `str` | per model | Only sent to models that accept one; see below |
 
 **Available OpenRouter models**:
@@ -497,7 +525,6 @@ config = LLMConfig(
     reasoning_effort="high",      # OpenAI: careful analysis
     text_verbosity="medium",       # OpenAI: detailed explanations
     thinking_level="high",         # Gemini: deep reasoning
-    temperature=0.2                # Gemini: consistent results
 )
 ```
 
@@ -509,7 +536,6 @@ config = LLMConfig(
     reasoning_effort="low",        # OpenAI: quick processing
     text_verbosity="low",          # OpenAI: concise output
     thinking_level="low",          # Gemini: minimal reasoning
-    temperature=0.1                # Gemini: very consistent
 )
 ```
 
@@ -521,19 +547,19 @@ config = LLMConfig(
     reasoning_effort="medium",     # OpenAI: balanced reasoning
     text_verbosity="medium",       # OpenAI: detailed summaries
     thinking_level="medium",       # Gemini Flash: balanced thinking
-    temperature=0.3                # Gemini: some creativity
 )
 ```
 
 ### Text Classification
-Simple categorization with deterministic output.
+Simple categorization. Constrain the output with a structured-output schema or an
+explicit instruction, not with `temperature=0.0` — near-greedy decoding is what
+Google and Alibaba both warn causes looping.
 
 ```python
 config = LLMConfig(
     reasoning_effort="low",        # OpenAI: quick classification
     text_verbosity="low",          # OpenAI: just the category
     thinking_level="minimal",      # Gemini Flash: least reasoning
-    temperature=0.0                # Gemini: completely deterministic
 )
 ```
 
@@ -544,7 +570,6 @@ Moderate reasoning with low creativity.
 config = LLMConfig(
     reasoning_effort="medium",     # OpenAI: consider context
     text_verbosity="low",          # OpenAI: just the translation
-    temperature=0.2                # Gemini: consistent translations
 )
 ```
 
@@ -571,15 +596,20 @@ response = llm_client.generate(
 
 ## Backward Compatibility
 
-Old scripts using the `temperature` parameter still work:
+Old scripts passing `temperature` still work, but both forms override the model's
+vendor-recommended default, which is rarely what you want — see
+[Temperature](#temperature-dont-set-it):
 
 ```python
 # Old way (still supported)
 llm_client = build_llm_client(model_option, temperature=0.5)
 
-# New way (recommended)
+# Equivalent
 config = LLMConfig(temperature=0.5)
 llm_client = build_llm_client(model_option, config=config)
+
+# What pipelines should do: say nothing, and inherit the vendor's value
+llm_client = build_llm_client(model_option)
 ```
 
 ## Implementation Example
@@ -609,7 +639,6 @@ def main():
         reasoning_effort="high",
         text_verbosity="medium",
         thinking_level="high",
-        temperature=0.2
     )
     
     # Build client
@@ -641,8 +670,11 @@ if __name__ == "__main__":
 2. **Match thinking to model**:
    - Gemini Flash: `"minimal"` for fast tasks, `"low"`/`"medium"` for balanced work, `"high"` for complex analysis
    - Gemini Pro: `"low"` for fast tasks, `"high"` for complex analysis
-3. **Use low temperature for consistency**: OCR, classification, and extraction benefit from `temperature=0.0-0.2`
-4. **Use higher temperature for creativity**: Summaries and generation can use `temperature=0.3-0.7`
+3. **Don't set temperature**: it belongs to the vendor, and lowering it is a
+   documented cause of looping on Gemini 3 and Qwen — see
+   [Temperature](#temperature-dont-set-it)
+4. **Get consistency from the prompt and the schema**, not from sampling: explicit
+   rules in the system instruction, plus `generate_structured()`
 5. **Log your config**: Always log the configuration used for reproducibility
 6. **Use structured outputs**: For NER, classification, and data extraction, prefer `generate_structured()` over parsing JSON manually
 
@@ -651,7 +683,10 @@ if __name__ == "__main__":
 To add a new model to the registry:
 
 1. Update `MODEL_REGISTRY` in `llm_provider.py`
-2. Set appropriate defaults (e.g., `default_thinking_level` for Gemini 3 models)
+2. Set appropriate defaults (e.g., `default_thinking_level` for Gemini 3 models).
+   Look up the vendor's own sampling recommendation and record it as
+   `default_temperature`, with a comment citing it — leave it unset to send no
+   temperature at all. Don't copy a neighbouring entry's value.
 3. Add aliases if needed in `MODEL_ALIASES`
 4. Update this README with model-specific guidance
 

@@ -303,12 +303,14 @@ def main():
     # Configure LLM based on provider
     # For Gemini Flash: disable thinking for faster, cheaper processing
     # For other models: use appropriate defaults
+    # Temperature is left to MODEL_REGISTRY, which carries each vendor's own
+    # recommendation — pinning it low here is a documented cause of looping.
     if model_option.key == "gemini-flash":
-        config = LLMConfig(temperature=0.2, thinking_level="minimal")  # Fastest/cheapest
+        config = LLMConfig(thinking_level="minimal")  # Fastest/cheapest
     elif model_option.key == "gemini-pro":
-        config = LLMConfig(temperature=0.2, thinking_level="low")  # Minimal thinking
+        config = LLMConfig(thinking_level="low")  # Minimal thinking
     else:
-        config = LLMConfig(temperature=0.2)  # Default for OpenAI/Mistral
+        config = LLMConfig()
     
     # Display configuration
     console.rule("[bold cyan]Configuration")

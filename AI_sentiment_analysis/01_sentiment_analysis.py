@@ -576,7 +576,9 @@ def main():
 
     # Build LLM clients for each model
     llm_clients: Dict[str, BaseLLMClient] = {}
-    config = LLMConfig(temperature=0.2)
+    # No temperature: this pipeline fans out across three vendors at once, whose
+    # recommended values differ, so each client takes its own from MODEL_REGISTRY.
+    config = LLMConfig()
     for model_name, model_key in MODEL_KEYS.items():
         try:
             option = get_model_option(model_key)

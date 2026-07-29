@@ -115,7 +115,14 @@ class ModelOption:
     model: str
     label: str
     description: str
-    default_temperature: float = 0.2
+    # Sampling temperature, or None to send no temperature parameter at all.
+    # None is the default because this is now a per-vendor decision rather than
+    # a knob a pipeline should turn: Gemini 3 and DeepSeek V4 are tuned for their
+    # own defaults and degrade (looping, collapsed reasoning) when it is lowered,
+    # while Mistral explicitly recommends a low value for non-creative work. Each
+    # entry below records its vendor's published guidance, and pipelines inherit
+    # it rather than passing a temperature of their own.
+    default_temperature: Optional[float] = None
     # OpenAI-specific defaults
     # GPT-5.6: none/low/medium/high/xhigh/max. None means "send no reasoning
     # parameter at all" — used by the OpenRouter entries, where the accepted
@@ -154,9 +161,16 @@ class LLMConfig:
         store: whether OpenAI retains the request/response server-side (default
                False; these pipelines send full archival documents)
 
+    Sampling:
+        temperature: Leave unset. Every model's vendor-recommended value lives in
+                     MODEL_REGISTRY and is applied automatically, and for Gemini 3
+                     the recommendation is to send no temperature at all — lowering
+                     it is a documented cause of looping. Setting it here overrides
+                     that guidance for whichever model the run happens to pick, so
+                     constrain output through the system prompt instead. (OpenAI's
+                     Responses API ignores the parameter either way.)
+
     Gemini parameters:
-        temperature: 0.0-1.0 - controls randomness (OpenAI ignores this)
-        
         For Gemini 3 (Flash and Pro):
             thinking_level: Controls reasoning depth (cannot be disabled)
                            Flash: "MINIMAL", "LOW", "MEDIUM", or "HIGH"
@@ -170,10 +184,10 @@ class LLMConfig:
         config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
 
         # Fast OCR with Gemini Pro (low thinking)
-        config = LLMConfig(thinking_level="low", temperature=0.1)
+        config = LLMConfig(thinking_level="low")
 
         # Fast OCR correction with Gemini Flash (minimal thinking)
-        config = LLMConfig(thinking_level="minimal", temperature=0.1)
+        config = LLMConfig(thinking_level="minimal")
     """
     temperature: Optional[float] = None
     reasoning_effort: Optional[str] = None
@@ -210,6 +224,15 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         label="ChatGPT (GPT-5.6 Sol)",
         description="OpenAI Responses API — flagship tier ($5/$30 per 1M tokens)"
     ),
+    # Gemini 3.x and Gemma send no temperature at all (default_temperature stays
+    # None). Google's Gemini 3 guide is explicit: "For all Gemini 3 models, we
+    # strongly recommend keeping the temperature parameter at its default value
+    # of 1.0", because lowering it "may lead to unexpected behavior, such as
+    # looping or degraded performance". Looping is the expensive failure here — a
+    # transcript that repeats a paragraph for the rest of a 90-minute interview,
+    # or OCR that stalls on one line. Gemma is a different family with no
+    # published recommendation to lower it, so it also inherits the API default.
+    # Use system-instruction rules, not sampling, when output must be constrained.
     "gemini-flash": ModelOption(
         key="gemini-flash",
         provider=PROVIDER_GEMINI,
@@ -248,6 +271,8 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         model=DEFAULT_MISTRAL_LARGE,
         label="Mistral Large 3",
         description="Mistral AI Large 3 — 41B active params, multimodal MoE",
+        # Mistral is the one vendor here that recommends a *low* temperature:
+        # 0.05-0.20 for instruct work where the model should not be creative.
         default_temperature=0.2
     ),
     "ministral-14b": ModelOption(
@@ -267,7 +292,11 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         model=OPENROUTER_QWEN_FLASH_MODEL,
         label="Qwen3.7 Flash (OpenRouter)",
         description="Alibaba Qwen3.7 Flash — 1M context, strong multilingual ($0.03/$0.13 per 1M tokens)",
-        default_temperature=0.2,
+        # Qwen's published non-thinking sampling recipe is temperature 0.7 (with
+        # top_p 0.8 / top_k 20, which OpenRouter backends set themselves). Qwen
+        # warns that near-greedy decoding "can lead to performance degradation
+        # and endless repetitions" — the same looping failure Gemini 3 describes.
+        default_temperature=0.7,
         # No reasoning parameter is sent: the accepted values are not published
         # per-backend, and non-thinking is the cheapest mode for mechanical work.
         default_reasoning_effort=None,
@@ -278,7 +307,11 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         model=OPENROUTER_DEEPSEEK_FLASH_MODEL,
         label="DeepSeek V4 Flash (OpenRouter)",
         description="DeepSeek V4 Flash — 284B/13B active MoE, 1M context ($0.09/$0.18 per 1M tokens)",
-        default_temperature=0.2,
+        # DeepSeek's V4 model card gives one recipe for every mode and both
+        # sizes: "we recommend setting the sampling parameters to
+        # temperature = 1.0, top_p = 1.0". Lowering it collapses the reasoning
+        # trace rather than making the model more literal.
+        default_temperature=1.0,
         # V4 Flash is a hybrid thinking/non-thinking model: default to
         # non-thinking (cheapest for mechanical work), but honour an explicit
         # high/xhigh from a caller that wants the reasoning path.
@@ -291,7 +324,7 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         model=OPENROUTER_DEEPSEEK_PRO_MODEL,
         label="DeepSeek V4 Pro (OpenRouter)",
         description="DeepSeek V4 Pro — 1.6T/49B active MoE flagship, 1M context ($0.435/$0.87 per 1M tokens)",
-        default_temperature=0.2,
+        default_temperature=1.0,  # Same V4 recipe as Flash; see above.
         # Quality tier: reasoning on by default. xhigh maps to max reasoning.
         default_reasoning_effort="high",
         supported_reasoning_efforts=("high", "xhigh"),
@@ -599,8 +632,14 @@ class GeminiGenerateContentClient(BaseLLMClient):
         Thinking cannot be disabled for Gemini 3 models.
         """
         temp = effective_config.temperature
-        gen_config_kwargs: Dict[str, Any] = {"temperature": temp}
-        
+        # Omit temperature entirely when unset. Google recommends sending no
+        # temperature for Gemini 3 (see MODEL_REGISTRY), and there is a real
+        # difference between not sending the parameter and sending its nominal
+        # default, so the key has to be absent rather than set to 1.0.
+        gen_config_kwargs: Dict[str, Any] = {}
+        if temp is not None:
+            gen_config_kwargs["temperature"] = temp
+
         if genai_types is None:
             return gen_config_kwargs
         
@@ -731,16 +770,16 @@ class MistralClient(BaseLLMClient):
         temp = effective_config.temperature
         
         LOGGER.debug(f"Mistral request with temperature={temp}")
-        
+
         response = self._client.chat.complete(
             model=self.option.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temp,
+            **({} if temp is None else {"temperature": temp}),
         )
-        
+
         if response.choices and len(response.choices) > 0:
             content = response.choices[0].message.content
             return content.strip() if content else ""
@@ -777,9 +816,9 @@ class MistralClient(BaseLLMClient):
                 {"role": "user", "content": user_prompt},
             ],
             response_format=response_schema,
-            temperature=temp,
+            **({} if temp is None else {"temperature": temp}),
         )
-        
+
         # The parse method returns a parsed object directly
         if response.choices and len(response.choices) > 0:
             parsed = response.choices[0].message.parsed
@@ -902,7 +941,7 @@ class OpenRouterClient(BaseLLMClient):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temp,
+            **({} if temp is None else {"temperature": temp}),
             extra_body=self._extra_body(effective_config),
             extra_headers=OPENROUTER_HEADERS,
         )
@@ -945,7 +984,11 @@ class OpenRouterClient(BaseLLMClient):
                 {"role": "user", "content": user_prompt},
             ],
             response_format=response_schema,
-            temperature=effective_config.temperature,
+            **(
+                {}
+                if effective_config.temperature is None
+                else {"temperature": effective_config.temperature}
+            ),
             extra_body=self._extra_body(effective_config),
             extra_headers=OPENROUTER_HEADERS,
         )
@@ -1065,7 +1108,9 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
     Args:
         option: Model selection from MODEL_REGISTRY
         config: Optional LLMConfig for customizing behavior
-        temperature: Deprecated - use config.temperature instead (kept for backward compatibility)
+        temperature: Deprecated - overrides the model's vendor-recommended default,
+                     which is rarely what you want (see LLMConfig). Kept only for
+                     backward compatibility.
     
     Returns:
         Configured LLM client ready for generate() calls
@@ -1079,7 +1124,7 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
         client = build_llm_client(option, config=config)
         
         # Fast processing with minimal thinking
-        config = LLMConfig(thinking_level="minimal", temperature=0.1)
+        config = LLMConfig(thinking_level="minimal")
         client = build_llm_client(option, config=config)
     """
     # Backward compatibility: convert temperature to config

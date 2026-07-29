@@ -202,17 +202,23 @@ class AudioTranscriber(TranscriberBase):
             # Beyond transient API/network errors, this also retries *empty or
             # blocked* responses — RECITATION, a momentary blank candidate, or
             # MAX_TOKENS with no recoverable text. For audio these are usually
-            # non-deterministic, so a fresh sample (nudged to a higher
-            # temperature on later attempts to break probabilistic
-            # recitation/empty loops) typically succeeds where the first failed.
+            # non-deterministic, so a fresh sample typically succeeds where the
+            # first failed.
+            #
+            # Every attempt now runs at the model's default temperature. This
+            # used to start at 0.1 and climb toward 0.7 on later attempts, to
+            # shake the model out of recitation and repetition loops. Google's
+            # Gemini 3 guidance identifies the low starting point as the likely
+            # *cause* of those loops rather than a defence against them: sending
+            # no temperature is recommended, and a value below 1.0 "may lead to
+            # unexpected behavior, such as looping or degraded performance". On a
+            # 90-minute interview a loop is the worst failure available — the
+            # transcript repeats a paragraph until it hits max_output_tokens — so
+            # the ladder is gone and re-sampling alone carries the retry.
             self.last_failure_reason = None
             last_error = None
             for attempt in range(max_retries):
                 try:
-                    # First attempt stays at the accurate low temperature; later
-                    # attempts raise it to diversify sampling.
-                    temperature = 0.1 if attempt == 0 else min(0.1 + 0.2 * attempt, 0.7)
-
                     # Generate transcription using the selected model.
                     # IMPORTANT: Audio part must come FIRST, then the prompt text.
                     self.rate_limiter.wait()
@@ -221,7 +227,6 @@ class AudioTranscriber(TranscriberBase):
                         contents=[media_part, prompt],
                         config=build_generation_config(
                             self.model,
-                            temperature=temperature,
                             max_output_tokens=65536,
                         ),
                     )

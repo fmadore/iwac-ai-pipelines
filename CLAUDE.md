@@ -68,6 +68,15 @@ doc, and add new models there first so every pipeline picks them up.
 should be one of them. Retiring a model is then a one-line change instead of a
 grep across five pipelines.
 
+**Never set `temperature` in a pipeline.** It belongs to the vendor and lives once
+in `MODEL_REGISTRY`: nothing at all for Gemini 3 / Gemma, `1.0` for DeepSeek V4,
+`0.7` for Qwen3.7, `0.2` for Mistral. A pipeline picks a *tier*, so it cannot know
+whose model the run will land on, and the values are not interchangeable — Google
+and Alibaba both document a lowered temperature as a cause of looping, which here
+means a transcript repeating a paragraph through a 90-minute interview or OCR
+stalling on one line. `top_p` / `top_k` are never set either. Constrain output with
+system-prompt rules and `generate_structured()` instead.
+
 **OpenRouter models carry a routing policy, not just a key.** Every request is
 pinned to `data_collection: "deny"` and `require_parameters` via
 `OPENROUTER_PROVIDER_PREFS` — the first because these pipelines send whole

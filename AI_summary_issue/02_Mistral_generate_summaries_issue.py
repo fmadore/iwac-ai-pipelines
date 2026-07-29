@@ -274,7 +274,10 @@ def generate_consolidation_mistral(client: Mistral, system_prompt: str,
                 }
             ],
             response_format=MagazineIndex,
-            temperature=0.3
+            # Mistral recommends 0.05-0.20 for instruct work that should not be
+            # creative; consolidation is mechanical. Matches the Mistral entries
+            # in MODEL_REGISTRY, which this script bypasses.
+            temperature=0.2
         )
 
         if not response.choices:

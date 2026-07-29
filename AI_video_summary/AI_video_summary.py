@@ -138,9 +138,10 @@ class VideoProcessor:
                 response = self.client.models.generate_content(
                     model=self.model,
                     contents=[media_part, self.processing_prompt],
+                    # No temperature: Google recommends sending none for Gemini 3,
+                    # since lowering it can push the model into a loop.
                     config=build_generation_config(
                         self.model,
-                        temperature=0.2,
                         max_output_tokens=65536,
                     ),
                 )

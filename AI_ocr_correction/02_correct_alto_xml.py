@@ -680,13 +680,15 @@ def main():
         console.print(f"[red]✗[/] {e}")
         sys.exit(1)
 
-    # Configure LLM based on provider
+    # Configure LLM based on provider. Temperature is deliberately absent: it is
+    # set per model in MODEL_REGISTRY from each vendor's guidance, and forcing it
+    # low here is what Gemini 3 and Qwen both document as a cause of looping.
     if model_option.key == "gemini-flash":
-        config = LLMConfig(temperature=0.1, thinking_level="minimal")  # Fastest/cheapest
+        config = LLMConfig(thinking_level="minimal")  # Fastest/cheapest
     elif model_option.key == "gemini-pro":
-        config = LLMConfig(temperature=0.1, thinking_level="low")  # Minimal thinking
+        config = LLMConfig(thinking_level="low")  # Minimal thinking
     else:
-        config = LLMConfig(temperature=0.1)  # Low temp for consistency
+        config = LLMConfig()
 
     # Display configuration
     console.rule("[bold cyan]Configuration")

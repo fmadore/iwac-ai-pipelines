@@ -94,7 +94,12 @@ def build_generation_config(
     this boilerplate.
 
     Args:
-        temperature: Optional sampling temperature (0.0 is honored).
+        temperature: Optional sampling temperature (0.0 is honored). Leave unset:
+            Google recommends sending no temperature for Gemini 3, because a
+            value below the 1.0 default "may lead to unexpected behavior, such
+            as looping or degraded performance" — for these pipelines that means
+            a transcript repeating a paragraph or OCR stalling on one line.
+            Constrain output through the system instruction instead.
         media_resolution: Optional media resolution name, e.g. ``"HIGH"``
             for handwriting/archival scans where fine detail matters.
     """

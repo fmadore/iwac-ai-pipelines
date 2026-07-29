@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from common.llm_provider import (
+    GeminiGenerateContentClient,
     LLMConfig,
     MODEL_REGISTRY,
     OpenAIResponsesClient,
@@ -311,3 +312,65 @@ def test_openrouter_ignores_reasoning_trace_in_content(monkeypatch):
     client, _ = _openrouter_client_with_stub(monkeypatch, message=_message(content="  answer  "))
 
     assert client.generate("system", "user") == "answer"
+
+
+# --- Sampling temperature -------------------------------------------------
+#
+# Temperature is a per-vendor decision recorded in MODEL_REGISTRY, not a knob
+# pipelines turn. Google, Alibaba and DeepSeek all warn that lowering it degrades
+# their models — Gemini 3 and Qwen name looping/endless repetition specifically.
+
+
+def test_gemini_models_declare_no_temperature():
+    """Google recommends sending no temperature at all for Gemini 3."""
+    for key in ("gemini-flash", "gemini-flash-lite", "gemini-pro", "gemma-4"):
+        assert MODEL_REGISTRY[key].default_temperature is None, key
+
+
+def test_vendor_temperature_defaults_match_published_guidance():
+    # DeepSeek V4 model card: "temperature = 1.0, top_p = 1.0" for every mode.
+    assert MODEL_REGISTRY["deepseek-v4-flash"].default_temperature == 1.0
+    assert MODEL_REGISTRY["deepseek-v4-pro"].default_temperature == 1.0
+    # Qwen's published non-thinking recipe.
+    assert MODEL_REGISTRY["qwen3.7-flash"].default_temperature == 0.7
+    # Mistral is the one vendor recommending a low value (0.05-0.20).
+    assert MODEL_REGISTRY["mistral-large"].default_temperature == 0.2
+    assert MODEL_REGISTRY["ministral-14b"].default_temperature == 0.2
+
+
+def _gemini_client(monkeypatch, key="gemini-flash"):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setattr("common.llm_provider.genai", MagicMock())
+    return GeminiGenerateContentClient(MODEL_REGISTRY[key])
+
+
+def test_gemini_generation_config_omits_temperature(monkeypatch):
+    """The key must be absent, not set to 1.0.
+
+    Sending the nominal default is not the same request as sending nothing, and
+    the recommendation is to send nothing.
+    """
+    client = _gemini_client(monkeypatch)
+
+    kwargs = client._build_generation_config(client.config)
+
+    assert "temperature" not in kwargs
+
+
+def test_gemini_still_honors_an_explicit_temperature(monkeypatch):
+    """Overriding stays possible — it just is not the default any more."""
+    client = _gemini_client(monkeypatch)
+
+    kwargs = client._build_generation_config(LLMConfig(temperature=0.4).merged_over(client.config))
+
+    assert kwargs["temperature"] == 0.4
+
+
+def test_openrouter_sends_the_vendor_default_temperature(monkeypatch):
+    """A pipeline that sets no temperature gets Qwen's 0.7, not a low default."""
+    client, stub = _openrouter_client_with_stub(monkeypatch, message=_message(content="ok"))
+
+    client.generate("system", "user")
+
+    assert stub.chat.completions.create.call_args.kwargs["temperature"] == 0.7

@@ -132,19 +132,20 @@ def main():
     console.rule("[bold cyan]🤖 Model Selection[/]")
     model_option = get_model_option(args.model, allowed_keys=GEMINI_DOCUMENT_MODELS)
 
-    # OCR benefits from low temperature and minimal thinking for speed. All
-    # Gemini 3 / Gemma 4 models use thinking_level (it cannot be disabled):
+    # OCR runs at the model's default temperature: Google recommends sending none
+    # for Gemini 3, because a lowered one can make the model loop — on a page scan
+    # that shows up as the same line repeating until max_output_tokens. Minimal
+    # thinking for speed. All Gemini 3 / Gemma 4 models use thinking_level (it
+    # cannot be disabled):
     #   Gemini Flash: MINIMAL — fastest, sufficient for OCR
     #   Gemini Pro:   LOW     — Pro does not accept MINIMAL
     #   Gemma 4:      MINIMAL — only MINIMAL or HIGH accepted; MINIMAL for speed
     llm_config = LLMConfig(
-        temperature=0.1,
         thinking_level="LOW" if "pro" in model_option.model.lower() else "MINIMAL",
     )
 
     console.print(key_value_table([
         ("Model", summary_from_option(model_option)),
-        ("Temperature", str(llm_config.temperature)),
         ("Thinking Level", get_thinking_level(model_option.model, llm_config.thinking_level)),
         ("Media Resolution", OCR_MEDIA_RESOLUTION),
         ("Rate Limit", f"{args.rpm} RPM" if args.rpm else "None"),
@@ -168,7 +169,6 @@ def main():
             model_option.model,
             thinking_level=llm_config.thinking_level,
             system_instruction=load_system_instruction(),
-            temperature=llm_config.temperature,
         ),
         PagePolicy(user_prompt=OCR_USER_PROMPT, media_resolution=OCR_MEDIA_RESOLUTION),
         rate_limiter=RateLimiter(args.rpm, logger=logging.getLogger(__name__)),
