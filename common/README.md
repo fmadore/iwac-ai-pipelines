@@ -252,6 +252,7 @@ The `LLMConfig` class allows individual scripts to customize AI behavior without
 - **Gemini Flash**: `temperature` and `thinking_level` ("minimal", "low", "medium", or "high")
 - **Gemini Pro**: `temperature` and `thinking_level` ("low" or "high")
 - **Mistral**: `temperature`
+- **OpenRouter**: `temperature`, plus `reasoning_effort` on the models that accept one
 
 ## Available Models
 
@@ -267,6 +268,9 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality |
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |
+| `qwen3.7-flash` | OpenRouter | `qwen/qwen3.7-flash` | Qwen3.7 Flash | 1M context, strong multilingual, $0.03/$0.13 per 1M tokens |
+| `deepseek-v4-flash` | OpenRouter | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 284B/13B active MoE, 1M context, $0.09/$0.18 per 1M tokens |
+| `deepseek-v4-pro` | OpenRouter | `deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1.6T/49B active MoE flagship, $0.435/$0.87 per 1M tokens |
 
 ### Model Aliases
 
@@ -282,6 +286,12 @@ For convenience, these aliases are also supported:
 | `gemini` | `gemini-flash` |
 | `mistral` | `mistral-large` |
 | `ministral` | `ministral-14b` |
+| `qwen` | `qwen3.7-flash` |
+| `deepseek` | `deepseek-v4-flash` |
+| `deepseek-pro` | `deepseek-v4-pro` |
+
+OpenRouter slugs resolve as-is too, so a model id copied off openrouter.ai
+(`qwen/qwen3.7-flash`) works without translation.
 
 The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-5.6-luna`, and
 `gpt-5.1` / `gpt-5` → `gpt-5.6-sol`. Their underlying snapshots shut down on
@@ -364,6 +374,7 @@ Each provider gets the Pydantic class itself, not `model_json_schema()`:
 | OpenAI | `responses.parse(text_format=Model)` |
 | Gemini | `GenerateContentConfig(response_schema=Model)` |
 | Mistral | `chat.parse(response_format=Model)` |
+| OpenRouter | `chat.completions.parse(response_format=Model)` |
 
 This matters for OpenAI in particular. Its `strict` mode requires
 `additionalProperties: false` on every object and *every* property listed in
@@ -432,6 +443,49 @@ Both Gemini 3 models use `thinking_level` to control how much reasoning the mode
 - **`ministral-14b`**: Ministral 3 14B — fast, cost-effective ($0.2/M tokens)
 
 **Note**: Both Mistral models support native structured outputs via `client.chat.parse()`.
+
+### OpenRouter Parameters
+
+OpenRouter is a router in front of open-weights models, not a lab. One
+`OPENROUTER_API_KEY` covers all of them, and because the endpoint is
+OpenAI-compatible it reuses the already-installed `openai` SDK — no extra
+dependency.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `temperature` | `float` (0.0-1.0) | `0.2` | Controls randomness in responses |
+| `reasoning_effort` | `str` | per model | Only sent to models that accept one; see below |
+
+**Available OpenRouter models**:
+- **`qwen3.7-flash`**: Alibaba Qwen3.7 Flash — 1M context, strong multilingual. No reasoning parameter is sent.
+- **`deepseek-v4-flash`**: DeepSeek V4 Flash — hybrid thinking model, non-thinking by default; accepts `"high"` / `"xhigh"`.
+- **`deepseek-v4-pro`**: DeepSeek V4 Pro — quality tier, reasons at `"high"` by default; accepts `"high"` / `"xhigh"`.
+
+Three behaviours are specific to this provider and worth knowing:
+
+**Data collection is denied.** OpenRouter dispatches to third-party inference
+backends and defaults to allowing ones that may retain or train on the payload.
+These pipelines send whole archival documents, so every request carries
+`provider: {"data_collection": "deny"}` — the same intent as `store=False` on
+the OpenAI path. It is applied in `OPENROUTER_PROVIDER_PREFS`, not per call, so
+no pipeline can forget it.
+
+**`require_parameters` is on.** `json_schema` support varies by backend. Without
+this flag a structured request can be routed to one that ignores
+`response_format` and answers in prose.
+
+**Reasoning effort is clamped, not forwarded.** `LLMConfig` is shared across
+providers, so a pipeline tuned for OpenAI (NER asks for `"medium"`) reaches
+these models too. An effort a model does not declare in
+`supported_reasoning_efforts` is dropped in favour of the model's own default,
+because with `require_parameters` on, forwarding it could leave the request
+with no eligible backend.
+
+**Structured output has a fallback.** Unlike first-party OpenAI, `message.parsed`
+cannot be relied on: open models routinely return schema-valid JSON as a plain
+string, sometimes inside a ``` fence. `OpenRouterClient.generate_structured()`
+validates the raw content when `parsed` is empty, so a well-formed answer is not
+thrown away over its packaging.
 
 ## Recommended Configurations by Use Case
 

@@ -1,4 +1,5 @@
-"""Shared helpers for selecting and calling Large Language Models (OpenAI / Gemini / Mistral).
+"""Shared helpers for selecting and calling Large Language Models
+(OpenAI / Gemini / Mistral / OpenRouter).
 
 This module centralizes provider/model selection so individual pipelines only need to
 focus on their prompts. Adding new models or tweaking API settings now only requires
@@ -6,10 +7,12 @@ changing this file.
 """
 from __future__ import annotations
 
+import json
 import os
 import logging
+import re
 from dataclasses import dataclass, fields
-from typing import Any, Dict, List, Optional, Type, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
 from dotenv import load_dotenv
 
@@ -47,6 +50,7 @@ LOGGER = logging.getLogger(__name__)
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_MISTRAL = "mistral"
+PROVIDER_OPENROUTER = "openrouter"
 
 # OpenAI GPT-5.6 family (released 2026-07-09): three durable capability tiers
 # replacing the old numbered lineup. There is no mini/nano variant in this
@@ -63,6 +67,47 @@ DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
 
+# ---------------------------------------------------------------------------
+# OpenRouter
+#
+# OpenRouter is a router, not a lab: one API key and one OpenAI-compatible
+# endpoint in front of the open-weights models (Qwen, DeepSeek, ...) that the
+# three first-party SDKs above do not serve. It exists here so a francophone
+# corpus can be run against open models at a fraction of GPT/Gemini prices,
+# and so a fresh clone needs one key instead of three.
+#
+# Model ids are OpenRouter slugs, unversioned on purpose: like the Gemini
+# ``-latest`` aliases, they follow the vendor's current pointer.
+# ---------------------------------------------------------------------------
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+OPENROUTER_QWEN_FLASH_MODEL = "qwen/qwen3.7-flash"
+OPENROUTER_DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
+OPENROUTER_DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
+
+#: Routing policy applied to *every* OpenRouter request.
+#:
+#: ``data_collection: "deny"`` is the important one. OpenRouter dispatches to
+#: third-party inference backends and defaults to "allow", i.e. backends that
+#: may retain or train on the payload. These pipelines send whole archival
+#: documents — the same reason ``ModelOption.default_store`` is False for
+#: OpenAI — so restrict routing to backends that do not collect user data.
+#:
+#: ``require_parameters: True`` keeps structured output honest: json_schema
+#: support varies per backend, and without this a request can be routed to one
+#: that silently ignores ``response_format`` and returns prose.
+OPENROUTER_PROVIDER_PREFS: Dict[str, Any] = {
+    "data_collection": "deny",
+    "require_parameters": True,
+}
+
+#: Optional attribution headers; OpenRouter shows them on the account's
+#: activity page, which makes a runaway pipeline easy to spot.
+OPENROUTER_HEADERS: Dict[str, str] = {
+    "HTTP-Referer": "https://github.com/fmadore/iwac-ai-pipelines",
+    "X-Title": "IWAC AI Pipelines",
+}
+
 @dataclass(frozen=True)
 class ModelOption:
     key: str
@@ -72,7 +117,17 @@ class ModelOption:
     description: str
     default_temperature: float = 0.2
     # OpenAI-specific defaults
-    default_reasoning_effort: str = "low"  # GPT-5.6: none/low/medium/high/xhigh/max
+    # GPT-5.6: none/low/medium/high/xhigh/max. None means "send no reasoning
+    # parameter at all" — used by the OpenRouter entries, where the accepted
+    # effort values differ per model and an unsupported one narrows routing.
+    default_reasoning_effort: Optional[str] = "low"
+    # OpenRouter-only: the effort values this model accepts. Empty means the
+    # model takes no reasoning parameter, so none is sent. A requested effort
+    # outside this set falls back to ``default_reasoning_effort`` rather than
+    # being forwarded, because ``require_parameters`` would otherwise strand
+    # the request with no eligible backend. Ignored by the first-party clients,
+    # whose SDKs validate the value themselves.
+    supported_reasoning_efforts: tuple = ()
     default_text_verbosity: str = "low"    # "low", "medium", "high"
     # Do not retain request/response bodies server-side by default: these
     # pipelines send full archival documents, and there is no need for a
@@ -203,6 +258,44 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         description="Mistral Ministral 3 14B — fast, cost-effective ($0.2/M tokens)",
         default_temperature=0.2
     ),
+    # OpenRouter-served open-weights models. The two Flash tiers cost roughly a
+    # tenth of gpt-5.6-luna, which is what makes a full-corpus NER or sentiment
+    # pass affordable; Pro is the quality tier for the harder pipelines.
+    "qwen3.7-flash": ModelOption(
+        key="qwen3.7-flash",
+        provider=PROVIDER_OPENROUTER,
+        model=OPENROUTER_QWEN_FLASH_MODEL,
+        label="Qwen3.7 Flash (OpenRouter)",
+        description="Alibaba Qwen3.7 Flash — 1M context, strong multilingual ($0.03/$0.13 per 1M tokens)",
+        default_temperature=0.2,
+        # No reasoning parameter is sent: the accepted values are not published
+        # per-backend, and non-thinking is the cheapest mode for mechanical work.
+        default_reasoning_effort=None,
+    ),
+    "deepseek-v4-flash": ModelOption(
+        key="deepseek-v4-flash",
+        provider=PROVIDER_OPENROUTER,
+        model=OPENROUTER_DEEPSEEK_FLASH_MODEL,
+        label="DeepSeek V4 Flash (OpenRouter)",
+        description="DeepSeek V4 Flash — 284B/13B active MoE, 1M context ($0.09/$0.18 per 1M tokens)",
+        default_temperature=0.2,
+        # V4 Flash is a hybrid thinking/non-thinking model: default to
+        # non-thinking (cheapest for mechanical work), but honour an explicit
+        # high/xhigh from a caller that wants the reasoning path.
+        default_reasoning_effort=None,
+        supported_reasoning_efforts=("high", "xhigh"),
+    ),
+    "deepseek-v4-pro": ModelOption(
+        key="deepseek-v4-pro",
+        provider=PROVIDER_OPENROUTER,
+        model=OPENROUTER_DEEPSEEK_PRO_MODEL,
+        label="DeepSeek V4 Pro (OpenRouter)",
+        description="DeepSeek V4 Pro — 1.6T/49B active MoE flagship, 1M context ($0.435/$0.87 per 1M tokens)",
+        default_temperature=0.2,
+        # Quality tier: reasoning on by default. xhigh maps to max reasoning.
+        default_reasoning_effort="high",
+        supported_reasoning_efforts=("high", "xhigh"),
+    ),
 }
 
 MODEL_ALIASES = {
@@ -255,6 +348,17 @@ MODEL_ALIASES = {
     "ministral": "ministral-14b",
     "ministral-3": "ministral-14b",
     "ministral-14b-2512": "ministral-14b",
+    # OpenRouter aliases. The full slugs are accepted so a model id copied
+    # straight off openrouter.ai resolves without translation.
+    "qwen": "qwen3.7-flash",
+    "qwen-flash": "qwen3.7-flash",
+    "qwen3.7": "qwen3.7-flash",
+    "qwen/qwen3.7-flash": "qwen3.7-flash",
+    "deepseek": "deepseek-v4-flash",
+    "deepseek-flash": "deepseek-v4-flash",
+    "deepseek/deepseek-v4-flash": "deepseek-v4-flash",
+    "deepseek-pro": "deepseek-v4-pro",
+    "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
 }
 
 # ---------------------------------------------------------------------------
@@ -270,15 +374,20 @@ MODEL_ALIASES = {
 #: Cost-optimized tiers. Enough for mechanical work: summarization, correction.
 TEXT_ECONOMY_MODELS: List[str] = ["gpt-5.6-luna", "gemini-flash", "ministral-14b"]
 
+#: Open-weights models served through OpenRouter (one OPENROUTER_API_KEY).
+TEXT_OPEN_MODELS: List[str] = ["qwen3.7-flash", "deepseek-v4-flash", "deepseek-v4-pro"]
+
 #: Economy tiers plus the open-weights and flagship Mistral options (NER).
 TEXT_EXTENDED_MODELS: List[str] = [
     "gpt-5.6-luna", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b",
+    "qwen3.7-flash", "deepseek-v4-flash",
 ]
 
 #: Every text model, including the quality tiers, for output-quality-critical work.
 TEXT_FULL_MODELS: List[str] = [
     "gemini-flash", "gemini-pro", "gpt-5.6-luna", "gpt-5.6-sol",
     "mistral-large", "ministral-14b",
+    "qwen3.7-flash", "deepseek-v4-flash", "deepseek-v4-pro",
 ]
 
 #: Models served via the Gemini API that accept native PDF/vision input.
@@ -680,6 +789,228 @@ class MistralClient(BaseLLMClient):
         raise ValueError("No output received from Mistral structured response")
 
 
+class OpenRouterClient(BaseLLMClient):
+    """OpenRouter client, driven through the OpenAI SDK's chat-completions API.
+
+    OpenRouter speaks the OpenAI wire format, so no extra dependency is needed —
+    only a different ``base_url`` and key. Two differences from
+    ``OpenAIResponsesClient`` are worth knowing:
+
+    * It is chat-completions, not the Responses API, so there is no
+      ``verbosity`` and no ``store`` flag. Retention is governed instead by the
+      ``data_collection: "deny"`` routing preference in
+      ``OPENROUTER_PROVIDER_PREFS``.
+    * OpenRouter-specific parameters (``provider``, ``reasoning``) are not in
+      the OpenAI SDK's typed signature and travel in ``extra_body``.
+    """
+
+    def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
+        if OpenAI is None:
+            raise RuntimeError("openai package is not installed")
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENROUTER_API_KEY not set")
+        super().__init__(option, config)
+        self._client = OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+
+    def _resolve_reasoning_effort(self, effective_config: LLMConfig) -> Optional[str]:
+        """Pick the reasoning effort to send, or None to send none at all.
+
+        ``LLMConfig`` is shared across providers, so a pipeline tuned for
+        OpenAI (NER asks for "medium") reaches these models too. Forwarding an
+        effort the model does not accept is worse than dropping it: with
+        ``require_parameters`` on it can leave the request with no eligible
+        backend. So a requested value is honoured only when the model declares
+        it, and otherwise degrades to the model's own default.
+        """
+        requested = effective_config.reasoning_effort
+        supported = self.option.supported_reasoning_efforts
+        if requested and requested in supported:
+            return requested
+        if requested and requested != self.option.default_reasoning_effort:
+            LOGGER.debug(
+                "%s does not accept reasoning effort %r (accepts %s); using %r",
+                self.option.model, requested, ", ".join(supported) or "none",
+                self.option.default_reasoning_effort,
+            )
+        return self.option.default_reasoning_effort
+
+    def _extra_body(self, effective_config: LLMConfig) -> Dict[str, Any]:
+        """Build the OpenRouter-only part of the request body."""
+        body: Dict[str, Any] = {"provider": dict(OPENROUTER_PROVIDER_PREFS)}
+        effort = self._resolve_reasoning_effort(effective_config)
+        if effort:
+            body["reasoning"] = {"effort": effort}
+        return body
+
+    def _parse_endpoint(self) -> Callable[..., Any]:
+        """Resolve ``chat.completions.parse`` across supported SDK versions.
+
+        The helper moved out of ``client.beta`` during the openai 1.x line, and
+        pyproject allows anything from 1.60 up, so both homes must be tried.
+        """
+        parse = getattr(self._client.chat.completions, "parse", None)
+        if parse is not None:
+            return parse
+        beta_chat = getattr(getattr(self._client, "beta", None), "chat", None)
+        parse = getattr(getattr(beta_chat, "completions", None), "parse", None)
+        if parse is None:  # pragma: no cover - very old SDK
+            raise RuntimeError(
+                "Installed openai SDK exposes no chat.completions.parse; "
+                "upgrade to openai>=1.60 for structured outputs"
+            )
+        return parse
+
+    @staticmethod
+    def _message_text(message: Any) -> str:
+        """Return a message's answer text, ignoring any reasoning trace.
+
+        Reasoning models on OpenRouter put the chain of thought in
+        ``reasoning``/``reasoning_details`` and the answer in ``content``; only
+        the latter is the result.
+        """
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        # Some backends return content as a list of typed parts.
+        if isinstance(content, list):
+            parts = [
+                part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "")
+                for part in content
+            ]
+            return "".join(filter(None, parts))
+        return ""
+
+    def _first_message(self, response: Any) -> Any:
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            raise ValueError(f"No output received from OpenRouter ({self.option.model})")
+        return choices[0].message
+
+    def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
+        effective_config = self._get_effective_config(config)
+        temp = effective_config.temperature
+
+        LOGGER.debug(
+            "OpenRouter request model=%s temperature=%s reasoning_effort=%s",
+            self.option.model, temp, effective_config.reasoning_effort,
+        )
+
+        response = self._client.chat.completions.create(
+            model=self.option.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temp,
+            extra_body=self._extra_body(effective_config),
+            extra_headers=OPENROUTER_HEADERS,
+        )
+        return self._message_text(self._first_message(response)).strip()
+
+    def generate_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: Type[T],
+        *,
+        config: Optional[LLMConfig] = None
+    ) -> T:
+        """Generate structured output via OpenRouter's ``json_schema`` support.
+
+        Goes through the SDK's ``parse()`` helper for the same reason the OpenAI
+        client does: it runs ``to_strict_json_schema()``, and a hand-built
+        ``model_json_schema()`` is rejected under ``strict``.
+
+        Unlike first-party OpenAI, the parsed object cannot be relied on. Open
+        models reached through the router routinely return schema-valid JSON as
+        a plain string — sometimes inside a ``` fence — which leaves
+        ``message.parsed`` as None. Validating the raw content is the fallback,
+        so a well-formed answer is not thrown away over its packaging.
+        """
+        if BaseModel is None:
+            raise RuntimeError("pydantic package is required for structured outputs")
+
+        effective_config = self._get_effective_config(config)
+
+        LOGGER.debug(
+            "OpenRouter structured request model=%s schema=%s temperature=%s",
+            self.option.model, response_schema.__name__, effective_config.temperature,
+        )
+
+        response = self._parse_endpoint()(
+            model=self.option.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format=response_schema,
+            temperature=effective_config.temperature,
+            extra_body=self._extra_body(effective_config),
+            extra_headers=OPENROUTER_HEADERS,
+        )
+
+        message = self._first_message(response)
+
+        parsed = getattr(message, "parsed", None)
+        if parsed is not None:
+            return parsed
+
+        refusal = getattr(message, "refusal", None)
+        if refusal:
+            raise ValueError(f"OpenRouter model refused the structured request: {refusal}")
+
+        text = self._message_text(message).strip()
+        if not text:
+            raise ValueError(
+                f"No output received from OpenRouter structured response ({self.option.model})"
+            )
+        return response_schema.model_validate_json(_extract_json_payload(text))
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
+def _extract_json_payload(text: str) -> str:
+    """Pull the JSON document out of a model response.
+
+    Only needed for the OpenRouter path: several open models wrap their answer
+    in a Markdown fence or prepend a sentence even when a JSON schema was
+    requested. Returns ``text`` unchanged when it already parses, so a
+    well-behaved response is never rewritten.
+    """
+    candidate = text.strip()
+    try:
+        json.loads(candidate)
+        return candidate
+    except ValueError:
+        pass
+
+    fenced = _JSON_FENCE_RE.search(candidate)
+    if fenced:
+        inner = fenced.group(1).strip()
+        try:
+            json.loads(inner)
+            return inner
+        except ValueError:
+            candidate = inner
+
+    # Last resort: the outermost {...} or [...] span.
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = candidate.find(opener)
+        end = candidate.rfind(closer)
+        if start != -1 and end > start:
+            span = candidate[start:end + 1]
+            try:
+                json.loads(span)
+                return span
+            except ValueError:
+                continue
+
+    # Nothing parsed; hand the original back so Pydantic raises the real error.
+    return text
+
+
 def normalize_model_key(model_key: Optional[str]) -> Optional[str]:
     if not model_key:
         return None
@@ -761,6 +1092,8 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
         return GeminiGenerateContentClient(option, config)
     if option.provider == PROVIDER_MISTRAL:
         return MistralClient(option, config)
+    if option.provider == PROVIDER_OPENROUTER:
+        return OpenRouterClient(option, config)
     raise ValueError(f"Unsupported provider: {option.provider}")
 
 def summary_from_option(option: ModelOption) -> str:

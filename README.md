@@ -8,7 +8,7 @@ Python workflows for processing the [Islam West Africa Collection](https://islam
 
 The [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) is an open-access digital database documenting Islam and Muslim communities in Benin, Burkina Faso, Côte d'Ivoire, Niger, Nigeria, and Togo since the 1960s. Created by [Frédérick Madore](https://www.frederickmadore.com/) and hosted at the Leibniz-Zentrum Moderner Orient (ZMO) in Berlin, the collection contains over 14,500 items and 28 million words of text.
 
-At this scale, traditional manual processing—metadata tagging, OCR correction, entity identification—is no longer viable. These pipelines use LLMs from Google Gemini, OpenAI, and Mistral to automate labor-intensive tasks that would otherwise leave much of the corpus inaccessible.
+At this scale, traditional manual processing—metadata tagging, OCR correction, entity identification—is no longer viable. These pipelines use LLMs from Google Gemini, OpenAI, and Mistral, plus open-weights models (Qwen, DeepSeek) reached through OpenRouter, to automate labor-intensive tasks that would otherwise leave much of the corpus inaccessible.
 
 ## What These Tools Do
 
@@ -66,6 +66,7 @@ Create a `.env` file:
 GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key
 MISTRAL_API_KEY=your_mistral_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 
 # Omeka S connection (for database integration)
 OMEKA_BASE_URL=https://your-omeka-instance.com/api
@@ -98,6 +99,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 | Gemini | `gemini-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
+| OpenRouter | `qwen3.7-flash`, `deepseek-v4-flash`, `deepseek-v4-pro` | Text pipelines, one `OPENROUTER_API_KEY` for all three. The Flash tiers cost roughly a tenth of `gpt-5.6-luna` and are offered by NER and OCR correction; `deepseek-v4-pro` is the quality tier, offered by OCR correction only. Requests are routed only to backends that do not retain data. |
 
 ## Adapting for Other Projects
 

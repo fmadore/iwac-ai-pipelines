@@ -41,10 +41,20 @@ python 03_Omeka_update.py
 | `gpt-5.6-luna` | OpenAI | Fast | Low |
 | `mistral-large` | Mistral | Medium | Medium |
 | `ministral-14b` | Mistral | Fast | Low |
+| `qwen3.7-flash` | Alibaba (open-weights via OpenRouter) | Fast | Lowest |
+| `deepseek-v4-flash` | DeepSeek (open-weights via OpenRouter) | Fast | Lowest |
 
 All models use the same French-language prompt (`ner_system_prompt.md`) optimized for West African Islamic contexts.
 
 `gemma-4` uses the same `GEMINI_API_KEY` as the Gemini models. Thinking level is `minimal` by default (Gemma 4 accepts only `MINIMAL` or `HIGH`), which matches the low-cost entity-extraction budget used by `gemini-flash`.
+
+`qwen3.7-flash` and `deepseek-v4-flash` share one `OPENROUTER_API_KEY` and cost
+roughly a tenth of `gpt-5.6-luna`, which is what makes a full-corpus pass
+affordable. Both run without reasoning here: the NER config's
+`reasoning_effort="medium"` is an OpenAI setting and is not forwarded to them.
+Because these are open models behind a router, treat a first run as an
+evaluation — compare its entities against a known-good model on the same item
+set before committing to a bulk pass.
 
 ## Entity Categories
 

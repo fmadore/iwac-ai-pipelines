@@ -82,6 +82,7 @@ from common.llm_provider import (  # noqa: E402
     PROVIDER_GEMINI,
     PROVIDER_OPENAI,
     PROVIDER_MISTRAL,
+    PROVIDER_OPENROUTER,
 )
 
 # ---------------------------------------------------------------------------
@@ -132,6 +133,8 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Conf
             missing.append('GEMINI_API_KEY or GOOGLE_APPLICATION_CREDENTIALS')
     if model_option.provider == PROVIDER_MISTRAL and not os.getenv('MISTRAL_API_KEY'):
         missing.append('MISTRAL_API_KEY')
+    if model_option.provider == PROVIDER_OPENROUTER and not os.getenv('OPENROUTER_API_KEY'):
+        missing.append('OPENROUTER_API_KEY')
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
@@ -521,6 +524,10 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
         config_table.add_row("Reasoning Effort", config.llm_config.reasoning_effort or "default")
     elif model_option.provider == PROVIDER_GEMINI:
         config_table.add_row("Thinking Level", config.llm_config.thinking_level or "default")
+    elif model_option.provider == PROVIDER_OPENROUTER:
+        # The NER-wide "medium" is an OpenAI setting; show what OpenRouter is
+        # actually sent, which may be nothing at all.
+        config_table.add_row("Reasoning Effort", model_option.default_reasoning_effort or "off")
     console.print(config_table)
     console.print()
 
