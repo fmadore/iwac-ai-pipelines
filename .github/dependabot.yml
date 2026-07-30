@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Actions pins go stale silently: runner deprecations and Node-runtime bumps
+  # only surface as a broken job. A couple of PRs a year keeps CI current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+
+  # Dependencies are declared as ranges, so patch and minor releases already
+  # satisfy them and raise no PR. Dependabot speaks up only when a release
+  # falls outside a bound — the major provider-SDK bumps that need testing.
+  # Both manifests live here: pyproject.toml and requirements.txt.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    versioning-strategy: "widen"
+    groups:
+      dev-tooling:
+        patterns: ["pytest", "ruff"]
