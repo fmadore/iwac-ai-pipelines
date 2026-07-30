@@ -15,7 +15,7 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
-    versioning-strategy: "widen"
+    versioning-strategy: "increase-if-necessary"
     groups:
       dev-tooling:
         patterns: ["pytest", "ruff"]
