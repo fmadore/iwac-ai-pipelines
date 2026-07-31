@@ -271,7 +271,8 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality |
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |
-| `qwen3.7-flash` | OpenRouter | `qwen/qwen3.7-flash` | Qwen3.7 Flash | 1M context, strong multilingual, $0.03/$0.13 per 1M tokens |
+| `qwen3.5-moe` | OpenRouter | `qwen/qwen3.5-35b-a3b` | Qwen3.5 35B-A3B | Apache-2.0 open weights, MoE 3B active, $0.14/$1.00 per 1M tokens |
+| `qwen3.5-dense` | OpenRouter | `qwen/qwen3.5-27b` | Qwen3.5 27B | Apache-2.0 open weights, dense, $0.195/$1.56 per 1M tokens |
 | `deepseek-v4-flash` | OpenRouter | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 284B/13B active MoE, 1M context, $0.09/$0.18 per 1M tokens |
 | `deepseek-v4-pro` | OpenRouter | `deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1.6T/49B active MoE flagship, $0.435/$0.87 per 1M tokens |
 
@@ -289,12 +290,12 @@ For convenience, these aliases are also supported:
 | `gemini` | `gemini-flash` |
 | `mistral` | `mistral-large` |
 | `ministral` | `ministral-14b` |
-| `qwen` | `qwen3.7-flash` |
+| `qwen` | `qwen3.5-moe` |
 | `deepseek` | `deepseek-v4-flash` |
 | `deepseek-pro` | `deepseek-v4-pro` |
 
 OpenRouter slugs resolve as-is too, so a model id copied off openrouter.ai
-(`qwen/qwen3.7-flash`) works without translation.
+(`qwen/qwen3.5-35b-a3b`) works without translation.
 
 The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-5.6-luna`, and
 `gpt-5.1` / `gpt-5` → `gpt-5.6-sol`. Their underlying snapshots shut down on
@@ -485,7 +486,9 @@ dependency.
 | `reasoning_effort` | `str` | per model | Only sent to models that accept one; see below |
 
 **Available OpenRouter models**:
-- **`qwen3.7-flash`**: Alibaba Qwen3.7 Flash — 1M context, strong multilingual. No reasoning parameter is sent.
+- **`qwen3.5-moe` / `qwen3.5-dense`**: Qwen3.5 35B-A3B and 27B, both Apache-2.0 open weights
+  (deliberately not the Flash/Plus/Max hosted tiers, which publish no weights). Accept
+  `reasoning_effort` minimal/low/medium/high/xhigh, normalised by OpenRouter.
 - **`deepseek-v4-flash`**: DeepSeek V4 Flash — hybrid thinking model, non-thinking by default; accepts `"high"` / `"xhigh"`.
 - **`deepseek-v4-pro`**: DeepSeek V4 Pro — quality tier, reasons at `"high"` by default; accepts `"high"` / `"xhigh"`.
 

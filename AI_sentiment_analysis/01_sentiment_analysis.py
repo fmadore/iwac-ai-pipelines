@@ -33,14 +33,10 @@ MISTRAL_API_KEY       Mistral API key
 """
 import sys
 import json
-import time
 import argparse
 import logging
-import concurrent.futures
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Literal
-
-from pydantic import BaseModel, Field
+from typing import List, Dict, Any
 
 # Rich for beautiful console output
 from rich.console import Console
@@ -55,6 +51,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
 from common.console_utils import standard_progress
+
+# Schema, prompt and analysis calls are shared with the pilot so the two runs
+# stay comparable (see sentiment_core's module docstring).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sentiment_core import (  # noqa: E402
+    CENTRALITE_ITEM_IDS,
+    POLARITE_ITEM_IDS,
+    SUBJECTIVITE_ITEM_IDS,
+    SentimentAnalysisOutput,  # noqa: F401  (re-exported: external callers import it from here)
+    analyze_with_all_models,
+    get_item_content,
+    load_system_prompt,
+)
 
 # Global Rich console
 console = Console()
@@ -105,32 +114,6 @@ PROPERTY_MAPPINGS = {
     },
 }
 
-# Controlled Vocabulary Item IDs for linking
-CENTRALITE_ITEM_IDS = {
-    "Très central": 78048,
-    "Central": 78049,
-    "Secondaire": 78050,
-    "Marginal": 78051,
-    "Non abordé": 78052,
-}
-
-POLARITE_ITEM_IDS = {
-    "Très positif": 78031,
-    "Positif": 78038,
-    "Neutre": 78039,
-    "Négatif": 78040,
-    "Très négatif": 78041,
-    "Non applicable": 78042,
-}
-
-SUBJECTIVITE_ITEM_IDS = {
-    1: 78043,  # Très objectif
-    2: 78044,  # Plutôt objectif
-    3: 78045,  # Mixte
-    4: 78046,  # Plutôt subjectif
-    5: 78047,  # Très subjectif
-}
-
 # Property IDs for IWAC Omeka S instance
 # These are stable within the instance and used for API updates
 PROPERTY_IDS: Dict[str, int] = {
@@ -174,68 +157,8 @@ def configure_logging() -> logging.Logger:
 
 
 # ============================================================================
-# PYDANTIC MODELS
-# ============================================================================
-
-class SentimentAnalysisOutput(BaseModel):
-    """Schema for sentiment analysis output - used for structured outputs with AI APIs."""
-    centralite_islam_musulmans: Literal[
-        "Très central", "Central", "Secondaire", "Marginal", "Non abordé"
-    ] = Field(description="Importance accordée aux thèmes liés à l'islam et aux musulmans dans l'article")
-    centralite_justification: str = Field(description="Courte justification en 1 phrase sur la centralité de l'islam/des musulmans")
-    subjectivite_score: Optional[int] = Field(
-        default=None,
-        description="Score de subjectivité de 1 à 5 (entier), ou null si le sujet n'est pas abordé",
-    )
-    subjectivite_justification: str = Field(description="Justification en 1-2 phrases pour le score de subjectivité")
-    polarite: Literal[
-        "Très positif", "Positif", "Neutre", "Négatif", "Très négatif", "Non applicable"
-    ] = Field(description="Sentiment général exprimé dans l'article envers l'islam et/ou les musulmans")
-    polarite_justification: str = Field(description="Justification en 1-2 phrases pour la polarité")
-
-
-# ============================================================================
-# PROMPT LOADING
-# ============================================================================
-
-def load_system_prompt() -> str:
-    """Load the sentiment analysis prompt from the markdown file."""
-    try:
-        script_dir = Path(__file__).resolve().parent
-        prompt_path = script_dir / "sentiment_prompt.md"
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        console.print(f"[red]Error loading prompt file:[/] {e}")
-        return ""
-
-
-def create_user_prompt(article_text: str) -> str:
-    """Create the user prompt with the article text to analyze."""
-    return f"Texte à analyser:\n---\n{article_text}\n---"
-
-
-# ============================================================================
 # OMEKA S API FUNCTIONS
 # ============================================================================
-
-
-def get_item_content(item: Dict[str, Any]) -> str:
-    """Extract bibo:content text from an Omeka item."""
-    content_values = item.get('bibo:content', [])
-    if not content_values:
-        return ""
-
-    # Prefer French language if available
-    for val in content_values:
-        if isinstance(val, dict) and val.get('@language') == 'fr':
-            return val.get('@value', '')
-
-    # Fall back to first value
-    if content_values and isinstance(content_values[0], dict):
-        return content_values[0].get('@value', '')
-
-    return ""
 
 
 def has_existing_sentiment(item: Dict[str, Any], available_models: List[str]) -> bool:
@@ -369,111 +292,16 @@ def update_item_sentiment(
 
 
 # ============================================================================
-# AI ANALYSIS FUNCTIONS
+# AI ANALYSIS
 # ============================================================================
+# analyze_with_model / analyze_with_all_models live in sentiment_core so the
+# pilot runs the identical call path. Only the display labels are local.
 
-def analyze_with_model(
-    llm_client: BaseLLMClient,
-    text: str,
-    system_prompt: str,
-    model_label: str,
-    logger: logging.Logger,
-    max_retries: int = 3
-) -> Dict[str, Any]:
-    """Analyze text using any LLM provider via the shared provider."""
-    default_error = {
-        "centralite_islam_musulmans": "ERREUR_ANALYSE",
-        "centralite_justification": f"Erreur lors de l'analyse {model_label}.",
-        "subjectivite_score": None,
-        "subjectivite_justification": f"Erreur lors de l'analyse {model_label}.",
-        "polarite": "ERREUR_ANALYSE",
-        "polarite_justification": f"Erreur lors de l'analyse {model_label}.",
-        "analysis_error": "Unknown error"
-    }
-
-    if not text or not text.strip():
-        return {
-            **default_error,
-            "centralite_islam_musulmans": "Non abordé",
-            "centralite_justification": "Texte non fourni ou vide.",
-            "subjectivite_justification": "Non applicable - texte vide.",
-            "polarite": "Non applicable",
-            "polarite_justification": "Non applicable - texte vide.",
-            "analysis_error": "Empty text"
-        }
-
-    user_prompt = create_user_prompt(text)
-
-    for attempt in range(max_retries):
-        try:
-            result = llm_client.generate_structured(
-                system_prompt, user_prompt, SentimentAnalysisOutput
-            )
-            return {**result.model_dump(), "analysis_error": None}
-        except Exception as e:
-            logger.debug(f"{model_label} attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-
-    return {**default_error, "analysis_error": "Max retries exceeded"}
-
-
-# Display labels for each model key
 MODEL_LABELS = {
     "gemini": "Gemini",
     "chatgpt": "ChatGPT",
     "mistral": "Mistral",
 }
-
-
-def analyze_with_all_models(
-    text: str,
-    llm_clients: Dict[str, BaseLLMClient],
-    system_prompt: str,
-    logger: logging.Logger
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Run sentiment analysis with all available models concurrently.
-
-    Returns:
-        Dictionary with model names as keys and results as values
-    """
-    results = {}
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(llm_clients)) as executor:
-        futures = {}
-
-        for model_name, llm_client in llm_clients.items():
-            label = MODEL_LABELS.get(model_name, model_name.capitalize())
-            futures[model_name] = executor.submit(
-                analyze_with_model, llm_client, text, system_prompt, label, logger
-            )
-
-        for model_name, future in futures.items():
-            try:
-                results[model_name] = future.result(timeout=120)
-            except concurrent.futures.TimeoutError:
-                results[model_name] = {
-                    "analysis_error": "Timeout",
-                    "centralite_islam_musulmans": "ERREUR_ANALYSE",
-                    "centralite_justification": "Timeout lors de l'analyse.",
-                    "subjectivite_score": None,
-                    "subjectivite_justification": "Timeout lors de l'analyse.",
-                    "polarite": "ERREUR_ANALYSE",
-                    "polarite_justification": "Timeout lors de l'analyse.",
-                }
-            except Exception as e:
-                results[model_name] = {
-                    "analysis_error": str(e),
-                    "centralite_islam_musulmans": "ERREUR_ANALYSE",
-                    "centralite_justification": f"Erreur: {e}",
-                    "subjectivite_score": None,
-                    "subjectivite_justification": f"Erreur: {e}",
-                    "polarite": "ERREUR_ANALYSE",
-                    "polarite_justification": f"Erreur: {e}",
-                }
-
-    return results
 
 
 # ============================================================================
@@ -692,7 +520,7 @@ def main():
                 else:
                     # Re-analyze if cache has errors
                     sentiment_results = analyze_with_all_models(
-                        content, llm_clients, system_prompt, logger
+                        content, llm_clients, system_prompt, logger, MODEL_LABELS
                     )
                     cache_data[cache_key] = sentiment_results
                     stats["analyzed"] += 1
@@ -700,7 +528,7 @@ def main():
             else:
                 # Analyze with all models
                 sentiment_results = analyze_with_all_models(
-                    content, llm_clients, system_prompt, logger
+                    content, llm_clients, system_prompt, logger, MODEL_LABELS
                 )
                 cache_data[cache_key] = sentiment_results
                 stats["analyzed"] += 1

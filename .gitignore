@@ -80,4 +80,6 @@ NotebookLM/extracted_articles/
 *.temp
 .cache/
 .pytest_cache/
-AI_sentiment_analysis/cache/sentiment_cache.json
+# Whole directory, not just the production cache file: pilot runs write
+# cache/pilot/*.json holding full model justifications and article titles.
+AI_sentiment_analysis/cache/

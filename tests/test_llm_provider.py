@@ -165,7 +165,7 @@ def test_structured_output_surfaces_refusal(monkeypatch):
 # OpenRouter
 # ---------------------------------------------------------------------------
 
-def _openrouter_client_with_stub(monkeypatch, key="qwen3.7-flash", message=None):
+def _openrouter_client_with_stub(monkeypatch, key="qwen3.5-moe", message=None):
     """Build an OpenRouterClient whose SDK client is a stub."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr("common.llm_provider.OpenAI", MagicMock())
@@ -184,16 +184,16 @@ def _message(content=None, parsed=None, refusal=None):
 
 
 def test_openrouter_aliases_resolve():
-    assert normalize_model_key("qwen") == "qwen3.7-flash"
+    assert normalize_model_key("qwen") == "qwen3.5-moe"
     assert normalize_model_key("deepseek") == "deepseek-v4-flash"
     assert normalize_model_key("deepseek-pro") == "deepseek-v4-pro"
     # A slug pasted straight off openrouter.ai must resolve too.
-    assert normalize_model_key("qwen/qwen3.7-flash") == "qwen3.7-flash"
+    assert normalize_model_key("qwen/qwen3.5-35b-a3b") == "qwen3.5-moe"
 
 
 def test_openrouter_models_are_offered_by_the_right_tiers():
     # NER runs on the extended tier; the two Flash models must be selectable there.
-    assert "qwen3.7-flash" in TEXT_EXTENDED_MODELS
+    assert "qwen3.5-moe" in TEXT_EXTENDED_MODELS
     assert "deepseek-v4-flash" in TEXT_EXTENDED_MODELS
     # Pro is a quality tier: full only, not extended.
     assert "deepseek-v4-pro" in TEXT_FULL_MODELS
@@ -206,7 +206,7 @@ def test_openrouter_requires_its_own_key(monkeypatch):
     monkeypatch.setattr("common.llm_provider.OpenAI", MagicMock())
 
     with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-        OpenRouterClient(MODEL_REGISTRY["qwen3.7-flash"])
+        OpenRouterClient(MODEL_REGISTRY["qwen3.5-moe"])
 
 
 def test_openrouter_denies_provider_data_collection(monkeypatch):
@@ -222,11 +222,31 @@ def test_openrouter_denies_provider_data_collection(monkeypatch):
     assert provider["require_parameters"] is True
 
 
-def test_openrouter_omits_unsupported_reasoning_effort(monkeypatch):
-    """NER sets reasoning_effort='medium' for OpenAI; Qwen must not receive it."""
+def test_openrouter_forwards_medium_effort(monkeypatch):
+    """medium is accepted by the OpenRouter models and must reach the request.
+
+    Verified live 2026-07-29: both qwen3.5-* and deepseek-v4-* route and return
+    reasoning_details at effort=medium. An earlier registry restricted them to
+    high/xhigh, which silently downgraded a medium request to no reasoning at
+    all — the sentiment panel is standardised on medium, so that mattered.
+    """
     client, stub = _openrouter_client_with_stub(monkeypatch, message=_message(content="ok"))
 
     client.generate("system", "user", config=LLMConfig(reasoning_effort="medium"))
+
+    body = stub.chat.completions.create.call_args.kwargs["extra_body"]
+    assert body["reasoning"] == {"effort": "medium"}
+
+
+def test_openrouter_omits_unsupported_reasoning_effort(monkeypatch):
+    """An effort the model does not declare is dropped, not forwarded.
+
+    Forwarding it is worse than dropping it: with require_parameters on it can
+    leave the request with no eligible backend at all.
+    """
+    client, stub = _openrouter_client_with_stub(monkeypatch, message=_message(content="ok"))
+
+    client.generate("system", "user", config=LLMConfig(reasoning_effort="max"))
 
     assert "reasoning" not in stub.chat.completions.create.call_args.kwargs["extra_body"]
 
@@ -247,9 +267,9 @@ def test_openrouter_pro_reasons_by_default_and_clamps(monkeypatch):
         monkeypatch, key="deepseek-v4-pro", message=_message(content="ok")
     )
 
-    # 'medium' is not accepted by V4 Pro: fall back to the model's own default
+    # 'max' is not accepted by V4 Pro: fall back to the model's own default
     # rather than forwarding a value that would strand the request.
-    client.generate("system", "user", config=LLMConfig(reasoning_effort="medium"))
+    client.generate("system", "user", config=LLMConfig(reasoning_effort="max"))
 
     body = stub.chat.completions.create.call_args.kwargs["extra_body"]
     assert body["reasoning"] == {"effort": "high"}
@@ -332,7 +352,7 @@ def test_vendor_temperature_defaults_match_published_guidance():
     assert MODEL_REGISTRY["deepseek-v4-flash"].default_temperature == 1.0
     assert MODEL_REGISTRY["deepseek-v4-pro"].default_temperature == 1.0
     # Qwen's published non-thinking recipe.
-    assert MODEL_REGISTRY["qwen3.7-flash"].default_temperature == 0.7
+    assert MODEL_REGISTRY["qwen3.5-moe"].default_temperature == 0.7
     # Mistral is the one vendor recommending a low value (0.05-0.20).
     assert MODEL_REGISTRY["mistral-large"].default_temperature == 0.2
     assert MODEL_REGISTRY["ministral-14b"].default_temperature == 0.2
@@ -374,3 +394,78 @@ def test_openrouter_sends_the_vendor_default_temperature(monkeypatch):
     client.generate("system", "user")
 
     assert stub.chat.completions.create.call_args.kwargs["temperature"] == 0.7
+
+
+# ---------------------------------------------------------------------------
+# Mistral reasoning mode
+#
+# Mistral Small 4 is a hybrid instruct/reasoning model whose API accepts only
+# reasoning_effort none|high, and which switches message.content from a string
+# to a thinking/text chunk list once reasoning is on. Both facts broke real
+# calls before they were handled; these lock in the fixes.
+# ---------------------------------------------------------------------------
+
+def test_mistral_content_text_plain_string():
+    from common.llm_provider import MistralClient
+
+    assert MistralClient._content_text("hello") == "hello"
+    assert MistralClient._content_text(None) == ""
+
+
+def test_mistral_content_text_drops_thinking_chunk():
+    """The thinking chunk is a scratchpad, not the answer — it must not be parsed."""
+    from common.llm_provider import MistralClient
+
+    content = [
+        {"type": "thinking", "thinking": ["let me reason about this"], "closed": True},
+        {"type": "text", "text": '{"polarite": "Neutre"}'},
+    ]
+    assert MistralClient._content_text(content) == '{"polarite": "Neutre"}'
+
+
+def test_mistral_content_text_handles_sdk_objects():
+    """Chunks arrive as SDK objects on some call paths, plain dicts on others."""
+    from common.llm_provider import MistralClient
+
+    class _Chunk:
+        def __init__(self, type_, text=None):
+            self.type = type_
+            self.text = text
+
+    content = [_Chunk("thinking"), _Chunk("text", '{"ok": true}')]
+    assert MistralClient._content_text(content) == '{"ok": true}'
+
+
+def test_mistral_rounds_medium_effort_up_to_high():
+    """The panel asks for medium; Mistral has no medium, so it must not 400.
+
+    Rounding up keeps Mistral in the reasoning regime like the rest of the
+    panel; rounding down to 'none' would make it the only non-reasoning member.
+    """
+    from common.llm_provider import MODEL_REGISTRY, LLMConfig, MistralClient
+
+    option = MODEL_REGISTRY["mistral-small"]
+    assert option.supported_reasoning_efforts == ("none", "high")
+
+    client = MistralClient.__new__(MistralClient)
+    client.option = option
+    resolved = client._resolve_reasoning_effort(LLMConfig(reasoning_effort="medium"))
+    assert resolved == "high"
+
+
+def test_mistral_forwards_supported_effort_unchanged():
+    from common.llm_provider import MODEL_REGISTRY, LLMConfig, MistralClient
+
+    client = MistralClient.__new__(MistralClient)
+    client.option = MODEL_REGISTRY["mistral-small"]
+    assert client._resolve_reasoning_effort(LLMConfig(reasoning_effort="high")) == "high"
+    assert client._resolve_reasoning_effort(LLMConfig(reasoning_effort="none")) == "none"
+
+
+def test_mistral_without_reasoning_support_sends_nothing():
+    """Ministral 14B declares no efforts, so none is sent at all."""
+    from common.llm_provider import MODEL_REGISTRY, LLMConfig, MistralClient
+
+    client = MistralClient.__new__(MistralClient)
+    client.option = MODEL_REGISTRY["ministral-14b"]
+    assert client._resolve_reasoning_effort(LLMConfig(reasoning_effort="medium")) is None

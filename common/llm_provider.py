@@ -61,11 +61,16 @@ OPENAI_LUNA_MODEL = "gpt-5.6-luna"    # high-volume — $1 / $6 per 1M tokens
 DEFAULT_OPENAI_MODEL = OPENAI_LUNA_MODEL
 OPENAI_FULL_MODEL = OPENAI_SOL_MODEL
 DEFAULT_GEMINI_FLASH = "gemini-flash-latest"  # rolling alias -> newest stable Flash
+# Pinned Flash. The rolling alias reports its version as literally "Gemini Flash
+# Latest", so a run against it cannot record which model answered — fine for
+# mechanical work, not for annotations that become a published dataset column.
+DEFAULT_GEMINI_36_FLASH = "gemini-3.6-flash"
 DEFAULT_GEMINI_FLASH_LITE = "gemini-flash-lite-latest"  # rolling alias -> newest stable Flash-Lite
 DEFAULT_GEMINI_PRO = "gemini-pro-latest"  # rolling alias -> newest stable Pro
 DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
+DEFAULT_MISTRAL_SMALL = "mistral-small-2603"  # /v1/models describes it as "Mistral Small 4."
 
 # ---------------------------------------------------------------------------
 # OpenRouter
@@ -81,7 +86,15 @@ DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
 # ---------------------------------------------------------------------------
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-OPENROUTER_QWEN_FLASH_MODEL = "qwen/qwen3.7-flash"
+# Qwen 3.5, in its OPEN-WEIGHTS releases (Apache-2.0, downloadable from the
+# Qwen org on Hugging Face, runnable locally — which is the point: these are
+# the panel members whose weights can be archived alongside the annotations).
+# Deliberately NOT the Flash / Plus / Max slugs: those are Alibaba's hosted API
+# tiers with no published weights. (For the record, qwen3.7-flash additionally
+# has a single endpoint that does not declare ``structured_outputs``, so it
+# cannot be routed under ``require_parameters`` at all.)
+OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-35b-a3b"  # 35B total / 3B active, 9 endpoints
+OPENROUTER_QWEN_DENSE_MODEL = "qwen/qwen3.5-27b"    # dense 27B, 6 endpoints
 OPENROUTER_DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
 OPENROUTER_DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
 
@@ -241,6 +254,14 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         description="Google Gemini Flash — latest stable (rolling alias gemini-flash-latest), fast & cost-effective",
         default_thinking_level="MINIMAL"  # Flash supports minimal/low/medium/high
     ),
+    "gemini-3.6-flash": ModelOption(
+        key="gemini-3.6-flash",
+        provider=PROVIDER_GEMINI,
+        model=DEFAULT_GEMINI_36_FLASH,
+        label="Gemini 3.6 Flash",
+        description="Google Gemini 3.6 Flash — version-pinned Flash, for runs whose model must stay on the record",
+        default_thinking_level="MINIMAL"
+    ),
     "gemini-flash-lite": ModelOption(
         key="gemini-flash-lite",
         provider=PROVIDER_GEMINI,
@@ -283,23 +304,50 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         description="Mistral Ministral 3 14B — fast, cost-effective ($0.2/M tokens)",
         default_temperature=0.2
     ),
+    "mistral-small": ModelOption(
+        key="mistral-small",
+        provider=PROVIDER_MISTRAL,
+        model=DEFAULT_MISTRAL_SMALL,
+        label="Mistral Small 4",
+        description="Mistral Small 4 (2603) — 262k context, absorbed the Magistral reasoning line",
+        # 0.3, not the 0.2 used for Large/Ministral: /v1/models reports
+        # default_model_temperature 0.3 for this release specifically.
+        default_temperature=0.3,
+        # Hybrid instruct/reasoning model, but the API accepts ONLY these two:
+        # "low" and "medium" are hard 400s (verified 2026-07-29). This is the
+        # one panel member that cannot be set to a middling effort.
+        supported_reasoning_efforts=("none", "high"),
+        default_reasoning_effort=None,
+    ),
     # OpenRouter-served open-weights models. The two Flash tiers cost roughly a
     # tenth of gpt-5.6-luna, which is what makes a full-corpus NER or sentiment
     # pass affordable; Pro is the quality tier for the harder pipelines.
-    "qwen3.7-flash": ModelOption(
-        key="qwen3.7-flash",
+    "qwen3.5-moe": ModelOption(
+        key="qwen3.5-moe",
         provider=PROVIDER_OPENROUTER,
-        model=OPENROUTER_QWEN_FLASH_MODEL,
-        label="Qwen3.7 Flash (OpenRouter)",
-        description="Alibaba Qwen3.7 Flash — 1M context, strong multilingual ($0.03/$0.13 per 1M tokens)",
+        model=OPENROUTER_QWEN_MOE_MODEL,
+        label="Qwen3.5 35B-A3B (OpenRouter)",
+        description="Qwen3.5 35B-A3B — Apache-2.0 open weights, MoE 3B active ($0.14/$1.00 per 1M tokens)",
         # Qwen's published non-thinking sampling recipe is temperature 0.7 (with
         # top_p 0.8 / top_k 20, which OpenRouter backends set themselves). Qwen
         # warns that near-greedy decoding "can lead to performance degradation
         # and endless repetitions" — the same looping failure Gemini 3 describes.
         default_temperature=0.7,
-        # No reasoning parameter is sent: the accepted values are not published
-        # per-backend, and non-thinking is the cheapest mode for mechanical work.
         default_reasoning_effort=None,
+        # Verified against OpenRouter 2026-07-29: effort medium and high both
+        # route and return reasoning_details under data_collection=deny +
+        # require_parameters.
+        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
+    ),
+    "qwen3.5-dense": ModelOption(
+        key="qwen3.5-dense",
+        provider=PROVIDER_OPENROUTER,
+        model=OPENROUTER_QWEN_DENSE_MODEL,
+        label="Qwen3.5 27B (OpenRouter)",
+        description="Qwen3.5 27B dense — Apache-2.0 open weights ($0.195/$1.56 per 1M tokens)",
+        default_temperature=0.7,
+        default_reasoning_effort=None,
+        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
     ),
     "deepseek-v4-flash": ModelOption(
         key="deepseek-v4-flash",
@@ -316,7 +364,10 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         # non-thinking (cheapest for mechanical work), but honour an explicit
         # high/xhigh from a caller that wants the reasoning path.
         default_reasoning_effort=None,
-        supported_reasoning_efforts=("high", "xhigh"),
+        # Verified against OpenRouter 2026-07-29: medium routes and returns
+        # reasoning_details. The former ("high", "xhigh") restriction silently
+        # downgraded a medium request to no reasoning at all.
+        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
     ),
     "deepseek-v4-pro": ModelOption(
         key="deepseek-v4-pro",
@@ -327,7 +378,7 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_temperature=1.0,  # Same V4 recipe as Flash; see above.
         # Quality tier: reasoning on by default. xhigh maps to max reasoning.
         default_reasoning_effort="high",
-        supported_reasoning_efforts=("high", "xhigh"),
+        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
     ),
 }
 
@@ -381,12 +432,18 @@ MODEL_ALIASES = {
     "ministral": "ministral-14b",
     "ministral-3": "ministral-14b",
     "ministral-14b-2512": "ministral-14b",
+    # Mistral Small aliases
+    "mistral-small-latest": "mistral-small",
+    "mistral-small-2603": "mistral-small",
+    "mistral-small-4": "mistral-small",
     # OpenRouter aliases. The full slugs are accepted so a model id copied
     # straight off openrouter.ai resolves without translation.
-    "qwen": "qwen3.7-flash",
-    "qwen-flash": "qwen3.7-flash",
-    "qwen3.7": "qwen3.7-flash",
-    "qwen/qwen3.7-flash": "qwen3.7-flash",
+    "qwen": "qwen3.5-moe",
+    "qwen3.5": "qwen3.5-moe",
+    "qwen3.5-35b-a3b": "qwen3.5-moe",
+    "qwen/qwen3.5-35b-a3b": "qwen3.5-moe",
+    "qwen3.5-27b": "qwen3.5-dense",
+    "qwen/qwen3.5-27b": "qwen3.5-dense",
     "deepseek": "deepseek-v4-flash",
     "deepseek-flash": "deepseek-v4-flash",
     "deepseek/deepseek-v4-flash": "deepseek-v4-flash",
@@ -408,19 +465,19 @@ MODEL_ALIASES = {
 TEXT_ECONOMY_MODELS: List[str] = ["gpt-5.6-luna", "gemini-flash", "ministral-14b"]
 
 #: Open-weights models served through OpenRouter (one OPENROUTER_API_KEY).
-TEXT_OPEN_MODELS: List[str] = ["qwen3.7-flash", "deepseek-v4-flash", "deepseek-v4-pro"]
+TEXT_OPEN_MODELS: List[str] = ["qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-flash", "deepseek-v4-pro"]
 
 #: Economy tiers plus the open-weights and flagship Mistral options (NER).
 TEXT_EXTENDED_MODELS: List[str] = [
     "gpt-5.6-luna", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b",
-    "qwen3.7-flash", "deepseek-v4-flash",
+    "mistral-small", "qwen3.5-moe", "deepseek-v4-flash",
 ]
 
 #: Every text model, including the quality tiers, for output-quality-critical work.
 TEXT_FULL_MODELS: List[str] = [
     "gemini-flash", "gemini-pro", "gpt-5.6-luna", "gpt-5.6-sol",
-    "mistral-large", "ministral-14b",
-    "qwen3.7-flash", "deepseek-v4-flash", "deepseek-v4-pro",
+    "mistral-large", "ministral-14b", "mistral-small",
+    "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-flash", "deepseek-v4-pro",
 ]
 
 #: Models served via the Gemini API that accept native PDF/vision input.
@@ -756,6 +813,33 @@ class GeminiGenerateContentClient(BaseLLMClient):
 class MistralClient(BaseLLMClient):
     """Mistral AI client using the mistralai SDK."""
 
+    def _resolve_reasoning_effort(self, effective_config: LLMConfig) -> Optional[str]:
+        """Pick a ``reasoning_effort`` to send, or None to send none.
+
+        Mistral Small 4 is a hybrid instruct/reasoning model but accepts only
+        ``none`` or ``high`` — ``low`` and ``medium`` are hard 400 errors
+        (verified against the live API, 2026-07-29). Since ``LLMConfig`` is
+        shared across providers, a panel standardised on "medium" reaches here
+        too, and forwarding it would fail the request outright. Round a
+        mid-or-higher request up to ``high`` so the model still reasons, and
+        report the substitution: this is the one point in the panel where
+        effort is genuinely not comparable.
+        """
+        requested = effective_config.reasoning_effort
+        supported = self.option.supported_reasoning_efforts
+        if not requested or not supported:
+            return None
+        if requested in supported:
+            return requested
+        substitute = "high" if requested in ("medium", "xhigh", "max") else "none"
+        if substitute in supported:
+            LOGGER.debug(
+                "%s accepts only %s; requested effort %r sent as %r",
+                self.option.model, "/".join(supported), requested, substitute,
+            )
+            return substitute
+        return None
+
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
         if Mistral is None:
             raise RuntimeError("mistralai package is not installed")
@@ -771,6 +855,7 @@ class MistralClient(BaseLLMClient):
         
         LOGGER.debug(f"Mistral request with temperature={temp}")
 
+        effort = self._resolve_reasoning_effort(effective_config)
         response = self._client.chat.complete(
             model=self.option.model,
             messages=[
@@ -778,12 +863,41 @@ class MistralClient(BaseLLMClient):
                 {"role": "user", "content": user_prompt},
             ],
             **({} if temp is None else {"temperature": temp}),
+            **({} if effort is None else {"reasoning_effort": effort}),
         )
 
         if response.choices and len(response.choices) > 0:
-            content = response.choices[0].message.content
-            return content.strip() if content else ""
+            # Reasoning mode returns a chunk list, not a string; keep only the
+            # answer text and drop the thinking chunk.
+            return self._content_text(response.choices[0].message.content).strip()
         return ""
+
+    @staticmethod
+    def _content_text(content: Any) -> str:
+        """Flatten a Mistral message content into plain text.
+
+        In reasoning mode the API stops returning a string and returns a list
+        of chunks instead — ``{"type": "thinking", ...}`` followed by
+        ``{"type": "text", ...}``. Only the text chunk is the answer; the
+        thinking chunk is the model's scratchpad and must not be parsed as the
+        payload. Chunks arrive as SDK objects or plain dicts depending on the
+        call path, so both are handled.
+        """
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for chunk in content:
+                if isinstance(chunk, dict):
+                    chunk_type, chunk_text = chunk.get("type"), chunk.get("text")
+                else:
+                    chunk_type, chunk_text = getattr(chunk, "type", None), getattr(chunk, "text", None)
+                if chunk_type == "text" and chunk_text:
+                    parts.append(chunk_text)
+            return "".join(parts)
+        return str(content)
 
     def generate_structured(
         self,
@@ -794,38 +908,67 @@ class MistralClient(BaseLLMClient):
         config: Optional[LLMConfig] = None
     ) -> T:
         """Generate structured output using Mistral's native JSON schema support.
-        
-        Uses client.chat.parse() with Pydantic model to guarantee valid JSON
-        matching the provided schema.
+
+        Two paths, because ``chat.parse()`` cannot read a reasoning response:
+        with reasoning enabled the SDK raises ``TypeError: Unexpected type for
+        message.content: <class 'list'>`` on the thinking/text chunk list. So
+        reasoning requests go through ``chat.complete()`` and are validated
+        here against the same schema.
         """
         if BaseModel is None:
             raise RuntimeError("pydantic package is required for structured outputs")
-        
+
         effective_config = self._get_effective_config(config)
         temp = effective_config.temperature
-        
+        effort = self._resolve_reasoning_effort(effective_config)
+        reasoning_on = effort is not None and effort != "none"
+
         LOGGER.debug(
             f"Mistral structured request with schema={response_schema.__name__}, "
-            f"temperature={temp}"
-        )
-        
-        response = self._client.chat.parse(
-            model=self.option.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=response_schema,
-            **({} if temp is None else {"temperature": temp}),
+            f"temperature={temp}, reasoning_effort={effort}"
         )
 
-        # The parse method returns a parsed object directly
-        if response.choices and len(response.choices) > 0:
-            parsed = response.choices[0].message.parsed
-            if parsed is not None:
-                return parsed
-        
-        raise ValueError("No output received from Mistral structured response")
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        common = {
+            **({} if temp is None else {"temperature": temp}),
+            **({} if effort is None else {"reasoning_effort": effort}),
+        }
+
+        if not reasoning_on:
+            response = self._client.chat.parse(
+                model=self.option.model,
+                messages=messages,
+                response_format=response_schema,
+                **common,
+            )
+            if response.choices:
+                parsed = response.choices[0].message.parsed
+                if parsed is not None:
+                    return parsed
+            raise ValueError("No output received from Mistral structured response")
+
+        response = self._client.chat.complete(
+            model=self.option.model,
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_schema.__name__,
+                    "strict": True,
+                    "schema": response_schema.model_json_schema(),
+                },
+            },
+            **common,
+        )
+        if not response.choices:
+            raise ValueError("No output received from Mistral structured response")
+        text = self._content_text(response.choices[0].message.content).strip()
+        if not text:
+            raise ValueError("Mistral returned reasoning but no answer text")
+        return response_schema.model_validate_json(text)
 
 
 class OpenRouterClient(BaseLLMClient):

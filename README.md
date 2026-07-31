@@ -99,7 +99,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 | Gemini | `gemini-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
-| OpenRouter | `qwen3.7-flash`, `deepseek-v4-flash`, `deepseek-v4-pro` | Text pipelines, one `OPENROUTER_API_KEY` for all three. The Flash tiers cost roughly a tenth of `gpt-5.6-luna` and are offered by NER and OCR correction; `deepseek-v4-pro` is the quality tier, offered by OCR correction only. Requests are routed only to backends that do not retain data. |
+| OpenRouter | `qwen3.5-moe`, `qwen3.5-dense`, `deepseek-v4-flash`, `deepseek-v4-pro` | Text pipelines, one `OPENROUTER_API_KEY` for all. Open-weights models only — the Qwen entries are the Apache-2.0 releases, not Alibaba's hosted Flash/Plus/Max tiers. The Flash/MoE tiers cost roughly a tenth of `gpt-5.6-luna` and are offered by NER and OCR correction; `deepseek-v4-pro` is the quality tier, offered by OCR correction only. Requests are routed only to backends that do not retain data. |
 
 ## Adapting for Other Projects
 
