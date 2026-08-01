@@ -29,6 +29,7 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
+    TimeRemainingColumn,
 )
 from rich.table import Table
 
@@ -36,22 +37,36 @@ from rich.table import Table
 Rows = Iterable[Tuple[str, str]]
 
 
-def standard_progress(console: Optional[Console] = None, **kwargs) -> Progress:
+def standard_progress(
+    console: Optional[Console] = None,
+    *,
+    show_eta: bool = False,
+    **kwargs,
+) -> Progress:
     """Return the project's standard progress bar.
 
     Spinner, description, bar, percentage, elapsed time — the combination every
     pipeline had reimplemented. Extra keyword arguments are forwarded to
     :class:`~rich.progress.Progress` (e.g. ``transient=True``).
+
+    Args:
+        show_eta: append a remaining-time column. Off by default because on a
+            short run it is noise; worth turning on for the ones measured in
+            days, where "how long is left" is the operator's actual question
+            and rich's running estimate beats any constant in the source.
     """
-    return Progress(
+    columns = [
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
         TimeElapsedColumn(),
-        console=console,
-        **kwargs,
-    )
+    ]
+    if show_eta:
+        columns.append(TextColumn("[dim]left[/]"))
+        columns.append(TimeRemainingColumn())
+
+    return Progress(*columns, console=console, **kwargs)
 
 
 def key_value_table(

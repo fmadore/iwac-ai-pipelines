@@ -83,7 +83,7 @@ def main() -> int:
         return 1
 
     # Which model produced this OCR? Recorded as an iwac:ocrModel annotation.
-    model_key = args.model or select_model_key(default="gemini-flash")
+    model_key = args.model or select_model_key(default="gemini-3.6-flash")
     if model_key is None:
         return 1
     ocr_model_value = model_annotation_value(

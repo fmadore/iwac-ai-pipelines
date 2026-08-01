@@ -20,6 +20,7 @@ import pytest
 from common.iwac_config import (
     AI_MODEL_ITEMS,
     IWAC_SUMMARY_MODEL_PROPERTY_ID,
+    RETIRED_AI_MODEL_ITEM_IDS,
     model_annotation_value,
 )
 from common.omeka_text_updater import PropertyTarget, apply_text_value
@@ -91,7 +92,8 @@ def test_refreshes_a_stale_model_annotation(target):
         }],
     }
     assert apply_text_value(item, target, "Résumé.") is True
-    assert _annotation(item)["iwac:summaryModel"][0]["value_resource_id"] == 79609
+    assert (_annotation(item)["iwac:summaryModel"][0]["value_resource_id"]
+            == AI_MODEL_ITEMS["gpt-5.6-luna"]["item_id"])
 
 
 def test_annotation_survives_a_text_rewrite(target):
@@ -117,7 +119,7 @@ def test_unannotated_target_preserves_an_existing_annotation():
     ``@annotation`` survives — this pins that behaviour for the correction
     pipeline, which deliberately writes no annotation of its own.
     """
-    ocr_provenance = {"iwac:ocrModel": [{"value_resource_id": 79608}]}
+    ocr_provenance = {"iwac:ocrModel": [{"value_resource_id": 79611}]}
     item = {
         "o:id": 1,
         "bibo:content": [{
@@ -135,5 +137,41 @@ def test_unannotated_target_preserves_an_existing_annotation():
 
 
 def test_registry_points_at_the_current_authority_items():
-    assert AI_MODEL_ITEMS["gpt-5.6-luna"]["item_id"] == 79609
-    assert AI_MODEL_ITEMS["gemini-flash"]["item_id"] == 79608
+    """Pins the 2026-07-31 correction: 79609 was deleted upstream and 79608 was
+    a duplicate, so both had to be repointed. An annotation aimed at a dead item
+    is worse than none — it looks like provenance and resolves to nothing."""
+    assert AI_MODEL_ITEMS["gpt-5.6-luna"]["item_id"] == 79610
+    assert AI_MODEL_ITEMS["gemini-3.6-flash"]["item_id"] == 79611
+    assert AI_MODEL_ITEMS["gemini-3.5-flash-lite"]["item_id"] == 79617
+
+
+def test_no_registry_key_is_a_rolling_alias():
+    """A model whose version cannot be stated cannot be cited.
+
+    ``gemini-flash-lite`` was in this registry claiming item 78631, "Gemini 3.1
+    flash lite", while resolving to ``gemini-flash-lite-latest`` — which pointed
+    at 3.1 when the entry was written and at 3.5 by 2026-07-31. Every annotation
+    written through it after 3.5 shipped names the wrong model. The same bug was
+    fixed for ``gemini-flash`` earlier; this guards both.
+    """
+    from common.llm_provider import MODEL_REGISTRY
+
+    for key in AI_MODEL_ITEMS:
+        option = MODEL_REGISTRY.get(key)
+        if option is None:
+            continue
+        assert "latest" not in option.model, (
+            f"AI_MODEL_ITEMS[{key!r}] annotates as "
+            f"{AI_MODEL_ITEMS[key]['display_title']!r} but its registry entry "
+            f"resolves to the rolling alias {option.model!r} — the stored "
+            f"provenance would assert a version the run cannot confirm"
+        )
+
+
+def test_no_registry_entry_points_at_a_retired_item():
+    retired = set(RETIRED_AI_MODEL_ITEM_IDS)
+    live = {key: model["item_id"] for key, model in AI_MODEL_ITEMS.items()}
+    assert not (set(live.values()) & retired), (
+        f"registry still points at retired item(s): "
+        f"{ {k: v for k, v in live.items() if v in retired} }"
+    )

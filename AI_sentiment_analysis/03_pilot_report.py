@@ -41,7 +41,11 @@ from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sentiment_core import CENTRALITE_ORDER, POLARITE_ORDER  # noqa: E402
+from sentiment_core import (  # noqa: E402
+    CENTRALITE_ORDER,
+    POLARITE_ORDER,
+    SUBJECTIVITE_ORDER,
+)
 
 console = Console()
 
@@ -51,7 +55,10 @@ PILOT_DIR = Path(__file__).resolve().parent / "cache" / "pilot"
 DIMENSIONS: List[Tuple[str, str, Optional[Dict[str, int]]]] = [
     ("polarité", "polarite", POLARITE_ORDER),
     ("centralité", "centralite_islam_musulmans", CENTRALITE_ORDER),
-    ("subjectivité", "subjectivite_score", None),
+    # Ordinal since 2026-07-31: the models now return the label rather than the
+    # 1-5 integer, and generation-1 links are read back as labels too, so the
+    # two generations compare on one scale.
+    ("subjectivité", "subjectivite_score", SUBJECTIVITE_ORDER),
 ]
 
 

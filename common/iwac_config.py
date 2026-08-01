@@ -11,7 +11,7 @@ installations — resolve unknown terms at runtime with
 ``OmekaClient.get_property_id()`` instead of guessing.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 # ---------------------------------------------------------------------------
 # Authority item sets (used by NER reconciliation and reference indexing)
@@ -35,6 +35,11 @@ BIBO_CONTENT_PROPERTY_ID = 91
 IWAC_OCR_MODEL_PROPERTY_ID = 312      # iwac:ocrModel ("AI Model - OCR")
 IWAC_SUMMARY_MODEL_PROPERTY_ID = 313  # iwac:summaryModel ("AI Model - Summary")
 
+#: The IWAC ontology (``iwac:``) in this instance. Its property IDs are
+#: contiguous but not guaranteed to be — resolve terms with
+#: :func:`resolve_property_ids` rather than assuming a range.
+IWAC_VOCABULARY_ID = 10
+
 # ---------------------------------------------------------------------------
 # Authority items
 # ---------------------------------------------------------------------------
@@ -53,11 +58,78 @@ AUTHORITY_RECORD_TYPE_ITEM_ID = 67568
 # dropped from this dict once no longer offered for new writes.
 AI_MODEL_ITEMS: Dict[str, Dict] = {
     "claude-opus": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
-    "gemini-pro": {"item_id": 78536, "display_title": "Gemini 3.1 pro"},
-    "gemini-flash": {"item_id": 79608, "display_title": "Gemini 3.6 flash"},
-    "gemini-flash-lite": {"item_id": 78631, "display_title": "Gemini 3.1 flash lite"},
-    "gpt-5.6-luna": {"item_id": 79609, "display_title": "GPT-5.6 Luna"},
+    "gemini-3.1-pro": {"item_id": 78536, "display_title": "Gemini 3.1 pro"},
+    "gemini-3.6-flash": {"item_id": 79611, "display_title": "Gemini 3.6 flash"},
+    "gemini-3.5-flash-lite": {"item_id": 79617, "display_title": "Gemini 3.5 Flash-Lite"},
+    "gemini-3.1-flash-lite": {"item_id": 78631, "display_title": "Gemini 3.1 flash lite"},
+    "gpt-5.6-luna": {"item_id": 79610, "display_title": "GPT-5.6 Luna"},
+    "mistral-small": {"item_id": 79614, "display_title": "Mistral Small 4"},
+    "qwen3.5-moe": {"item_id": 79616, "display_title": "Qwen3.5 122B-A10B"},
+    "qwen3.5-moe-small": {"item_id": 79612, "display_title": "Qwen3.5 35B-A3B"},
+    "deepseek-v4-flash": {"item_id": 79613, "display_title": "DeepSeek V4 Flash"},
 }
+
+#: Superseded authority items, kept only so this file records why an id that
+#: appears in git history no longer resolves. Do not annotate with these.
+#:
+#:   79608  "Gemini 3.6 flash"  duplicate of 79611, created 2026-07-27
+#:   79609  "GPT-5.6 Luna"      deleted upstream; replaced by 79610
+#:
+#: The key for Gemini was ``gemini-flash`` until 2026-07-31. That is the
+#: registry key for ``gemini-flash-latest``, a rolling alias which reports its
+#: version as literally "Gemini Flash Latest" — so annotating such a run as
+#: "Gemini 3.6 flash" asserted a model version the run could not confirm. The
+#: key is now the pinned ``gemini-3.6-flash``.
+#:
+#: ``gemini-flash-lite`` was the same bug and outlived the fix: it is the
+#: registry key for the *rolling* ``gemini-flash-lite-latest`` while claiming
+#: item 78631, "Gemini 3.1 flash lite". That alias resolved to 3.1 when the
+#: entry was written and resolves to 3.5 now, so every annotation written
+#: through it since Gemini 3.5 Flash-Lite shipped names the wrong model. Both
+#: Flash-Lite generations now have pinned registry entries and their own items,
+#: and the rolling key is deliberately absent: a model whose version cannot be
+#: stated is a model that cannot be cited.
+#:
+#: ``gemini-pro`` was the third case, found the same day by the guard added for
+#: the second (``test_no_registry_key_is_a_rolling_alias``). It resolved to
+#: ``gemini-pro-latest`` while claiming item 78536, "Gemini 3.1 pro"; the alias
+#: reports its own version as the string "Gemini Pro Latest", so a run through
+#: it could not have confirmed that claim even if asked. Re-keyed to the pinned
+#: ``gemini-3.1-pro``. The rolling ``gemini-pro`` option stays in
+#: ``MODEL_REGISTRY`` — it is the right choice for a pipeline that wants
+#: whatever Pro is current and does not stamp provenance — it simply cannot be
+#: an annotation key.
+RETIRED_AI_MODEL_ITEM_IDS = (79608, 79609)
+
+
+def resolve_property_ids(client, terms: Iterable[str]) -> Dict[str, int]:
+    """Resolve ``iwac:`` terms to property IDs in one request.
+
+    The whole IWAC vocabulary fits inside a single page, so a run that needs
+    thirty-odd property IDs costs one GET rather than thirty. Resolving instead
+    of hardcoding matters here because these IDs are assigned by Omeka when the
+    vocabulary is updated, and differ between installations.
+
+    Raises:
+        KeyError: if any term is missing, naming all of them. A pipeline that
+            silently skipped an unresolved property would write a partial
+            annotation set and look successful.
+    """
+    url = f"{client.base_url}/properties?vocabulary_id={IWAC_VOCABULARY_ID}&per_page=100"
+    result = client.get_resource(url)
+    if not isinstance(result, list):
+        raise RuntimeError(f"Could not list vocabulary {IWAC_VOCABULARY_ID}")
+
+    available = {p["o:term"]: p["o:id"] for p in result}
+    wanted = list(terms)
+    missing = [term for term in wanted if term not in available]
+    if missing:
+        raise KeyError(
+            f"{len(missing)} property term(s) not in the IWAC vocabulary: "
+            f"{', '.join(missing)}. Update the vocabulary first — see "
+            f"AI_sentiment_analysis/00_setup_properties.py."
+        )
+    return {term: available[term] for term in wanted}
 
 
 def item_api_url(base_url: str, item_id: int) -> str:

@@ -57,10 +57,17 @@ from common.console_utils import standard_progress
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
+    ANALYSABLE_LANGUAGES,
     ITEM_ID_TO_SUBJECTIVITE,
+    PANEL,
+    PANEL_REASONING,
+    PANEL_REASONING_EFFECTIVE,
+    V1_PANEL,
     analyze_with_all_models,
     get_item_content,
+    get_item_language,
     load_system_prompt,
+    prompt_fingerprint,
 )
 
 console = Console()
@@ -76,44 +83,11 @@ ARTICLE_CLASS_ID = 36
 #: so the sample is guaranteed comparable.
 V1_PROBE_PROPERTY_ID = 319
 
-#: Candidate panel: HF-style column prefix -> (registry key, display label).
-#: Prefixes are the exact provider model id with ``-``/``.``/``/`` folded to
-#: ``_``, matching the convention now used on Hugging Face.
-V2_PANEL: Dict[str, tuple] = {
-    "gemini_3_6_flash": ("gemini-3.6-flash", "Gemini 3.6 Flash"),
-    "gpt_5_6_luna": ("gpt-5.6-luna", "GPT-5.6 Luna"),
-    "mistral_small_2603": ("mistral-small", "Mistral Small 4"),
-    "qwen3_5_35b_a3b": ("qwen3.5-moe", "Qwen3.5 35B-A3B"),
-    "deepseek_v4_flash": ("deepseek-v4-flash", "DeepSeek V4 Flash"),
-}
-
-#: Reasoning depth requested of every panel member.
-#:
-#: The two knobs are sent together because the vendors split on naming: Gemini
-#: takes ``thinking_level``, everyone else ``reasoning_effort``. Each client
-#: reads only its own, so setting both is how one config reaches all five.
-#:
-#: Verified against the live APIs, 2026-07-29:
-#:   Gemini 3.6 Flash   thinking_level MINIMAL/LOW/MEDIUM/HIGH   -> MEDIUM
-#:   GPT-5.6 Luna       effort none/low/medium/high/xhigh/max    -> medium
-#:   Qwen3.5 35B-A3B    effort normalised by OpenRouter (~50%)   -> medium
-#:   DeepSeek V4 Flash  effort normalised by OpenRouter (~50%)   -> medium
-#:   Mistral Small 4    effort ONLY none|high — low/medium 400   -> high
-#:
-#: So four of five sit at a genuine middle setting and Mistral does not: its
-#: API has no middle. ``MistralClient`` rounds medium up to ``high`` rather
-#: than dropping to ``none``, keeping it in the reasoning regime like the rest,
-#: but this is a real limit on comparability and belongs in any write-up.
-PANEL_REASONING = {"reasoning_effort": "medium", "thinking_level": "MEDIUM"}
-
-#: Generation-1 annotations already on Omeka: column prefix -> property prefix.
-#: The vendor-keyed properties are what the Jan-Feb 2026 campaign wrote; the
-#: prefixes record which model that actually was.
-V1_PANEL: Dict[str, str] = {
-    "gemini_3_flash_preview": "iwac:gemini",
-    "gpt_5_mini": "iwac:chatgpt",
-    "ministral_14b_2512": "iwac:mistral",
-}
+#: The candidate panel, its reasoning depth and the generation-1 property
+#: prefixes all come from ``sentiment_core`` — the same definitions production
+#: runs against. When this file carried its own copy, "the pilot" and "what
+#: shipped" were two different things that merely looked alike.
+V2_PANEL = PANEL
 
 OUTPUT_DIR_NAME = "cache/pilot"
 DEFAULT_SAMPLE_SIZE = 200
@@ -194,7 +168,14 @@ def sample_articles(
     with standard_progress(console) as progress:
         task = progress.add_task("[cyan]Sampling articles...", total=len(pages))
         for page in pages:
-            items = [it for it in _items_page(client, page) if get_item_content(it).strip()]
+            # Same language gate as production (01): a pilot drawn from a
+            # different population than the run it validates measures the wrong
+            # thing.
+            items = [
+                it for it in _items_page(client, page)
+                if get_item_content(it).strip()
+                and get_item_language(it) in ANALYSABLE_LANGUAGES
+            ]
             if items:
                 take = min(ITEMS_PER_SAMPLED_PAGE, len(items))
                 sampled.extend(rng.sample(items, take))
@@ -247,6 +228,50 @@ def read_v1_annotations(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 # MAIN
 # ============================================================================
 
+def load_partial(
+    path: Path, prompt_id: str, logger: logging.Logger
+) -> Dict[str, Dict[int, Dict[str, Any]]]:
+    """Read repeats already recorded for this run: item_id -> run index -> result.
+
+    Records written under a *different* prompt are ignored rather than reused.
+    Resuming across a prompt edit would silently mix two instruments in one
+    pilot, which is precisely what the pilot exists to rule out.
+
+    A torn final line is skipped: it is the expected shape of an interrupted
+    run, which is the case this file is for.
+    """
+    done: Dict[str, Dict[int, Dict[str, Any]]] = {}
+    if not path.exists():
+        return done
+
+    skipped_prompt = malformed = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            malformed += 1
+            continue
+        if record.get("prompt") != prompt_id:
+            skipped_prompt += 1
+            continue
+        item_id, run_index = str(record.get("item_id")), record.get("run")
+        if item_id and isinstance(run_index, int) and isinstance(record.get("result"), dict):
+            done.setdefault(item_id, {})[run_index] = record["result"]
+        else:
+            malformed += 1
+
+    if skipped_prompt:
+        logger.warning(
+            f"Ignored {skipped_prompt} cached repeat(s) from a different prompt."
+        )
+    if malformed:
+        logger.warning(f"Skipped {malformed} unreadable line(s) in {path.name}.")
+    return done
+
+
 def build_clients(
     selected: List[str], logger: logging.Logger
 ) -> tuple[Dict[str, BaseLLMClient], Dict[str, str], List[tuple]]:
@@ -263,14 +288,14 @@ def build_clients(
     # Each client takes its own from MODEL_REGISTRY.
     config = LLMConfig(**PANEL_REASONING)
     for prefix in selected:
-        registry_key, label = V2_PANEL[prefix]
+        member = V2_PANEL[prefix]
         try:
-            option = get_model_option(registry_key)
+            option = get_model_option(member.registry_key)
             clients[prefix] = build_llm_client(option, config=config)
-            labels[prefix] = label
+            labels[prefix] = member.label
             model_ids[prefix] = option.model
         except (RuntimeError, ValueError) as exc:
-            skipped.append((prefix, label, str(exc)))
+            skipped.append((prefix, member.label, str(exc)))
     return clients, labels, (skipped, model_ids)
 
 
@@ -298,6 +323,11 @@ def main() -> int:
                         help=f"Comma-separated subset of: {','.join(V2_PANEL)}")
     parser.add_argument("--output", type=str, default=None,
                         help="Output JSON path (default: cache/pilot/pilot_<timestamp>.json)")
+    parser.add_argument("--without-examples", action="store_true",
+                        help="Drop the prompt's worked examples, keeping the "
+                             "definitions and boundary rules. The second arm of "
+                             "the examples A/B: run both on the same --seed and "
+                             "compare with 03_pilot_report.py")
     args = parser.parse_args()
 
     selected = list(V2_PANEL)
@@ -330,7 +360,8 @@ def main() -> int:
         console.print("\n[red]✗[/] No models available — nothing to pilot.")
         return 1
 
-    system_prompt = load_system_prompt()
+    system_prompt = load_system_prompt(include_examples=not args.without_examples)
+    prompt_id = prompt_fingerprint(system_prompt)
 
     config_table = Table(title="Pilot configuration", box=box.ROUNDED)
     config_table.add_column("Setting", style="dim")
@@ -340,6 +371,12 @@ def main() -> int:
     config_table.add_row("Seed", str(args.seed))
     config_table.add_row("Repeats", str(args.repeats))
     config_table.add_row("Models", "\n".join(f"{labels[p]}  [dim]{model_ids[p]}[/]" for p in clients))
+    config_table.add_row(
+        "Prompt",
+        f"#{prompt_id} · {len(system_prompt):,} chars · "
+        + ("with examples" if not args.without_examples
+           else "[yellow]examples stripped[/]"),
+    )
     config_table.add_row("Writes to Omeka", "[bold green]none[/]")
     console.print(config_table)
     console.print()
@@ -350,19 +387,53 @@ def main() -> int:
         return 1
     console.print(f"[green]✓[/] Sampled [bold]{len(articles)}[/] articles\n")
 
+    # Resolved before annotating, not after: the partial file lives beside the
+    # output, so the output path has to exist before the first call is made.
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_path = (
+        Path(args.output) if args.output
+        else Path(__file__).resolve().parent / OUTPUT_DIR_NAME / f"pilot_{timestamp}.json"
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Persist each repeat as it lands. A 50x3 pilot is hours of API calls, and
+    # writing only at the end meant an interruption at minute 150 lost every
+    # one of them — the same all-or-nothing failure the production cache was
+    # rewritten to remove.
+    partial_path = out_path.with_suffix(".partial.jsonl")
+    done = load_partial(partial_path, prompt_id, logger)
+    if done:
+        console.print(
+            f"[green]✓[/] Resuming: [bold]{sum(len(r) for r in done.values())}[/] "
+            f"repeat(s) already recorded in [dim]{partial_path.name}[/]\n"
+        )
+
     results: Dict[str, Any] = {}
     errors = 0
 
     console.rule("[bold cyan]Annotating")
     total_calls = len(articles) * args.repeats
-    with standard_progress(console) as progress:
+    with open(partial_path, "a", encoding="utf-8") as partial, \
+            standard_progress(console, show_eta=True) as progress:
         task = progress.add_task("[cyan]Running panel...", total=total_calls)
         for item in articles:
             item_id = str(item.get("o:id"))
             content = get_item_content(item)
+            cached = done.get(item_id, {})
             runs = []
-            for _ in range(args.repeats):
-                run = analyze_with_all_models(content, clients, system_prompt, logger, labels)
+            for run_index in range(args.repeats):
+                run = cached.get(run_index)
+                if run is None:
+                    run = analyze_with_all_models(
+                        content, clients, system_prompt, logger, labels
+                    )
+                    partial.write(json.dumps({
+                        "prompt": prompt_id,
+                        "item_id": item_id,
+                        "run": run_index,
+                        "result": run,
+                    }, ensure_ascii=False) + "\n")
+                    partial.flush()
                 errors += sum(1 for r in run.values() if r.get("analysis_error"))
                 runs.append(run)
                 progress.update(task, advance=1)
@@ -373,13 +444,6 @@ def main() -> int:
                 "v1": read_v1_annotations(item),
                 "v2_runs": runs,
             }
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = (
-        Path(args.output) if args.output
-        else Path(__file__).resolve().parent / OUTPUT_DIR_NAME / f"pilot_{timestamp}.json"
-    )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = {
         "manifest": {
@@ -394,11 +458,7 @@ def main() -> int:
             # differ for Mistral, and a run record that hid that would be wrong.
             "v2_reasoning_requested": dict(PANEL_REASONING),
             "v2_reasoning_effective": {
-                p: (
-                    "high (API accepts only none|high; medium rounded up)"
-                    if p == "mistral_small_2603" else "medium"
-                )
-                for p in clients
+                p: PANEL_REASONING_EFFECTIVE[p] for p in clients
             },
             # Generation-1 models and the config they actually ran with,
             # recovered from commit 07fb007 (2026-01-27).
@@ -413,10 +473,17 @@ def main() -> int:
                 "ministral_14b_2512": "temperature=0.2; max_tokens=512; response_format schema",
             },
             "prompt_chars": len(system_prompt),
+            # Prompt wording moves label distributions in ways a diff does not
+            # predict, so a pilot that cannot name its prompt cannot be
+            # compared with the run it was meant to validate.
+            "prompt_fingerprint": prompt_fingerprint(system_prompt),
+            "prompt_examples": not args.without_examples,
         },
         "articles": results,
     }
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Scaffolding, removed only once the real output is safely on disk.
+    partial_path.unlink(missing_ok=True)
 
     summary = Table(title="Pilot summary", box=box.ROUNDED)
     summary.add_column("Metric", style="dim")

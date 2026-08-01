@@ -66,6 +66,10 @@ DEFAULT_GEMINI_FLASH = "gemini-flash-latest"  # rolling alias -> newest stable F
 # mechanical work, not for annotations that become a published dataset column.
 DEFAULT_GEMINI_36_FLASH = "gemini-3.6-flash"
 DEFAULT_GEMINI_FLASH_LITE = "gemini-flash-lite-latest"  # rolling alias -> newest stable Flash-Lite
+DEFAULT_GEMINI_35_FLASH_LITE = "gemini-3.5-flash-lite"  # pinned, $0.30/$2.50 per 1M
+DEFAULT_GEMINI_31_FLASH_LITE = "gemini-3.1-flash-lite"  # pinned, $0.25/$1.50 per 1M
+# The only pinned 3.1 Pro id Google publishes; there is no non-preview form.
+DEFAULT_GEMINI_31_PRO = "gemini-3.1-pro-preview"
 DEFAULT_GEMINI_PRO = "gemini-pro-latest"  # rolling alias -> newest stable Pro
 DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
@@ -93,8 +97,16 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # tiers with no published weights. (For the record, qwen3.7-flash additionally
 # has a single endpoint that does not declare ``structured_outputs``, so it
 # cannot be routed under ``require_parameters`` at all.)
-OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-35b-a3b"  # 35B total / 3B active, 9 endpoints
-OPENROUTER_QWEN_DENSE_MODEL = "qwen/qwen3.5-27b"    # dense 27B, 6 endpoints
+#
+# Sizing note (2026-07-31): the sentiment panel pairs its Qwen slot with
+# DeepSeek V4 Flash, which activates 13B of 284B. ``qwen3.5-35b-a3b`` activates
+# 3B — about a quarter the active compute — so the panel's open-weights members
+# were not on comparable footing. ``qwen3.5-122b-a10b`` activates 10B under the
+# same Apache-2.0 terms and is the tier match; the 35B stays registered for
+# cheaper work where that asymmetry does not matter.
+OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"    # 122B total / 10B active
+OPENROUTER_QWEN_SMALL_MOE_MODEL = "qwen/qwen3.5-35b-a3b"  # 35B total / 3B active
+OPENROUTER_QWEN_DENSE_MODEL = "qwen/qwen3.5-27b"        # dense 27B, 6 endpoints
 OPENROUTER_DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
 OPENROUTER_DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
 
@@ -270,6 +282,40 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         description="Google Gemini Flash-Lite — latest stable (rolling alias gemini-flash-lite-latest), cheapest/lowest latency",
         default_thinking_level="MINIMAL"  # Flash-Lite uses thinking_level; minimal keeps it cheap
     ),
+    # Pinned siblings of the above. A rolling alias is right for a pipeline
+    # whose output is re-read and re-generated at will; it is wrong for an
+    # annotation campaign, where "which model wrote this value" has to stay
+    # answerable years later and the alias will by then point somewhere else.
+    # The same reasoning gives gemini-3.6-flash its pinned entry.
+    #
+    # These are also why the "gemini-3.1-flash-lite" MODEL_ALIASES entry had to
+    # go: normalize_model_key() consults the alias table *before* the registry,
+    # so an alias of the same name silently shadows the pinned option it looks
+    # like it names.
+    "gemini-3.5-flash-lite": ModelOption(
+        key="gemini-3.5-flash-lite",
+        provider=PROVIDER_GEMINI,
+        model=DEFAULT_GEMINI_35_FLASH_LITE,
+        label="Gemini 3.5 Flash-Lite",
+        description="Google Gemini 3.5 Flash-Lite — version-pinned high-volume tier ($0.30/$2.50 per 1M tokens)",
+        default_thinking_level="MINIMAL"
+    ),
+    "gemini-3.1-flash-lite": ModelOption(
+        key="gemini-3.1-flash-lite",
+        provider=PROVIDER_GEMINI,
+        model=DEFAULT_GEMINI_31_FLASH_LITE,
+        label="Gemini 3.1 Flash-Lite",
+        description="Google Gemini 3.1 Flash-Lite — version-pinned, prior Flash-Lite generation ($0.25/$1.50 per 1M tokens)",
+        default_thinking_level="MINIMAL"
+    ),
+    "gemini-3.1-pro": ModelOption(
+        key="gemini-3.1-pro",
+        provider=PROVIDER_GEMINI,
+        model=DEFAULT_GEMINI_31_PRO,
+        label="Gemini 3.1 Pro",
+        description="Google Gemini 3.1 Pro — version-pinned quality tier, for runs whose model must stay on the record",
+        default_thinking_level="LOW"  # Pro supports LOW or HIGH
+    ),
     "gemini-pro": ModelOption(
         key="gemini-pro",
         provider=PROVIDER_GEMINI,
@@ -326,8 +372,8 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         key="qwen3.5-moe",
         provider=PROVIDER_OPENROUTER,
         model=OPENROUTER_QWEN_MOE_MODEL,
-        label="Qwen3.5 35B-A3B (OpenRouter)",
-        description="Qwen3.5 35B-A3B — Apache-2.0 open weights, MoE 3B active ($0.14/$1.00 per 1M tokens)",
+        label="Qwen3.5 122B-A10B (OpenRouter)",
+        description="Qwen3.5 122B-A10B — Apache-2.0 open weights, MoE 10B active ($0.26/$2.08 per 1M tokens)",
         # Qwen's published non-thinking sampling recipe is temperature 0.7 (with
         # top_p 0.8 / top_k 20, which OpenRouter backends set themselves). Qwen
         # warns that near-greedy decoding "can lead to performance degradation
@@ -337,6 +383,16 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         # Verified against OpenRouter 2026-07-29: effort medium and high both
         # route and return reasoning_details under data_collection=deny +
         # require_parameters.
+        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
+    ),
+    "qwen3.5-moe-small": ModelOption(
+        key="qwen3.5-moe-small",
+        provider=PROVIDER_OPENROUTER,
+        model=OPENROUTER_QWEN_SMALL_MOE_MODEL,
+        label="Qwen3.5 35B-A3B (OpenRouter)",
+        description="Qwen3.5 35B-A3B — Apache-2.0 open weights, MoE 3B active ($0.14/$1.00 per 1M tokens)",
+        default_temperature=0.7,
+        default_reasoning_effort=None,
         supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
     ),
     "qwen3.5-dense": ModelOption(
@@ -387,9 +443,8 @@ MODEL_ALIASES = {
     # Gemini Flash-Lite aliases
     "flash-lite": "gemini-flash-lite",
     "gemini-flash-lite-latest": "gemini-flash-lite",
-    "gemini-flash-lite-3.1": "gemini-flash-lite",
-    "gemini-3.1-flash-lite": "gemini-flash-lite",  # pinned (explicit version)
-    "gemini-3.1-flash-lite-preview": "gemini-flash-lite",  # legacy preview id
+    "gemini-flash-lite-3.1": "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",  # legacy preview id
     # OpenAI GPT-5.6 tier aliases
     "openai": "gpt-5.6-luna",  # Generic name -> cost-optimized tier
     "gpt-5.6": "gpt-5.6-sol",  # Bare id routes to Sol, per OpenAI
@@ -440,8 +495,10 @@ MODEL_ALIASES = {
     # straight off openrouter.ai resolves without translation.
     "qwen": "qwen3.5-moe",
     "qwen3.5": "qwen3.5-moe",
-    "qwen3.5-35b-a3b": "qwen3.5-moe",
-    "qwen/qwen3.5-35b-a3b": "qwen3.5-moe",
+    "qwen3.5-122b-a10b": "qwen3.5-moe",
+    "qwen/qwen3.5-122b-a10b": "qwen3.5-moe",
+    "qwen3.5-35b-a3b": "qwen3.5-moe-small",
+    "qwen/qwen3.5-35b-a3b": "qwen3.5-moe-small",
     "qwen3.5-27b": "qwen3.5-dense",
     "qwen/qwen3.5-27b": "qwen3.5-dense",
     "deepseek": "deepseek-v4-flash",
@@ -465,7 +522,10 @@ MODEL_ALIASES = {
 TEXT_ECONOMY_MODELS: List[str] = ["gpt-5.6-luna", "gemini-flash", "ministral-14b"]
 
 #: Open-weights models served through OpenRouter (one OPENROUTER_API_KEY).
-TEXT_OPEN_MODELS: List[str] = ["qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-flash", "deepseek-v4-pro"]
+TEXT_OPEN_MODELS: List[str] = [
+    "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
+    "deepseek-v4-flash", "deepseek-v4-pro",
+]
 
 #: Economy tiers plus the open-weights and flagship Mistral options (NER).
 TEXT_EXTENDED_MODELS: List[str] = [

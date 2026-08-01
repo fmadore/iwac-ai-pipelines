@@ -31,10 +31,12 @@ class QuotaExhaustedError(Exception):
 def is_quota_exhausted(error: Exception) -> bool:
     """Detect whether an API error indicates quota exhaustion (not a transient rate limit).
 
-    Returns ``True`` when all of the following hold:
-    - The error has an HTTP status code of 429
-    - AND the error message indicates a *quota* limit (daily, billing)
-      rather than a transient per-minute rate limit
+    Returns ``True`` when either:
+
+    - The HTTP status is **402 Payment Required** — the account is out of
+      money. Never transient, never worth a retry.
+    - OR the status is 429 **and** the message indicates a *quota* limit
+      (daily, billing) rather than a transient per-minute rate limit.
 
     Quota-exhaustion signatures (from Gemini error logs):
     - message contains "exceeded your current quota"
@@ -43,9 +45,21 @@ def is_quota_exhausted(error: Exception) -> bool:
     Note: the ``status`` field alone is deliberately NOT used — Gemini returns
     ``RESOURCE_EXHAUSTED`` for *every* 429, including transient per-minute
     rate limits that should be retried, not treated as daily exhaustion.
+
+    The 402 arm was added 2026-08-01 after an OpenRouter balance ran dry
+    partway through a 12,305-article sentiment run. Every remaining call
+    returned ``402 Insufficient credits``; because nothing recognised it as
+    terminal, each was retried three times with backoff and the run continued
+    for hours, producing 823 identical failures and no work. A 402 must stop
+    the run on the first occurrence.
     """
+    # Providers disagree on where the status lives: google-genai uses ``code``,
+    # the OpenAI SDK (and therefore OpenRouter) uses ``status_code``.
     code = getattr(error, "code", None)
-    if code != 429:
+    status = getattr(error, "status_code", None)
+    if 402 in (code, status):
+        return True
+    if code != 429 and status != 429:
         return False
 
     message = str(getattr(error, "message", "") or str(error)).lower()
@@ -55,6 +69,7 @@ def is_quota_exhausted(error: Exception) -> bool:
         "requests_per_model_per_day",
         "per_day",
         "billing",
+        "insufficient credits",   # OpenRouter, when it answers 429 rather than 402
     ]
 
     return any(indicator in message for indicator in quota_indicators)

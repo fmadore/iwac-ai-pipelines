@@ -187,8 +187,14 @@ def test_openrouter_aliases_resolve():
     assert normalize_model_key("qwen") == "qwen3.5-moe"
     assert normalize_model_key("deepseek") == "deepseek-v4-flash"
     assert normalize_model_key("deepseek-pro") == "deepseek-v4-pro"
-    # A slug pasted straight off openrouter.ai must resolve too.
-    assert normalize_model_key("qwen/qwen3.5-35b-a3b") == "qwen3.5-moe"
+    # A slug pasted straight off openrouter.ai must resolve too — and to the
+    # entry for that exact model. "qwen3.5-moe" moved from 35B-A3B to
+    # 122B-A10B on 2026-07-31, so the old slug must land on the small entry
+    # rather than silently following the bare "qwen" alias to a bigger model.
+    assert normalize_model_key("qwen/qwen3.5-122b-a10b") == "qwen3.5-moe"
+    assert normalize_model_key("qwen/qwen3.5-35b-a3b") == "qwen3.5-moe-small"
+    assert MODEL_REGISTRY["qwen3.5-moe"].model == "qwen/qwen3.5-122b-a10b"
+    assert MODEL_REGISTRY["qwen3.5-moe-small"].model == "qwen/qwen3.5-35b-a3b"
 
 
 def test_openrouter_models_are_offered_by_the_right_tiers():
