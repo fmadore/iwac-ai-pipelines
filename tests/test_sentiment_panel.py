@@ -27,6 +27,7 @@ from sentiment_core import (
     PANEL,
     PANEL_REASONING_EFFECTIVE,
     POLARITE_ITEM_IDS,
+    RETIRED_PANEL,
     RESULT_FIELD_SUFFIXES,
     SENTIMENT_MODEL_ANNOTATION_TERM,
     SUBJECTIVITE_ITEM_IDS,
@@ -119,11 +120,18 @@ def test_panel_does_not_collide_with_generation_1():
     assert not (v1_terms & v2_terms), sorted(v1_terms & v2_terms)
 
 
+def test_active_panel_does_not_reuse_retired_snapshot_properties():
+    active = {term for member in PANEL.values() for term in member.terms}
+    retired = {term for member in RETIRED_PANEL.values() for term in member.terms}
+    assert not (active & retired), sorted(active & retired)
+
+
 def test_every_member_has_a_declared_effective_reasoning_depth():
     assert set(PANEL_REASONING_EFFECTIVE) == set(PANEL)
     # Mistral has no middle setting; recording it as "medium" would misreport
     # the run rather than merely simplify it.
     assert PANEL_REASONING_EFFECTIVE["mistral_small_2603"].startswith("high")
+    assert PANEL_REASONING_EFFECTIVE["deepseek_v4_flash_0731"].startswith("high")
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +183,7 @@ def test_controlled_vocabulary_fields_are_resource_links(property_ids, good_resu
 def test_unmappable_and_blank_fields_are_omitted(property_ids):
     """A property that is absent can be filled in later; one written blank or
     wrong looks like a real annotation."""
-    member = PANEL["deepseek_v4_flash"]
+    member = PANEL["deepseek_v4_flash_0731"]
     partial = {
         "centralite_islam_musulmans": "Central",
         "centralite_justification": "   ",           # whitespace only
@@ -299,7 +307,7 @@ def test_cache_is_granular_to_the_model(tmp_path, good_result):
     reloaded = SentimentCache(path=path)
     reloaded.load()
     assert reloaded.missing_models(1, PANEL) == [
-        "mistral_small_2603", "qwen3_5_122b_a10b", "deepseek_v4_flash",
+        "mistral_small_2603", "qwen3_5_122b_a10b", "deepseek_v4_flash_0731",
     ]
 
 
@@ -361,6 +369,39 @@ def test_cache_records_the_model_that_answered(tmp_path, good_result):
     assert record["model_id"] == "gemini-3.5-flash-lite"
     assert record["reasoning"] == "medium"
     assert record["ts"].endswith("+00:00")
+
+
+def test_cache_provenance_is_part_of_reuse_identity(tmp_path, good_result):
+    """A new snapshot or prompt must miss even when the panel slot is unchanged."""
+    path = tmp_path / "c.jsonl"
+    with SentimentCache(path=path) as cache:
+        cache.put(
+            1,
+            "deepseek_v4_flash_0731",
+            good_result,
+            model_id="deepseek/deepseek-v4-flash-0731",
+            reasoning="high",
+            prompt="prompt-a",
+        )
+
+    cache = SentimentCache(path=path)
+    cache.load()
+    expected = {
+        "model_id": "deepseek/deepseek-v4-flash-0731",
+        "reasoning": "high",
+        "prompt": "prompt-a",
+    }
+    assert cache.has(1, "deepseek_v4_flash_0731", **expected)
+    assert not cache.has(1, "deepseek_v4_flash_0731", **{**expected, "prompt": "prompt-b"})
+    assert not cache.has(
+        1,
+        "deepseek_v4_flash_0731",
+        **{**expected, "model_id": "deepseek/deepseek-v4-flash"},
+    )
+    assert cache.results_for(
+        1, expected={"deepseek_v4_flash_0731": expected}
+    ) == {"deepseek_v4_flash_0731": good_result}
+    assert cache.count_matching({"deepseek_v4_flash_0731": expected}) == 1
 
 
 def test_missing_cache_file_is_not_an_error(tmp_path):

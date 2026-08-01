@@ -3,9 +3,11 @@
 This script implements a two-step pipeline to extract and consolidate articles
 from an Islamic magazine using Gemini's native PDF understanding with structured outputs.
 
-Supported models (select with --profile):
-- standard: Gemini Pro (step 1, per page) + Gemini Flash (step 2, consolidation)
-- light: Gemini Flash (step 1, per page) + Gemini Flash (step 2, consolidation)
+Supported extraction profiles:
+- standard: Gemini Pro (step 1, per page)
+- light: Gemini Flash (step 1, per page)
+
+Both profiles use the repository's default text model for step-2 consolidation.
 
 Step 1: Page-by-page extraction (high-performance model)
 - Extracts individual pages using pypdf (document parsed once per magazine)
@@ -64,6 +66,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from common.llm_provider import (  # noqa: E402
+    DEFAULT_TEXT_MODEL_KEY,
     LLMConfig,
     ModelOption,
     get_model_option,
@@ -75,10 +78,10 @@ from common.retry import retry_with_backoff  # noqa: E402
 
 # Shared magazine-extraction building blocks (models, prompts, step skeletons)
 from magazine_extraction import (  # noqa: E402
-    MagazineIndex,
     PageExtraction,
     PdfPageSource,
     console,
+    build_text_consolidator,
     load_extraction_prompt,
     run_extraction_pipeline,
     run_magazine_batch,
@@ -105,23 +108,20 @@ RETRY_DELAY = 2  # seconds
 # Client Initialization
 # ------------------------------------------------------------------
 def get_model_pair(profile: str = "standard") -> Tuple[ModelOption, ModelOption]:
-    """Get the Gemini (step1, step2) model pair for the pipeline.
+    """Get the multimodal extraction and text consolidation model pair.
 
     Profiles:
-        - "standard": Gemini Pro for per-page extraction (best quality) +
-          Gemini Flash for consolidation.
-        - "light": Gemini Flash for both per-page extraction and
-          consolidation (cheaper/faster).
+        - "standard": Gemini Pro for per-page extraction (best quality).
+        - "light": Gemini Flash for per-page extraction (cheaper/faster).
 
     Returns:
         Tuple of (model_step1, model_step2).
     """
     if profile == "light":
         step1_option = get_model_option("gemini-flash")   # per-page extraction
-        step2_option = get_model_option("gemini-flash")   # consolidation
     else:
         step1_option = get_model_option("gemini-pro")
-        step2_option = get_model_option("gemini-flash")
+    step2_option = get_model_option(DEFAULT_TEXT_MODEL_KEY)
 
     # Display model configuration in a table
     model_table = Table(title=f"🤖 Model Configuration ({profile})", box=box.ROUNDED, show_header=True, header_style="bold cyan")
@@ -146,8 +146,8 @@ def choose_profile() -> str:
     table.add_column("#", style="cyan", justify="center")
     table.add_column("Profile", style="green")
     table.add_column("Description", style="white")
-    table.add_row("1 / a", "standard", "Gemini Pro per page + Flash consolidation - best quality")
-    table.add_row("2 / b", "light", "Gemini Flash for both steps - cheaper / faster")
+    table.add_row("1 / a", "standard", "Gemini Pro per page - best extraction quality")
+    table.add_row("2 / b", "light", "Gemini Flash per page - cheaper / faster")
     console.print(table)
 
     mapping = {"1": "standard", "a": "standard", "2": "light", "b": "light"}
@@ -218,51 +218,6 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
         logging.error(f"Generation error for page {page_num}: {e}")
         raise  # Let the retry decorator handle it
 
-@retry_with_backoff(max_retries=MAX_RETRIES, base_delay=RETRY_DELAY)
-def generate_consolidation_with_gemini(client: genai.Client, model_name: str,
-                                      user_content: str, config: types.GenerateContentConfig,
-                                      rate_limiter: RateLimiter) -> Optional[MagazineIndex]:
-    """
-    Generate structured consolidation response with Gemini.
-
-    Args:
-        client: Gemini client
-        model_name: Model name to use
-        user_content: The extracted content to consolidate (JSON)
-        config: Generation config (includes system_instruction and response_schema)
-        rate_limiter: Shared rate limiter (wait() called before the API request)
-
-    Returns:
-        MagazineIndex object or None
-
-    Raises:
-        QuotaExhaustedError: When the daily API quota is exhausted (not retried).
-    """
-    try:
-        rate_limiter.wait()
-        response = client.models.generate_content(
-            model=model_name,
-            contents=user_content,
-            config=config
-        )
-
-        text_content = extract_text_from_response(response)
-        if not text_content:
-            finish_reason = response.candidates[0].finish_reason if response.candidates else None
-            raise RuntimeError(f"Empty or invalid Gemini response. Finish reason: {finish_reason}")
-
-        # Parse JSON response into Pydantic model
-        return MagazineIndex.model_validate_json(text_content)
-
-    except genai_errors.APIError as e:
-        if is_quota_exhausted(e):
-            raise QuotaExhaustedError(str(e)) from e
-        logging.error(f"Consolidation generation error: {e}")
-        raise  # Let the retry decorator handle it
-    except Exception as e:
-        logging.error(f"Consolidation generation error: {e}")
-        raise  # Let the retry decorator handle it
-
 # ------------------------------------------------------------------
 # Main Pipeline
 # ------------------------------------------------------------------
@@ -312,9 +267,6 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     # Gemini 3, since lowering it can send the model into a loop.
     config_step1 = LLMConfig(thinking_level="LOW")
 
-    # Step 2 (consolidation): Gemini Flash (both profiles) - MINIMAL thinking for speed
-    config_step2 = LLMConfig(thinking_level="MINIMAL")
-
     # Load the extraction prompt
     extraction_prompt = load_extraction_prompt()
 
@@ -357,18 +309,7 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
                 client, model_step1.model, page_bytes, page_num, step1_gen_config, rate_limiter
             )
 
-        def consolidate(system_prompt: str, extracted_json: str) -> Optional[MagazineIndex]:
-            """Provider callable for the shared step-2 consolidation."""
-            step2_gen_config = build_generation_config(
-                model_step2.model,
-                thinking_level=config_step2.thinking_level,
-                system_instruction=system_prompt,
-                max_output_tokens=8192,
-                response_schema=MagazineIndex,
-            )
-            return generate_consolidation_with_gemini(
-                client, model_step2.model, extracted_json, step2_gen_config, rate_limiter
-            )
+        consolidate = build_text_consolidator(model_step2)
 
         # Step 1 (page loop) + step 2 (consolidation) via the shared skeleton.
         # The page_*.json cache is deleted only after step 2 succeeds.
@@ -410,9 +351,9 @@ def main() -> int:
         )
         parser.add_argument(
             "--profile", choices=["standard", "light"], default=None,
-            help="standard = Gemini Pro per page + Gemini Flash consolidation "
-                 "(best quality); light = Gemini Flash for both steps "
-                 "(cheaper/faster). Omit to choose interactively.",
+            help="standard = Gemini Pro per page; light = Gemini Flash per page. "
+                 f"Both consolidate with {DEFAULT_TEXT_MODEL_KEY}. "
+                 "Omit to choose interactively.",
         )
         parser.add_argument(
             "--light", action="store_true", help="Shortcut for --profile light.",
@@ -437,7 +378,8 @@ def main() -> int:
             "[bold cyan]Islamic Magazine Article Extraction Pipeline[/]\n\n"
             f"[dim]Using Gemini's native PDF understanding — profile: {profile}[/]\n\n"
             f"📖 [white]Step 1:[/] Page-by-page extraction [dim]({step1_label})[/]\n"
-            "📊 [white]Step 2:[/] Magazine-level consolidation [dim](Gemini Flash)[/]",
+            f"📊 [white]Step 2:[/] Magazine-level consolidation "
+            f"[dim]({DEFAULT_TEXT_MODEL_KEY})[/]",
             title="🚀 Pipeline Started", border_style="cyan", padding=(1, 2),
         )
 
@@ -457,7 +399,7 @@ def main() -> int:
             ),
             script_dir=Path(__file__).resolve().parent,
             intro_panel=intro_panel,
-            api_key_env="GEMINI_API_KEY",
+            api_key_env=("GEMINI_API_KEY", "OPENROUTER_API_KEY"),
         )
 
     except KeyboardInterrupt:

@@ -13,7 +13,8 @@ The approach:
 4. Update only CONTENT attributes, preserving all coordinate data
 
 Supports multiple models via --model flag:
-- gemini-flash (default): Gemini Flash - fast, cost-effective
+- deepseek-v4-flash-0731 (default): DeepSeek official Flash release via OpenRouter
+- gemini-flash: Gemini Flash - fast, cost-effective
 - gemini-pro: Gemini Pro - highest quality
 - gpt-5.6-luna: OpenAI GPT-5.6 Luna - cost-optimized tier
 - gpt-5.6-sol: OpenAI GPT-5.6 Sol - flagship tier
@@ -38,6 +39,7 @@ from rich.table import Table
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.llm_provider import (
+    DEFAULT_TEXT_MODEL_KEY,
     LEGACY_CLI_MODEL_KEYS,
     TEXT_FULL_MODELS,
     LLMConfig,
@@ -614,7 +616,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process with default model (interactive selection)
+  # Process with the default text model
   python 02_correct_alto_xml.py
 
   # Use Gemini Flash (fast, no thinking)
@@ -627,8 +629,8 @@ Examples:
     parser.add_argument(
         "--model",
         choices=ALLOWED_MODELS + LEGACY_MODELS,
-        default=None,
-        help="AI model to use for correction (default: interactive selection)",
+        default=DEFAULT_TEXT_MODEL_KEY,
+        help=f"AI model to use for correction (default: {DEFAULT_TEXT_MODEL_KEY})",
     )
     parser.add_argument(
         "--input-dir",

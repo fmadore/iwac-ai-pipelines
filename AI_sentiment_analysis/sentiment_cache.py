@@ -28,9 +28,10 @@ Only successful results are cached. An errored call is deliberately *not*
 written, so a resume retries it; a run that cached its own failures would
 converge on a corpus of error placeholders.
 
-Records also carry the exact model id, which the generation-1 cache did not —
-that omission is why reconstructing which model produced the stored corpus
-needed a dig through git history.
+Records also carry the exact model id, reasoning setting, and prompt hash. Those
+fields are part of cache identity: changing a model snapshot or prompt must
+never make an older answer look reusable merely because its panel slot kept the
+same friendly name.
 """
 
 import json
@@ -72,7 +73,7 @@ class SentimentCache:
 
     path: Path
     logger: Optional[logging.Logger] = None
-    #: item_id -> model_key -> result payload
+    #: item_id -> model_key -> complete JSONL record
     _entries: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
     _handle: Optional[TextIO] = None
     #: Serialises :meth:`put`. Items are annotated by a worker pool, so without
@@ -127,7 +128,7 @@ class SentimentCache:
                     offset += line_bytes
                     continue
 
-                self._entries.setdefault(item_id, {})[model_key] = result
+                self._entries.setdefault(item_id, {})[model_key] = record
                 report.records += 1
                 offset += line_bytes
 
@@ -139,20 +140,90 @@ class SentimentCache:
             )
         return report
 
-    def get(self, item_id: Any, model_key: str) -> Optional[Dict[str, Any]]:
-        return self._entries.get(str(item_id), {}).get(model_key)
+    @staticmethod
+    def _matches(
+        record: Dict[str, Any],
+        *,
+        model_id: Optional[str] = None,
+        reasoning: Optional[str] = None,
+        prompt: Optional[str] = None,
+    ) -> bool:
+        """Whether a record has the requested provenance.
 
-    def has(self, item_id: Any, model_key: str) -> bool:
-        return model_key in self._entries.get(str(item_id), {})
+        ``None`` means the caller does not care about that field, preserving the
+        small public inspection API used by reports and tests. Production calls
+        pass all three values and therefore cannot reuse a stale answer.
+        """
+        expected = {"model_id": model_id, "reasoning": reasoning, "prompt": prompt}
+        return all(value is None or record.get(field) == value
+                   for field, value in expected.items())
 
-    def results_for(self, item_id: Any) -> Dict[str, Dict[str, Any]]:
-        """Every cached model result for one item."""
-        return dict(self._entries.get(str(item_id), {}))
+    def get(
+        self,
+        item_id: Any,
+        model_key: str,
+        *,
+        model_id: Optional[str] = None,
+        reasoning: Optional[str] = None,
+        prompt: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        record = self._entries.get(str(item_id), {}).get(model_key)
+        if not record or not self._matches(
+            record, model_id=model_id, reasoning=reasoning, prompt=prompt
+        ):
+            return None
+        return record["result"]
 
-    def missing_models(self, item_id: Any, model_keys: Iterable[str]) -> List[str]:
+    def has(
+        self,
+        item_id: Any,
+        model_key: str,
+        *,
+        model_id: Optional[str] = None,
+        reasoning: Optional[str] = None,
+        prompt: Optional[str] = None,
+    ) -> bool:
+        return self.get(
+            item_id, model_key, model_id=model_id, reasoning=reasoning, prompt=prompt
+        ) is not None
+
+    def results_for(
+        self,
+        item_id: Any,
+        *,
+        expected: Optional[Dict[str, Dict[str, str]]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Cached model results for one item, optionally filtered by provenance."""
+        results: Dict[str, Dict[str, Any]] = {}
+        for model_key, record in self._entries.get(str(item_id), {}).items():
+            provenance = (expected or {}).get(model_key, {})
+            if expected is not None and model_key not in expected:
+                continue
+            if self._matches(record, **provenance):
+                results[model_key] = record["result"]
+        return results
+
+    def count_matching(self, expected: Dict[str, Dict[str, str]]) -> int:
+        """Count loaded records reusable under the current run configuration."""
+        return sum(
+            1
+            for records in self._entries.values()
+            for model_key, record in records.items()
+            if model_key in expected and self._matches(record, **expected[model_key])
+        )
+
+    def missing_models(
+        self,
+        item_id: Any,
+        model_keys: Iterable[str],
+        *,
+        expected: Optional[Dict[str, Dict[str, str]]] = None,
+    ) -> List[str]:
         """Which of *model_keys* still need to be called for this item."""
-        cached = self._entries.get(str(item_id), {})
-        return [key for key in model_keys if key not in cached]
+        return [
+            key for key in model_keys
+            if not self.has(item_id, key, **((expected or {}).get(key, {})))
+        ]
 
     # -- writing ---------------------------------------------------------
 
@@ -168,10 +239,9 @@ class SentimentCache:
     ) -> None:
         """Append one result and make it immediately visible to :meth:`get`.
 
-        ``model_id``, ``reasoning`` and ``prompt`` are provenance, not cache
-        keys: they record what actually answered and what it was asked, so a
-        cache file is still interpretable long after the code that produced it
-        has moved on. ``prompt`` is the fingerprint from
+        ``model_id``, ``reasoning`` and ``prompt`` are provenance and cache
+        identity: they record what actually answered and what it was asked, and
+        a lookup for a different configuration will miss. ``prompt`` is the fingerprint from
         ``sentiment_core.prompt_fingerprint`` — prompt wording shifts label
         distributions unpredictably, so a value whose prompt is unknown cannot
         be compared with one whose prompt is known.
@@ -198,7 +268,7 @@ class SentimentCache:
             # dying, and buffered lines do not.
             self._handle.flush()
 
-            self._entries.setdefault(str(item_id), {})[model_key] = result
+            self._entries.setdefault(str(item_id), {})[model_key] = record
 
     def close(self) -> None:
         with self._lock:

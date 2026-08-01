@@ -22,7 +22,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **Video Processing** | Summarize or transcribe video with visual descriptions |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
-| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations using three models concurrently |
+| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a five-model panel |
 | **Reference Indexing** | Assign controlled subject and spatial keywords to scholarly references using Claude, with authority reconciliation |
 
 ## Limitations and Caveats
@@ -99,7 +99,12 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 | Gemini | `gemini-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
-| OpenRouter | `qwen3.5-moe`, `qwen3.5-dense`, `deepseek-v4-flash`, `deepseek-v4-pro` | Text pipelines, one `OPENROUTER_API_KEY` for all. Open-weights models only — the Qwen entries are the Apache-2.0 releases, not Alibaba's hosted Flash/Plus/Max tiers. The Flash/MoE tiers cost roughly a tenth of `gpt-5.6-luna` and are offered by NER and OCR correction; `deepseek-v4-pro` is the quality tier, offered by OCR correction only. Requests are routed only to backends that do not retain data. |
+| OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the default for every text-generation stage, including sentiment and magazine consolidation. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
+
+`deepseek-v4-flash-0731` is pinned to the dated OpenRouter slug
+`deepseek/deepseek-v4-flash-0731`; the generic aliases `deepseek` and
+`deepseek-flash` resolve to it. The former `deepseek-v4-flash` key remains
+available only to reproduce runs made with the superseded preview.
 
 ## Adapting for Other Projects
 

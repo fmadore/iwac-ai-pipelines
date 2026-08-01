@@ -20,7 +20,7 @@ Omeka S items → AI entity extraction → Authority reconciliation → Database
 
 ```bash
 # Extract entities from an item set
-python 01_NER_AI.py --item-set-id 123 --model gemini-flash
+python 01_NER_AI.py --item-set-id 123  # DeepSeek V4 Flash 0731 by default
 
 # Or use Google's open-weights flagship
 python 01_NER_AI.py --item-set-id 123 --model gemma-4
@@ -42,16 +42,17 @@ python 03_Omeka_update.py
 | `mistral-large` | Mistral | Medium | Medium |
 | `ministral-14b` | Mistral | Fast | Low |
 | `qwen3.5-moe` | Alibaba (open weights, Apache-2.0, via OpenRouter) | Fast | Lowest |
-| `deepseek-v4-flash` | DeepSeek (open-weights via OpenRouter) | Fast | Lowest |
+| `deepseek-v4-flash-0731` | DeepSeek (open weights via OpenRouter) | Fast | Lowest (default) |
 
 All models use the same French-language prompt (`ner_system_prompt.md`) optimized for West African Islamic contexts.
 
 `gemma-4` uses the same `GEMINI_API_KEY` as the Gemini models. Thinking level is `minimal` by default (Gemma 4 accepts only `MINIMAL` or `HIGH`), which matches the low-cost entity-extraction budget used by `gemini-flash`.
 
-`qwen3.5-moe` and `deepseek-v4-flash` share one `OPENROUTER_API_KEY` and cost
+`qwen3.5-moe` and `deepseek-v4-flash-0731` share one `OPENROUTER_API_KEY` and cost
 roughly a tenth of `gpt-5.6-luna`, which is what makes a full-corpus pass
-affordable. Both run without reasoning here: the NER config's
-`reasoning_effort="medium"` is an OpenAI setting and is not forwarded to them.
+affordable. Qwen accepts the NER pipeline's `medium` reasoning request directly;
+DeepSeek 0731 supports only `low`, `high`, and `max`, so the shared adapter uses
+its cost-conscious `low` default for NER.
 Because these are open models behind a router, treat a first run as an
 evaluation — compare its entities against a known-good model on the same item
 set before committing to a bulk pass.

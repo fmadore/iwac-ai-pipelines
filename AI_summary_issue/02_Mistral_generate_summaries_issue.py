@@ -3,9 +3,9 @@
 This script implements a two-step pipeline to extract and consolidate articles
 from an Islamic magazine using Mistral's native PDF understanding with OCR.
 
-Supported models:
+Supported stages:
 - Mistral OCR (Step 1: page-by-page extraction specialized for documents)
-- Mistral Small (Step 2: cost-effective text consolidation with structured outputs)
+- Repository default text model (Step 2: consolidation with structured outputs)
 
 Step 1: Page-by-page extraction with OCR
 - Uploads PDF once to Mistral
@@ -36,7 +36,7 @@ Robustness mechanisms:
 API Best Practices:
 - Uses client.chat.parse() with Pydantic response_format for structured outputs
 - Uses Mistral OCR for document processing
-- Uses Mistral Small for cost-effective consolidation
+- Uses the repository default text model for cost-effective consolidation
 
 Usage:
     python 02_Mistral_generate_summaries_issue.py
@@ -65,13 +65,14 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from common.pdf_utils import get_pdf_page_count  # noqa: E402
+from common.llm_provider import DEFAULT_TEXT_MODEL_KEY, ModelOption, get_model_option  # noqa: E402
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
 
 # Shared magazine-extraction building blocks (models, prompts, step skeletons)
 from magazine_extraction import (  # noqa: E402
-    MagazineIndex,
     PageExtraction,
+    build_text_consolidator,
     console,
     load_extraction_prompt,
     run_extraction_pipeline,
@@ -94,9 +95,8 @@ load_dotenv()
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds (exponential backoff via common.retry)
 
-# Mistral models
+# Mistral multimodal extraction model
 MISTRAL_OCR = "mistral-ocr-latest"  # For OCR API endpoint
-MISTRAL_SMALL = "mistral-small-latest"  # For chat completion consolidation
 
 # ------------------------------------------------------------------
 # Error Helpers
@@ -240,66 +240,10 @@ def generate_page_extraction_mistral(client: Mistral, signed_url: str, page_num:
         logging.error(f"Generation error for page {page_num}: {e}")
         raise
 
-@retry_with_backoff(max_retries=MAX_RETRIES, base_delay=RETRY_DELAY)
-def generate_consolidation_mistral(client: Mistral, system_prompt: str,
-                                   extracted_json: str, rate_limiter: RateLimiter) -> Optional[MagazineIndex]:
-    """
-    Generate structured consolidation with Mistral Small using chat.parse().
-
-    Args:
-        client: Mistral client
-        system_prompt: System prompt for consolidation
-        extracted_json: JSON string of extracted page data
-        rate_limiter: Shared rate limiter (wait() called before the API request)
-
-    Returns:
-        MagazineIndex object or None
-
-    Raises:
-        QuotaExhaustedError: When the API quota/billing limit is exhausted
-            (never retried by the decorator).
-    """
-    try:
-        rate_limiter.wait()
-        response = client.chat.parse(
-            model=MISTRAL_SMALL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": f"Consolidez les articles extraits ci-dessous:\n\n{extracted_json}"
-                }
-            ],
-            response_format=MagazineIndex,
-            # Mistral recommends 0.05-0.20 for instruct work that should not be
-            # creative; consolidation is mechanical. Matches the Mistral entries
-            # in MODEL_REGISTRY, which this script bypasses.
-            temperature=0.2
-        )
-
-        if not response.choices:
-            raise RuntimeError("No choices in Mistral response")
-
-        parsed = response.choices[0].message.parsed
-        if parsed is None:
-            raise RuntimeError("No parsed response from Mistral")
-
-        return parsed
-
-    except QuotaExhaustedError:
-        raise
-    except Exception as e:
-        _raise_for_quota(e)
-        logging.error(f"Consolidation generation error: {e}")
-        raise
-
 # ------------------------------------------------------------------
 # Main Pipeline
 # ------------------------------------------------------------------
-def process_magazine(pdf_path: Path, output_dir: Path, magazine_id: str = None,
+def process_magazine(model_step2: ModelOption, pdf_path: Path, output_dir: Path, magazine_id: str = None,
                      rate_limiter: Optional[RateLimiter] = None):
     """
     Complete pipeline to process a magazine PDF using Mistral's Document AI.
@@ -364,17 +308,7 @@ def process_magazine(pdf_path: Path, output_dir: Path, magazine_id: str = None,
                 _raise_if_persistent_429(e)
                 raise
 
-        def consolidate(system_prompt: str, extracted_json: str) -> Optional[MagazineIndex]:
-            """Provider callable for the shared step-2 consolidation."""
-            try:
-                return generate_consolidation_mistral(
-                    client, system_prompt, extracted_json, rate_limiter
-                )
-            except QuotaExhaustedError:
-                raise
-            except Exception as e:
-                _raise_if_persistent_429(e)
-                raise
+        consolidate = build_text_consolidator(model_step2)
 
         # Step 1 (page loop) + step 2 (consolidation) via the shared skeleton.
         # The page_*.json cache is deleted only after step 2 succeeds.
@@ -385,7 +319,7 @@ def process_magazine(pdf_path: Path, output_dir: Path, magazine_id: str = None,
             output_dir=output_dir,
             magazine_id=magazine_id,
             step1_model_label="Mistral OCR",
-            step2_model_label="Mistral Small",
+            step2_model_label=model_step2.label,
             schema_note="Pydantic schema",
         )
 
@@ -432,11 +366,13 @@ def main() -> int:
             "[bold cyan]Islamic Magazine Article Extraction Pipeline (Mistral)[/]\n\n"
             "[dim]Using Mistral Document AI with OCR capabilities[/]\n\n"
             "📖 [white]Step 1:[/] Page-by-page extraction [dim](Mistral OCR)[/]\n"
-            "📊 [white]Step 2:[/] Magazine-level consolidation [dim](Mistral Small)[/]",
+            f"📊 [white]Step 2:[/] Magazine-level consolidation "
+            f"[dim]({DEFAULT_TEXT_MODEL_KEY})[/]",
             title="🚀 Pipeline Started", border_style="cyan", padding=(1, 2),
         )
 
         logging.info("=== Magazine Article Extraction Pipeline (Mistral) ===")
+        model_step2 = get_model_option(DEFAULT_TEXT_MODEL_KEY)
 
         # Rate limiter shared across the whole batch (None = no throttling)
         rate_limiter = RateLimiter(requests_per_minute=args.rpm)
@@ -445,11 +381,12 @@ def main() -> int:
 
         return run_magazine_batch(
             lambda pdf_path, output_dir, magazine_id: process_magazine(
-                pdf_path, output_dir, magazine_id, rate_limiter=rate_limiter,
+                model_step2, pdf_path, output_dir, magazine_id,
+                rate_limiter=rate_limiter,
             ),
             script_dir=Path(__file__).resolve().parent,
             intro_panel=intro_panel,
-            api_key_env="MISTRAL_API_KEY",
+            api_key_env=("MISTRAL_API_KEY", "OPENROUTER_API_KEY"),
         )
 
     except KeyboardInterrupt:

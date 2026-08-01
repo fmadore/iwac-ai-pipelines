@@ -44,6 +44,7 @@ from common.iwac_config import (  # noqa: E402
     IWAC_SUMMARY_MODEL_PROPERTY_ID,
     model_annotation_value,
 )
+from common.llm_provider import DEFAULT_TEXT_MODEL_KEY  # noqa: E402
 from common.console_utils import standard_progress  # noqa: E402
 
 console = Console()
@@ -123,6 +124,10 @@ def main():
         description="Update Omeka S items with the AI table of contents (preserves existing metadata)."
     )
     parser.add_argument(
+        "--model", choices=list(AI_MODEL_ITEMS), default=DEFAULT_TEXT_MODEL_KEY,
+        help=f"AI model that consolidated the index (default: {DEFAULT_TEXT_MODEL_KEY}).",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Fetch each item and report what would change, but write nothing.",
     )
@@ -140,17 +145,7 @@ def main():
         console.print(f"[red]✗[/] {e}")
         return
 
-    # Model selection — numbered menu over the shared AI model registry
-    model_keys = list(AI_MODEL_ITEMS)
-    console.print("\n[bold]Select annotation model:[/]")
-    for i, key in enumerate(model_keys, 1):
-        info = AI_MODEL_ITEMS[key]
-        console.print(f"  {i}. {info['display_title']} (item {info['item_id']})")
-    choice = console.input("\nChoice [1]: ").strip() or "1"
-    if not choice.isdigit() or not 1 <= int(choice) <= len(model_keys):
-        console.print(f"[red]Invalid choice: {choice}[/]")
-        sys.exit(1)
-    selected_key = model_keys[int(choice) - 1]
+    selected_key = args.model
     selected_model = AI_MODEL_ITEMS[selected_key]
     model_value = model_annotation_value(
         client.base_url, selected_key, IWAC_SUMMARY_MODEL_PROPERTY_ID, "AI Model - Summary"

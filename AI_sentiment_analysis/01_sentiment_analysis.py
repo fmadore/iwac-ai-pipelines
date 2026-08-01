@@ -112,7 +112,6 @@ from sentiment_core import (  # noqa: E402
     CENTRALITE_ITEM_IDS,
     PROMPT_FILENAME,
     PANEL,
-    PANEL_REASONING,
     PANEL_REASONING_EFFECTIVE,
     POLARITE_ITEM_IDS,
     RESOURCE_FIELDS,
@@ -126,6 +125,7 @@ from sentiment_core import (  # noqa: E402
     is_valid_result,
     load_system_prompt,
     prompt_fingerprint,
+    panel_reasoning,
 )
 from sentiment_cache import SentimentCache  # noqa: E402
 
@@ -360,7 +360,7 @@ def build_clients(
 ) -> Tuple[Dict[str, BaseLLMClient], Dict[str, str], Dict[str, str], List[Tuple[str, str]]]:
     """One client per selected panel member; report the ones we cannot reach.
 
-    Reasoning depth IS standardised (see PANEL_REASONING); temperature is not.
+    Reasoning depth is standardised as closely as each API allows; temperature is not.
     Temperature stays vendor-owned — the recommended values differ and both
     Google and Alibaba document a lowered temperature as a cause of looping.
     Each client takes its own from MODEL_REGISTRY.
@@ -370,12 +370,13 @@ def build_clients(
     model_ids: Dict[str, str] = {}
     skipped: List[Tuple[str, str]] = []
 
-    config = LLMConfig(**PANEL_REASONING)
     for key in selected:
         member = PANEL[key]
         try:
             option = get_model_option(member.registry_key)
-            clients[key] = build_llm_client(option, config=config)
+            clients[key] = build_llm_client(
+                option, config=LLMConfig(**panel_reasoning(key))
+            )
             labels[key] = member.label
             model_ids[key] = option.model
         except (RuntimeError, ValueError) as exc:
@@ -427,8 +428,7 @@ def format_duration(seconds: float) -> str:
 def main() -> int:
     console.print(Panel.fit(
         "[bold cyan]AI Sentiment Analysis Pipeline[/bold cyan]\n"
-        "[dim]Five-model panel, model-keyed properties, "
-        "iwac:sentimentModel provenance[/dim]",
+        f"[dim]{len(PANEL)}-model panel with model-keyed properties[/dim]",
         border_style="cyan",
     ))
 
@@ -461,7 +461,7 @@ def main() -> int:
                            help="Ignore the cache AND the already-annotated guard")
     behaviour.add_argument("--rewrite", action="store_true",
                            help="Re-PATCH items that already carry values, "
-                                "reusing cached answers (no new model calls). "
+                                "reusing answers whose cached provenance still matches. "
                                 "For replaying the corpus after the stored "
                                 "value shape changes.")
     behaviour.add_argument("--yes", action="store_true",
@@ -523,18 +523,28 @@ def main() -> int:
     # --- properties ---------------------------------------------------
     # Resolved, not hardcoded: Omeka assigns these when the vocabulary is
     # updated, and a stale id would write sentiment into the wrong property.
-    wanted_terms: List[str] = []
-    for member in members:
-        wanted_terms.extend(member.terms)
-    try:
-        property_ids = resolve_property_ids(client, wanted_terms)
-    except KeyError as exc:
-        console.print(Panel(str(exc.args[0]), title="Vocabulary not ready",
-                            border_style="red"))
-        return 2
+    property_ids: Dict[str, int] = {}
+    if not args.skip_update:
+        wanted_terms: List[str] = []
+        for member in members:
+            wanted_terms.extend(member.terms)
+        try:
+            property_ids = resolve_property_ids(client, wanted_terms)
+        except KeyError as exc:
+            console.print(Panel(str(exc.args[0]), title="Vocabulary not ready",
+                                border_style="red"))
+            return 2
 
     system_prompt = load_system_prompt()
     prompt_id = prompt_fingerprint(system_prompt)
+    expected_provenance = {
+        key: {
+            "model_id": model_ids[key],
+            "reasoning": PANEL_REASONING_EFFECTIVE[key],
+            "prompt": prompt_id,
+        }
+        for key in clients
+    }
 
     # --- what to annotate ---------------------------------------------
     sources: List[Dict[str, Any]] = (
@@ -588,9 +598,11 @@ def main() -> int:
     cache = SentimentCache(path=cache_path, logger=logger)
     report = cache.load()
     if report.records:
+        matching = cache.count_matching(expected_provenance)
         console.print(f"\n[green]✓[/] Cache: [bold]{report.records:,}[/] results "
-                      f"across [bold]{report.items:,}[/] items — these will not be "
-                      f"re-requested")
+                      f"across [bold]{report.items:,}[/] items; "
+                      f"[bold]{matching:,}[/] match this run's model, reasoning, "
+                      f"and prompt and can be reused")
     if report.skipped_malformed:
         console.print(f"[yellow]![/] {report.skipped_malformed} unreadable cache "
                       f"line(s) skipped (expected after an interrupted run)")
@@ -704,7 +716,9 @@ def main() -> int:
                 pending = (
                     list(clients) if args.force_reanalyze
                     else [key for key in clients
-                          if key not in written and not cache.has(item_id, key)]
+                          if key not in written and not cache.has(
+                              item_id, key, **expected_provenance[key]
+                          )]
                 )
                 yield item_id, content, pending
                 produced += 1
@@ -752,7 +766,9 @@ def main() -> int:
             # from an earlier run.
             results = {
                 key: result
-                for key, result in cache.results_for(item_id).items()
+                for key, result in cache.results_for(
+                    item_id, expected=expected_provenance
+                ).items()
                 if key in clients
             }
             if results:

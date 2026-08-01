@@ -85,8 +85,9 @@ DEFAULT_MISTRAL_SMALL = "mistral-small-2603"  # /v1/models describes it as "Mist
 # corpus can be run against open models at a fraction of GPT/Gemini prices,
 # and so a fresh clone needs one key instead of three.
 #
-# Model ids are OpenRouter slugs, unversioned on purpose: like the Gemini
-# ``-latest`` aliases, they follow the vendor's current pointer.
+# Registry entries use exact OpenRouter slugs. Dated releases stay pinned so
+# model provenance remains meaningful; generic user-facing aliases such as
+# ``deepseek`` can move forward deliberately while old keys remain callable.
 # ---------------------------------------------------------------------------
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -107,8 +108,17 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"    # 122B total / 10B active
 OPENROUTER_QWEN_SMALL_MOE_MODEL = "qwen/qwen3.5-35b-a3b"  # 35B total / 3B active
 OPENROUTER_QWEN_DENSE_MODEL = "qwen/qwen3.5-27b"        # dense 27B, 6 endpoints
+# The dated slug is intentional. DeepSeek describes 0731 as the official
+# release superseding the April preview; published annotations must not follow
+# an alias that can later point at a different checkpoint.
+OPENROUTER_DEEPSEEK_FLASH_0731_MODEL = "deepseek/deepseek-v4-flash-0731"
 OPENROUTER_DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
 OPENROUTER_DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
+
+# Default for every text-to-text pipeline. Multimodal extraction stages keep
+# their native Gemini/Mistral/Voxtral models and may hand their extracted text
+# to this model in a later stage.
+DEFAULT_TEXT_MODEL_KEY = "deepseek-v4-flash-0731"
 
 #: Routing policy applied to *every* OpenRouter request.
 #:
@@ -405,12 +415,30 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort=None,
         supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
     ),
+    "deepseek-v4-flash-0731": ModelOption(
+        key="deepseek-v4-flash-0731",
+        provider=PROVIDER_OPENROUTER,
+        model=OPENROUTER_DEEPSEEK_FLASH_0731_MODEL,
+        label="DeepSeek V4 Flash 0731 (OpenRouter)",
+        description=(
+            "DeepSeek V4 Flash 0731 — official 284B/13B-active MoE release, "
+            "1M context (from $0.09/$0.18 per 1M tokens)"
+        ),
+        # The official model card recommends temperature=1.0 for local
+        # deployment in every non-agentic scenario (top_p is left to the
+        # backend). Lowering it is not a generic determinism control here.
+        default_temperature=1.0,
+        # 0731 exposes exactly low/high/max. Use low for bulk archive work;
+        # callers such as the sentiment panel can explicitly request high.
+        default_reasoning_effort="low",
+        supported_reasoning_efforts=("low", "high", "max"),
+    ),
     "deepseek-v4-flash": ModelOption(
         key="deepseek-v4-flash",
         provider=PROVIDER_OPENROUTER,
         model=OPENROUTER_DEEPSEEK_FLASH_MODEL,
-        label="DeepSeek V4 Flash (OpenRouter)",
-        description="DeepSeek V4 Flash — 284B/13B active MoE, 1M context ($0.09/$0.18 per 1M tokens)",
+        label="DeepSeek V4 Flash Preview (OpenRouter)",
+        description="DeepSeek V4 Flash preview (2026-04-23) — superseded by the dated 0731 release",
         # DeepSeek's V4 model card gives one recipe for every mode and both
         # sizes: "we recommend setting the sampling parameters to
         # temperature = 1.0, top_p = 1.0". Lowering it collapses the reasoning
@@ -501,8 +529,12 @@ MODEL_ALIASES = {
     "qwen/qwen3.5-35b-a3b": "qwen3.5-moe-small",
     "qwen3.5-27b": "qwen3.5-dense",
     "qwen/qwen3.5-27b": "qwen3.5-dense",
-    "deepseek": "deepseek-v4-flash",
-    "deepseek-flash": "deepseek-v4-flash",
+    "deepseek": "deepseek-v4-flash-0731",
+    "deepseek-flash": "deepseek-v4-flash-0731",
+    "deepseek-flash-0731": "deepseek-v4-flash-0731",
+    "deepseek/deepseek-v4-flash-0731": "deepseek-v4-flash-0731",
+    # The former slug remains explicit for reproducibility of preview-era
+    # runs; only the generic aliases move to the official release.
     "deepseek/deepseek-v4-flash": "deepseek-v4-flash",
     "deepseek-pro": "deepseek-v4-pro",
     "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
@@ -519,23 +551,25 @@ MODEL_ALIASES = {
 # ---------------------------------------------------------------------------
 
 #: Cost-optimized tiers. Enough for mechanical work: summarization, correction.
-TEXT_ECONOMY_MODELS: List[str] = ["gpt-5.6-luna", "gemini-flash", "ministral-14b"]
+TEXT_ECONOMY_MODELS: List[str] = [
+    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-flash", "ministral-14b",
+]
 
 #: Open-weights models served through OpenRouter (one OPENROUTER_API_KEY).
 TEXT_OPEN_MODELS: List[str] = [
     "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
-    "deepseek-v4-flash", "deepseek-v4-pro",
+    "deepseek-v4-flash-0731", "deepseek-v4-flash", "deepseek-v4-pro",
 ]
 
 #: Economy tiers plus the open-weights and flagship Mistral options (NER).
 TEXT_EXTENDED_MODELS: List[str] = [
-    "gpt-5.6-luna", "gemini-flash", "gemma-4", "mistral-large", "ministral-14b",
-    "mistral-small", "qwen3.5-moe", "deepseek-v4-flash",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-flash", "gemma-4",
+    "mistral-large", "ministral-14b", "mistral-small", "qwen3.5-moe",
 ]
 
 #: Every text model, including the quality tiers, for output-quality-critical work.
 TEXT_FULL_MODELS: List[str] = [
-    "gemini-flash", "gemini-pro", "gpt-5.6-luna", "gpt-5.6-sol",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-flash", "gemini-pro", "gpt-5.6-luna", "gpt-5.6-sol",
     "mistral-large", "ministral-14b", "mistral-small",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-flash", "deepseek-v4-pro",
 ]

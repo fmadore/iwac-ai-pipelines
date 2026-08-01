@@ -27,13 +27,14 @@ python 03_omeka_update_summaries.py   # Update Omeka S items
 The summarization script prompts you to select a model interactively, or use `--model`:
 
 ```bash
-python 02_AI_generate_summaries.py --model gemini-flash
+python 02_AI_generate_summaries.py  # DeepSeek V4 Flash 0731 by default
 ```
 
 ## Supported Models
 
 | Model | Provider | Speed | Cost |
 |-------|----------|-------|------|
+| `deepseek-v4-flash-0731` | DeepSeek via OpenRouter | Fast | Lowest (default) |
 | `gemini-flash` | Google | Fast | Low |
 | `gpt-5.6-luna` | OpenAI | Fast | Low |
 | `ministral-14b` | Mistral | Fast | Very low ($0.2/M tokens) |
@@ -77,6 +78,7 @@ OMEKA_KEY_CREDENTIAL=your_credential
 GEMINI_API_KEY=your_key
 OPENAI_API_KEY=your_key
 MISTRAL_API_KEY=your_key
+OPENROUTER_API_KEY=your_key  # Default DeepSeek model
 ```
 
 ## Customization

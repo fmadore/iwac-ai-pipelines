@@ -20,9 +20,11 @@ Everything the Gemini (02_AI_generate_summaries_issue.py) and Mistral
   when more than ``ERROR_RATE_THRESHOLD`` of pages failed, step 2 is skipped
   entirely (cache kept) instead of silently polluting the final TOC
 
-Provider SDKs are deliberately NOT imported here — each 02_ script keeps its
-own client initialization and generate calls. pypdf is imported lazily so this
-module can be imported without any provider SDK installed.
+Multimodal provider SDKs are deliberately not imported here. Step 2 is
+text-only, however, so both variants share the normal provider-independent LLM
+client instead of maintaining duplicate Gemini and Mistral consolidation code.
+pypdf is imported lazily so this module can be imported without either
+multimodal provider SDK installed.
 """
 
 import json
@@ -30,7 +32,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel, Field
 
@@ -51,7 +53,14 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from common.pdf_utils import PdfPageSource  # noqa: E402,F401  (re-exported for the 02_ scripts)
-from common.rate_limiter import QuotaExhaustedError  # noqa: E402
+from common.llm_provider import (  # noqa: E402
+    BaseLLMClient,
+    LLMConfig,
+    ModelOption,
+    build_llm_client,
+)
+from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted  # noqa: E402
+from common.retry import retry_with_backoff  # noqa: E402
 
 # Shared console — the provider scripts import this so the whole pipeline
 # writes through a single rich console.
@@ -98,6 +107,35 @@ class ConsolidatedArticle(BaseModel):
 class MagazineIndex(BaseModel):
     """Final consolidated index of all articles in the magazine."""
     articles: List[ConsolidatedArticle] = Field(description="Liste des articles consolidés du magazine")
+
+
+def build_text_consolidator(
+    option: ModelOption,
+) -> Callable[[str, str], Optional[MagazineIndex]]:
+    """Build the shared, retrying text-only consolidation stage."""
+    client: BaseLLMClient = build_llm_client(
+        option,
+        config=LLMConfig(
+            reasoning_effort="low",
+            text_verbosity="low",
+            thinking_level="MINIMAL",
+        ),
+    )
+
+    @retry_with_backoff(max_retries=3, base_delay=2.0)
+    def consolidate(system_prompt: str, extracted_json: str) -> Optional[MagazineIndex]:
+        try:
+            return client.generate_structured(
+                system_prompt,
+                f"Consolidez les articles extraits ci-dessous:\n\n{extracted_json}",
+                MagazineIndex,
+            )
+        except Exception as exc:
+            if is_quota_exhausted(exc):
+                raise QuotaExhaustedError(str(exc)) from exc
+            raise
+
+    return consolidate
 
 
 # ------------------------------------------------------------------
@@ -551,7 +589,7 @@ def run_magazine_batch(
     *,
     script_dir: Path,
     intro_panel: Panel,
-    api_key_env: str,
+    api_key_env: Union[str, Sequence[str]],
 ) -> int:
     """Drive a whole directory of magazine PDFs through *process_magazine*.
 
@@ -564,14 +602,18 @@ def run_magazine_batch(
         process_magazine: Called as ``(pdf_path, output_dir, magazine_id)``.
         script_dir: Pipeline directory holding ``PDF/`` and ``Magazine_Extractions/``.
         intro_panel: Provider-specific welcome banner.
-        api_key_env: Environment variable that must be set (e.g. ``GEMINI_API_KEY``).
+        api_key_env: Environment variable(s) that must be set, for example
+            ``("GEMINI_API_KEY", "OPENROUTER_API_KEY")``.
 
     Returns:
         Process exit code — 0 when every PDF succeeded.
     """
-    if not os.getenv(api_key_env):
+    required_keys = [api_key_env] if isinstance(api_key_env, str) else list(api_key_env)
+    missing_keys = [key for key in required_keys if not os.getenv(key)]
+    if missing_keys:
+        missing = ", ".join(missing_keys)
         console.print(Panel(
-            f"[red]{api_key_env} not found in environment variables![/]\n\n"
+            f"[red]{missing} not found in environment variables![/]\n\n"
             "Please set your API key in a .env file or environment.",
             title="✗ Configuration Error",
             border_style="red",

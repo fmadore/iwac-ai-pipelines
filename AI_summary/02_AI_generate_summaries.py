@@ -1,4 +1,4 @@
-"""French Summary Generation using OpenAI GPT-5.6 Luna or Gemini Flash.
+"""French summary generation using the shared text-model registry.
 
 Optimized for cost-effective document summarization with low reasoning effort.
 """
@@ -21,6 +21,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from common.llm_provider import (  # noqa: E402
+    DEFAULT_TEXT_MODEL_KEY,
     LEGACY_CLI_MODEL_KEYS,
     TEXT_ECONOMY_MODELS,
     BaseLLMClient,
@@ -139,7 +140,8 @@ def main():
     parser.add_argument(
         "--model",
         choices=ALLOWED_MODEL_KEYS + LEGACY_MODEL_KEYS,
-        help="Model key; prompts interactively when omitted",
+        default=DEFAULT_TEXT_MODEL_KEY,
+        help=f"Model key (default: {DEFAULT_TEXT_MODEL_KEY})",
     )
     args = parser.parse_args()
 

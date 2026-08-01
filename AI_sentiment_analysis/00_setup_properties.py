@@ -136,9 +136,9 @@ FIELD_TEMPLATES = {
     "subjectivite_score": {
         "label_en": "{label} - Subjectivity Score",
         "label_fr": "{label} - Score subjectivité",
-        "comment_en": "Subjectivity level (1-5) according to {label} ({model_id}), "
+        "comment_en": "Labelled subjectivity level according to {label} ({model_id}), "
                       "linked to controlled vocabulary item",
-        "comment_fr": "Niveau de subjectivité (1-5) selon {label} ({model_id}), "
+        "comment_fr": "Niveau de subjectivité libellé selon {label} ({model_id}), "
                       "lié à un élément de vocabulaire contrôlé",
         "rdf_type": "owl:ObjectProperty",
     },
@@ -152,17 +152,18 @@ FIELD_TEMPLATES = {
     },
 }
 
-#: The annotation property. An ObjectProperty because the value is a link to
-#: the model's authority item, not a string — same shape as the way
-#: ``iwac:summaryModel`` is actually used.
+#: Legacy annotation property retained in the ontology because an Omeka
+#: vocabulary update is destructive when a term disappears. Generation 2 no
+#: longer writes it: this Omeka instance cannot query value annotations, while
+#: the model-keyed property names are directly searchable.
 SENTIMENT_MODEL_DEF = PropertyDef(
     local_name="sentimentModel",
     label_en="AI Model - Sentiment",
     label_fr="Modèle IA - Sentiment",
-    comment_en="AI model that produced a sentiment annotation; used as a value "
-               "annotation linking to the model's authority item",
-    comment_fr="Modèle d'IA ayant produit une annotation de sentiment ; utilisé "
-               "comme annotation de valeur liée à la notice d'autorité du modèle",
+    comment_en="Legacy value-annotation link to the AI model; retained for "
+               "historical data but not written by the current model-keyed panel",
+    comment_fr="Ancien lien d'annotation de valeur vers le modèle d'IA ; conservé "
+               "pour les données historiques mais non écrit par le panel actuel",
     rdf_type="owl:ObjectProperty",
 )
 
@@ -190,7 +191,7 @@ def definitions_for(member: PanelMember) -> List[PropertyDef]:
 
 
 def all_definitions() -> List[PropertyDef]:
-    """The annotation property first, then six per panel member in panel order."""
+    """The retained legacy term first, then six per active panel member."""
     defs = [SENTIMENT_MODEL_DEF]
     for member in PANEL.values():
         defs.extend(definitions_for(member))
@@ -222,10 +223,10 @@ def emit_ttl() -> str:
         "# SENTIMENT PROPERTIES — GENERATION 2 (2026-07)",
         "# ============================================",
         "#",
-        "# Named for the MODEL, not the vendor, and every value additionally",
-        "# carries an iwac:sentimentModel annotation linking to the model's",
-        "# authority item. Either alone would identify the annotator; together",
-        "# they make the generation-1 ambiguity impossible to repeat.",
+        "# Named for the MODEL, not the vendor. The property name is the",
+        "# searchable provenance: Omeka does not index value annotations.",
+        "# iwac:sentimentModel remains below only to preserve historical data;",
+        "# the current pipeline does not write it.",
         "#",
         "# Centralité, polarité and the subjectivité score are links into the",
         "# controlled vocabulary, so they are ObjectProperties here — the",

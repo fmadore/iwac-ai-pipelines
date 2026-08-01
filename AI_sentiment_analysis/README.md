@@ -81,7 +81,11 @@ is the only thing that can be, because Omeka does not index value annotations:
 | `iwac:gpt56Luna*` | `gpt-5.6-luna` | 79610 | `gpt_5_6_luna_` |
 | `iwac:mistralSmall2603*` | `mistral-small-2603` | 79614 | `mistral_small_2603_` |
 | `iwac:qwen35A10b*` | `qwen/qwen3.5-122b-a10b` | 79616 | `qwen3_5_122b_a10b_` |
-| `iwac:deepseekV4Flash*` | `deepseek/deepseek-v4-flash` | 79613 | `deepseek_v4_flash_` |
+| `iwac:deepseekV4Flash0731*` | `deepseek/deepseek-v4-flash-0731` | 83261 | `deepseek_v4_flash_0731_` |
+
+The superseded preview remains under `iwac:deepseekV4Flash*` with authority
+item 79613. Those properties are historical and are never repointed to 0731;
+mixing two checkpoints in one property set would destroy model provenance.
 
 An `iwac:sentimentModel` value annotation was written alongside until
 2026-07-31 and has been **dropped**. Verified live: a query for
@@ -239,7 +243,7 @@ the panel's reasoning setting, 5 concurrent requests, zero rejections:
 | Gemini 3.5 Flash-Lite | **3.8 s** | 1.1 s at `LOW`, 1.4 s at `MINIMAL` |
 | GPT-5.6 Luna | **5.8 s** | 4.3 s at `low` |
 | Mistral Small 4 | **5.8 s** | 2.1 s at `none` |
-| DeepSeek V4 Flash | **9.7 s** | 22 OpenRouter endpoints; long tail to 134 s |
+| DeepSeek V4 Flash 0731 | *not benchmarked yet* | New official release; 8 OpenRouter endpoints at adoption |
 | Qwen3.5 122B-A10B | **104 s** | 4 usable endpoints — see below |
 
 **The three first-party models finish the corpus in a couple of hours** at the
@@ -400,7 +404,7 @@ there.
 | `gpt_5_6_luna` | `gpt-5.6-luna` | `iwac:gpt56Luna*` | closed | $1.00 / $6.00 |
 | `mistral_small_2603` | `mistral-small-2603` | `iwac:mistralSmall2603*` | **6.5B / 119B** | $0.15 / $0.60 |
 | `qwen3_5_122b_a10b` | `qwen/qwen3.5-122b-a10b` | `iwac:qwen35A10b*` | **10B / 122B** | $0.26 / $2.08 |
-| `deepseek_v4_flash` | `deepseek/deepseek-v4-flash` | `iwac:deepseekV4Flash*` | **13B / 284B** | $0.09 / $0.18 |
+| `deepseek_v4_flash_0731` | `deepseek/deepseek-v4-flash-0731` | `iwac:deepseekV4Flash0731*` | **13B / 284B** | from $0.09 / $0.18 |
 
 Property prefixes are the camelCase fold of the column prefix, so the Omeka→HF
 mapping is mechanical. Qwen is the one exception — the literal fold would be
@@ -424,7 +428,7 @@ only have taken on trust:
 |---|---|---|
 | Mistral Small 4 | Apache-2.0 | [`mistralai/Mistral-Small-4-119B-2603`](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603) |
 | Qwen3.5 122B-A10B | Apache-2.0 | [`Qwen/Qwen3.5-122B-A10B`](https://huggingface.co/Qwen/Qwen3.5-122B-A10B) |
-| DeepSeek V4 Flash | MIT | [`deepseek-ai/DeepSeek-V4-Flash`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) |
+| DeepSeek V4 Flash 0731 | MIT | [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) |
 
 Mistral Small 4 is the one served by its *vendor's* API rather than OpenRouter,
 which is why an earlier version of this table called it closed. It is not: the
@@ -447,7 +451,7 @@ Verified against the live APIs on 2026-07-29:
 | Gemini 3.5 Flash-Lite | `thinking_level` | MINIMAL / LOW / **MEDIUM** / HIGH | `MEDIUM` |
 | GPT-5.6 Luna | `reasoning.effort` | none / low / **medium** / high / xhigh / max | `medium` |
 | Qwen3.5 122B-A10B | `reasoning.effort` (OpenRouter-normalised, ~50% budget) | minimal…xhigh | `medium` |
-| DeepSeek V4 Flash | `reasoning.effort` (OpenRouter-normalised, ~50% budget) | minimal…xhigh | `medium` |
+| DeepSeek V4 Flash 0731 | `reasoning.effort` | low / high / max | `high` (no medium level) |
 | **Mistral Small 4** | `reasoning_effort` | **`none` or `high` only** | `high` |
 
 **Mistral is the exception and it cannot be fixed by configuration.** Its API

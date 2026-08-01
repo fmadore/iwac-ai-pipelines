@@ -30,19 +30,20 @@ which **model profile** to run (or pass `--profile` / `--light` to skip the prom
 
 | Choice | Profile | Step 1 — per page | Step 2 — consolidation | Best for |
 |--------|---------|-------------------|------------------------|----------|
-| `1` / `a` | standard | Gemini Pro | Gemini Flash (latest) | Best quality |
-| `2` / `b` | light | Gemini Flash (latest) | Gemini Flash (latest) | Cheaper & faster |
+| `1` / `a` | standard | Gemini Pro | DeepSeek V4 Flash 0731 | Best extraction quality |
+| `2` / `b` | light | Gemini Flash (latest) | DeepSeek V4 Flash 0731 | Cheaper extraction |
 
-The light profile uses Gemini Flash for both steps. The standard profile keeps
-Gemini Pro for the quality-critical per-page extraction and Flash for the
-simpler consolidation step.
+The profile controls only the quality-critical visual extraction. Both variants
+send the resulting typed page JSON to the shared default text model,
+`deepseek-v4-flash-0731`, for consolidation. The Mistral variant likewise uses
+Mistral OCR for step 1 and DeepSeek for step 2.
 
 ### With Omeka S Integration
 
 ```bash
 python 01_omeka_pdf_downloader.py            # Download PDFs from collection (bibo:Issue only)
 python 02_AI_generate_summaries_issue.py     # Extract articles
-python 03_update_omeka_toc.py --dry-run      # Preview the Omeka changes (writes nothing)
+python 03_update_omeka_toc.py --dry-run      # Preview; records DeepSeek 0731 provenance
 python 03_update_omeka_toc.py                # Write the TOC to Omeka via the API
 ```
 
@@ -52,14 +53,8 @@ via the Omeka REST API** and records which model produced it as an
 item it fetches the full record, modifies only the table-of-contents property,
 and PATCHes the whole record back — aborting that item if any existing property
 would be lost. Run `--dry-run` first to review; the live run asks for confirmation.
-Annotation-model choices:
-
-| # | Annotation model | Omeka item |
-|---|------------------|------------|
-| 1 | Claude Opus 4.6 | 78528 |
-| 2 | Gemini 3.1 pro | 78536 |
-| 3 | Gemini 3.5 flash | 78630 |
-| 4 | Gemini 3.1 flash lite | 78631 |
+The updater defaults to the matching `DeepSeek V4 Flash 0731` authority item
+(83261). Use `--model` only when uploading an index produced by another model.
 
 ### Claude Agent (Alternative)
 
@@ -70,9 +65,9 @@ The issue-indexing Claude agent reads PDFs directly without LLM API calls and ha
 | Provider | Model | Best For |
 |----------|-------|----------|
 | **Claude Agent** (recommended) | Opus 4.6 | Reads PDFs directly, no API costs, best quality |
-| **Gemini** (standard profile) | Gemini Pro + Flash | Good extraction quality, accurate article detection |
-| **Gemini** (light profile) | Gemini Flash (both steps) | Cheaper & faster; minor quality trade-off |
-| Mistral | OCR + Small | Alternative if Gemini unavailable |
+| **Gemini** (standard profile) | Gemini Pro → DeepSeek V4 Flash 0731 | Good extraction quality, accurate article detection |
+| **Gemini** (light profile) | Gemini Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
+| Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |
 
 Gemini model IDs come from the shared registry (`common/llm_provider.py`) via the
 rolling `gemini-pro-latest` / `gemini-flash-latest` aliases, so they always track
@@ -129,6 +124,7 @@ Create `.env` in project root:
 ```bash
 GEMINI_API_KEY=your_key    # For Gemini version
 MISTRAL_API_KEY=your_key   # For Mistral version
+OPENROUTER_API_KEY=your_key # DeepSeek consolidation in both versions
 
 # Optional: Omeka S integration
 OMEKA_BASE_URL=https://your-instance.org

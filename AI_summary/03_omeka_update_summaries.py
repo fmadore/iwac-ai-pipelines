@@ -48,6 +48,7 @@ from common.iwac_config import (
     model_annotation_value,
     select_model_key,
 )
+from common.llm_provider import DEFAULT_TEXT_MODEL_KEY
 
 # The Omeka property that carries the AI summary for articles and documents.
 # Exported to Hugging Face as ``descriptionAI``.
@@ -91,7 +92,7 @@ def main() -> int:
     logging.info(f"Resolved {SUMMARY_TERM} to property ID {description_property_id}")
 
     # Which model wrote these summaries? Recorded as an iwac:summaryModel annotation.
-    model_key = args.model or select_model_key(default="gpt-5.6-luna")
+    model_key = args.model or select_model_key(default=DEFAULT_TEXT_MODEL_KEY)
     if model_key is None:
         return 1
     model = AI_MODEL_ITEMS[model_key]

@@ -67,6 +67,10 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     "qwen3.5-moe": {"item_id": 79616, "display_title": "Qwen3.5 122B-A10B"},
     "qwen3.5-moe-small": {"item_id": 79612, "display_title": "Qwen3.5 35B-A3B"},
     "deepseek-v4-flash": {"item_id": 79613, "display_title": "DeepSeek V4 Flash"},
+    "deepseek-v4-flash-0731": {
+        "item_id": 83261,
+        "display_title": "DeepSeek V4 Flash 0731",
+    },
 }
 
 #: Superseded authority items, kept only so this file records why an id that

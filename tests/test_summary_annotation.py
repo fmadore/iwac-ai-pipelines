@@ -143,6 +143,7 @@ def test_registry_points_at_the_current_authority_items():
     assert AI_MODEL_ITEMS["gpt-5.6-luna"]["item_id"] == 79610
     assert AI_MODEL_ITEMS["gemini-3.6-flash"]["item_id"] == 79611
     assert AI_MODEL_ITEMS["gemini-3.5-flash-lite"]["item_id"] == 79617
+    assert AI_MODEL_ITEMS["deepseek-v4-flash-0731"]["item_id"] == 83261
 
 
 def test_no_registry_key_is_a_rolling_alias():

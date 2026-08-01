@@ -274,7 +274,8 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `qwen3.5-moe` | OpenRouter | `qwen/qwen3.5-122b-a10b` | Qwen3.5 122B-A10B | Apache-2.0 open weights, MoE 10B active, $0.26/$2.08 per 1M tokens |
 | `qwen3.5-moe-small` | OpenRouter | `qwen/qwen3.5-35b-a3b` | Qwen3.5 35B-A3B | Apache-2.0 open weights, MoE 3B active, $0.14/$1.00 per 1M tokens |
 | `qwen3.5-dense` | OpenRouter | `qwen/qwen3.5-27b` | Qwen3.5 27B | Apache-2.0 open weights, dense, $0.195/$1.56 per 1M tokens |
-| `deepseek-v4-flash` | OpenRouter | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 284B/13B active MoE, 1M context, $0.09/$0.18 per 1M tokens |
+| `deepseek-v4-flash-0731` | OpenRouter | `deepseek/deepseek-v4-flash-0731` | DeepSeek V4 Flash 0731 | **Default text model**; official release, 284B/13B active, 1M context, from $0.09/$0.18 per 1M tokens |
+| `deepseek-v4-flash` | OpenRouter | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash Preview | Superseded April preview, retained for reproducibility |
 | `deepseek-v4-pro` | OpenRouter | `deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1.6T/49B active MoE flagship, $0.435/$0.87 per 1M tokens |
 
 ### Model Aliases
@@ -292,7 +293,7 @@ For convenience, these aliases are also supported:
 | `mistral` | `mistral-large` |
 | `ministral` | `ministral-14b` |
 | `qwen` | `qwen3.5-moe` |
-| `deepseek` | `deepseek-v4-flash` |
+| `deepseek` | `deepseek-v4-flash-0731` |
 | `deepseek-pro` | `deepseek-v4-pro` |
 
 OpenRouter slugs resolve as-is too, so a model id copied off openrouter.ai
@@ -422,8 +423,8 @@ value differs sharply between them:
 | Model | Sent | Why |
 |---|---|---|
 | Gemini 3.x, Gemma 4 | *nothing at all* | Google: "we strongly recommend keeping the temperature parameter at its default value of `1.0`"; below 1.0 "may lead to unexpected behavior, such as looping or degraded performance" |
-| DeepSeek V4 Flash/Pro | `1.0` | DeepSeek's V4 card gives one recipe for all modes: `temperature = 1.0, top_p = 1.0` |
-| Qwen3.7 Flash | `0.7` | Qwen's published non-thinking recipe; Qwen warns near-greedy decoding causes "performance degradation and endless repetitions" |
+| DeepSeek V4 family | `1.0` | DeepSeek's 0731 card recommends `temperature = 1.0`, with `top_p = 1.0` outside agentic scenarios |
+| Qwen3.5 | `0.7` | Qwen's published non-thinking recipe; Qwen warns near-greedy decoding causes "performance degradation and endless repetitions" |
 | Mistral Large 3, Ministral 3 | `0.2` | The one vendor here recommending a low value — 0.05-0.20 for non-creative instruct work |
 | GPT-5.6 (all tiers) | n/a | The Responses API ignores it |
 
@@ -490,7 +491,8 @@ dependency.
 - **`qwen3.5-moe` / `qwen3.5-moe-small` / `qwen3.5-dense`**: Qwen3.5 122B-A10B, 35B-A3B and 27B, all Apache-2.0 open weights. `qwen3.5-moe` was re-pointed from 35B-A3B to 122B-A10B on 2026-07-31 so the sentiment panel's open-weights members sit at comparable active-parameter counts (10B vs DeepSeek V4 Flash's 13B; 35B-A3B activates only 3B)
   (deliberately not the Flash/Plus/Max hosted tiers, which publish no weights). Accept
   `reasoning_effort` minimal/low/medium/high/xhigh, normalised by OpenRouter.
-- **`deepseek-v4-flash`**: DeepSeek V4 Flash — hybrid thinking model, non-thinking by default; accepts `"high"` / `"xhigh"`.
+- **`deepseek-v4-flash-0731`**: official DeepSeek V4 Flash release and the shared text default; accepts exactly `"low"`, `"high"`, or `"max"` reasoning (bulk pipelines use low; sentiment uses high).
+- **`deepseek-v4-flash`**: superseded April preview, retained only to reproduce earlier runs.
 - **`deepseek-v4-pro`**: DeepSeek V4 Pro — quality tier, reasons at `"high"` by default; accepts `"high"` / `"xhigh"`.
 
 Three behaviours are specific to this provider and worth knowing:

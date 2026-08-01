@@ -71,6 +71,7 @@ if REPO_ROOT not in sys.path:
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
 from common.llm_provider import (  # noqa: E402
+    DEFAULT_TEXT_MODEL_KEY,
     LEGACY_CLI_MODEL_KEYS,
     TEXT_EXTENDED_MODELS,
     BaseLLMClient,
@@ -140,7 +141,7 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Conf
 
     # NER-specific LLM configuration for accurate metadata extraction
     llm_config = LLMConfig(
-        reasoning_effort="medium",      # OpenAI: balanced reasoning (cost-effective)
+        reasoning_effort="medium",      # OpenAI/OpenRouter: balanced where supported
         text_verbosity="medium",        # OpenAI: detailed entity context
         thinking_level="minimal",       # Gemini 3: minimal thinking sufficient for NER extraction
         # No temperature: each model's vendor-recommended value comes from
@@ -457,7 +458,8 @@ def parse_arguments():
         "--model",
         type=str,
         choices=ALLOWED_MODEL_KEYS + LEGACY_MODEL_KEYS,
-        help="Model: 'gpt-5.6-luna', 'gemini-flash', 'gemma-4', 'mistral-large', or 'ministral-14b'. Defaults to interactive prompt."
+        default=DEFAULT_TEXT_MODEL_KEY,
+        help=f"Text model (default: {DEFAULT_TEXT_MODEL_KEY})",
     )
     return parser.parse_args()
 
@@ -526,9 +528,15 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
     elif model_option.provider == PROVIDER_GEMINI:
         config_table.add_row("Thinking Level", config.llm_config.thinking_level or "default")
     elif model_option.provider == PROVIDER_OPENROUTER:
-        # The NER-wide "medium" is an OpenAI setting; show what OpenRouter is
-        # actually sent, which may be nothing at all.
-        config_table.add_row("Reasoning Effort", model_option.default_reasoning_effort or "off")
+        # Show the effective value after the provider adapter clamps the
+        # pipeline-wide request to this model's declared levels.
+        requested = config.llm_config.reasoning_effort
+        effective = (
+            requested
+            if requested in model_option.supported_reasoning_efforts
+            else model_option.default_reasoning_effort
+        )
+        config_table.add_row("Reasoning Effort", effective or "off")
     console.print(config_table)
     console.print()
 

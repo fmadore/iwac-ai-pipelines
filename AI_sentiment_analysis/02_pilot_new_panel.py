@@ -60,7 +60,6 @@ from sentiment_core import (  # noqa: E402
     ANALYSABLE_LANGUAGES,
     ITEM_ID_TO_SUBJECTIVITE,
     PANEL,
-    PANEL_REASONING,
     PANEL_REASONING_EFFECTIVE,
     V1_PANEL,
     analyze_with_all_models,
@@ -68,6 +67,7 @@ from sentiment_core import (  # noqa: E402
     get_item_language,
     load_system_prompt,
     prompt_fingerprint,
+    panel_reasoning,
 )
 
 console = Console()
@@ -281,17 +281,18 @@ def build_clients(
     model_ids: Dict[str, str] = {}
     skipped: List[tuple] = []
 
-    # Reasoning depth IS standardised (see PANEL_REASONING); temperature is
+    # Reasoning depth is standardised as closely as each API allows; temperature is
     # not. Temperature stays vendor-owned — the recommended values differ
     # (1.0 DeepSeek, 0.7 Qwen, 0.3 Mistral Small 4, unset Gemini) and both
     # Google and Alibaba document a lowered temperature as a cause of looping.
     # Each client takes its own from MODEL_REGISTRY.
-    config = LLMConfig(**PANEL_REASONING)
     for prefix in selected:
         member = V2_PANEL[prefix]
         try:
             option = get_model_option(member.registry_key)
-            clients[prefix] = build_llm_client(option, config=config)
+            clients[prefix] = build_llm_client(
+                option, config=LLMConfig(**panel_reasoning(prefix))
+            )
             labels[prefix] = member.label
             model_ids[prefix] = option.model
         except (RuntimeError, ValueError) as exc:
@@ -456,7 +457,9 @@ def main() -> int:
             "v2_skipped": [{"prefix": p, "label": lbl, "reason": r} for p, lbl, r in skipped],
             # Requested depth, plus what each model actually accepted — they
             # differ for Mistral, and a run record that hid that would be wrong.
-            "v2_reasoning_requested": dict(PANEL_REASONING),
+            "v2_reasoning_requested": {
+                p: panel_reasoning(p) for p in clients
+            },
             "v2_reasoning_effective": {
                 p: PANEL_REASONING_EFFECTIVE[p] for p in clients
             },

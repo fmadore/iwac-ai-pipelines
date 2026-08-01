@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from common.llm_provider import (
+    DEFAULT_TEXT_MODEL_KEY,
     GeminiGenerateContentClient,
     LLMConfig,
     MODEL_REGISTRY,
@@ -185,7 +186,7 @@ def _message(content=None, parsed=None, refusal=None):
 
 def test_openrouter_aliases_resolve():
     assert normalize_model_key("qwen") == "qwen3.5-moe"
-    assert normalize_model_key("deepseek") == "deepseek-v4-flash"
+    assert normalize_model_key("deepseek") == "deepseek-v4-flash-0731"
     assert normalize_model_key("deepseek-pro") == "deepseek-v4-pro"
     # A slug pasted straight off openrouter.ai must resolve too — and to the
     # entry for that exact model. "qwen3.5-moe" moved from 35B-A3B to
@@ -195,12 +196,17 @@ def test_openrouter_aliases_resolve():
     assert normalize_model_key("qwen/qwen3.5-35b-a3b") == "qwen3.5-moe-small"
     assert MODEL_REGISTRY["qwen3.5-moe"].model == "qwen/qwen3.5-122b-a10b"
     assert MODEL_REGISTRY["qwen3.5-moe-small"].model == "qwen/qwen3.5-35b-a3b"
+    assert MODEL_REGISTRY["deepseek-v4-flash-0731"].model \
+        == "deepseek/deepseek-v4-flash-0731"
+    assert MODEL_REGISTRY["deepseek-v4-flash"].model \
+        == "deepseek/deepseek-v4-flash"
+    assert DEFAULT_TEXT_MODEL_KEY == "deepseek-v4-flash-0731"
 
 
 def test_openrouter_models_are_offered_by_the_right_tiers():
     # NER runs on the extended tier; the two Flash models must be selectable there.
     assert "qwen3.5-moe" in TEXT_EXTENDED_MODELS
-    assert "deepseek-v4-flash" in TEXT_EXTENDED_MODELS
+    assert "deepseek-v4-flash-0731" in TEXT_EXTENDED_MODELS
     # Pro is a quality tier: full only, not extended.
     assert "deepseek-v4-pro" in TEXT_FULL_MODELS
     assert "deepseek-v4-pro" not in TEXT_EXTENDED_MODELS
@@ -266,6 +272,22 @@ def test_openrouter_sends_supported_reasoning_effort(monkeypatch):
 
     body = stub.chat.completions.create.call_args.kwargs["extra_body"]
     assert body["reasoning"] == {"effort": "xhigh"}
+
+
+def test_deepseek_0731_uses_exact_reasoning_levels(monkeypatch):
+    client, stub = _openrouter_client_with_stub(
+        monkeypatch, key="deepseek-v4-flash-0731", message=_message(content="ok")
+    )
+
+    client.generate("system", "user", config=LLMConfig(reasoning_effort="max"))
+    assert stub.chat.completions.create.call_args.kwargs["extra_body"]["reasoning"] \
+        == {"effort": "max"}
+
+    # The official release has no medium effort. Bulk pipelines clamp to its
+    # low default; the sentiment panel explicitly asks for high.
+    client.generate("system", "user", config=LLMConfig(reasoning_effort="medium"))
+    assert stub.chat.completions.create.call_args.kwargs["extra_body"]["reasoning"] \
+        == {"effort": "low"}
 
 
 def test_openrouter_pro_reasons_by_default_and_clamps(monkeypatch):
@@ -356,6 +378,7 @@ def test_gemini_models_declare_no_temperature():
 def test_vendor_temperature_defaults_match_published_guidance():
     # DeepSeek V4 model card: "temperature = 1.0, top_p = 1.0" for every mode.
     assert MODEL_REGISTRY["deepseek-v4-flash"].default_temperature == 1.0
+    assert MODEL_REGISTRY["deepseek-v4-flash-0731"].default_temperature == 1.0
     assert MODEL_REGISTRY["deepseek-v4-pro"].default_temperature == 1.0
     # Qwen's published non-thinking recipe.
     assert MODEL_REGISTRY["qwen3.5-moe"].default_temperature == 0.7

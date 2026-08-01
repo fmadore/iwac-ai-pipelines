@@ -225,8 +225,8 @@ PANEL: Dict[str, PanelMember] = {
         # any agreement figure. Nothing was ever written to iwac:qwen35A3b*.
         PanelMember("qwen3_5_122b_a10b", "qwen3.5-moe", "Qwen3.5 122B-A10B",
                     "qwen35A10b"),
-        PanelMember("deepseek_v4_flash", "deepseek-v4-flash", "DeepSeek V4 Flash",
-                    "deepseekV4Flash"),
+        PanelMember("deepseek_v4_flash_0731", "deepseek-v4-flash-0731",
+                    "DeepSeek V4 Flash 0731", "deepseekV4Flash0731"),
     )
 }
 
@@ -240,20 +240,48 @@ PANEL: Dict[str, PanelMember] = {
 #:   Gemini 3.5 Flash-Lite  thinking_level MINIMAL/LOW/MEDIUM/HIGH -> MEDIUM
 #:   GPT-5.6 Luna           effort none/low/medium/high/xhigh/max  -> medium
 #:   Qwen3.5 122B-A10B      effort normalised by OpenRouter (~50%) -> medium
-#:   DeepSeek V4 Flash      effort normalised by OpenRouter (~50%) -> medium
+#:   DeepSeek V4 Flash 0731 accepts only low/high/max             -> high
 #:   Mistral Small 4        effort ONLY none|high — low/medium 400 -> high
 #:
-#: So four of five sit at a genuine middle setting and Mistral does not: its
-#: API has no middle. ``MistralClient`` rounds medium up to ``high`` rather
-#: than dropping to ``none``, keeping it in the reasoning regime like the rest,
-#: but this is a real limit on comparability and belongs in any write-up.
+#: Three of five sit at a genuine middle setting. DeepSeek 0731 and Mistral
+#: Small have no middle level, so their adapters round up to ``high`` rather
+#: than dropping into a lighter/non-reasoning mode. This is a real limit on
+#: comparability and belongs in any write-up of the panel results.
 PANEL_REASONING = {"reasoning_effort": "medium", "thinking_level": "MEDIUM"}
+
+#: Per-member deviations from the shared middle setting. DeepSeek 0731 has no
+#: medium level; round up for the annotation panel (as Mistral Small already
+#: does) so it stays in the reasoning regime. Other bulk text pipelines use the
+#: registry's low default instead.
+PANEL_REASONING_OVERRIDES: Dict[str, Dict[str, str]] = {
+    "deepseek_v4_flash_0731": {"reasoning_effort": "high"},
+}
+
+
+def panel_reasoning(member_key: str) -> Dict[str, str]:
+    """Requested reasoning config for one member, shared by pilot and production."""
+    return {**PANEL_REASONING, **PANEL_REASONING_OVERRIDES.get(member_key, {})}
 
 #: Effective (not merely requested) depth, for run manifests. See above.
 PANEL_REASONING_EFFECTIVE: Dict[str, str] = {
-    key: ("high (API accepts only none|high; medium rounded up)"
-          if key == "mistral_small_2603" else "medium")
+    key: (
+        "high (API accepts only none|high; medium rounded up)"
+        if key == "mistral_small_2603"
+        else "high (API accepts only low|high|max; medium rounded up)"
+        if key == "deepseek_v4_flash_0731"
+        else "medium"
+    )
     for key in PANEL
+}
+
+#: Generation-2 properties that have already been used but are no longer in
+#: the active panel. Keep these terms in the ontology and never repoint them to
+#: a new snapshot; preview-era values remain attributable.
+RETIRED_PANEL: Dict[str, PanelMember] = {
+    "deepseek_v4_flash": PanelMember(
+        "deepseek_v4_flash", "deepseek-v4-flash", "DeepSeek V4 Flash Preview",
+        "deepseekV4Flash",
+    ),
 }
 
 #: Generation 1, annotated Jan-Feb 2026: HF column prefix -> Omeka property

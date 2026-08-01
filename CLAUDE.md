@@ -68,9 +68,14 @@ doc, and add new models there first so every pipeline picks them up.
 should be one of them. Retiring a model is then a one-line change instead of a
 grep across five pipelines.
 
+**The shared text default is `DEFAULT_TEXT_MODEL_KEY`.** It currently points to
+the pinned `deepseek-v4-flash-0731` release. Text-only entry points use it when
+`--model` is omitted; multimodal extraction stages do not pretend a text-only
+model can consume their source media.
+
 **Never set `temperature` in a pipeline.** It belongs to the vendor and lives once
 in `MODEL_REGISTRY`: nothing at all for Gemini 3 / Gemma, `1.0` for DeepSeek V4,
-`0.7` for Qwen3.7, `0.2` for Mistral. A pipeline picks a *tier*, so it cannot know
+`0.7` for Qwen3.5, and the model-specific Mistral default. A pipeline picks a *tier*, so it cannot know
 whose model the run will land on, and the values are not interchangeable — Google
 and Alibaba both document a lowered temperature as a cause of looping, which here
 means a transcript repeating a paragraph through a 90-minute interview or OCR
