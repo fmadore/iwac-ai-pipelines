@@ -1,9 +1,7 @@
-"""Shared helpers for selecting and calling Large Language Models
-(OpenAI / Gemini / Mistral / OpenRouter).
+"""Provider adapters for OpenAI, Gemini, Mistral, and OpenRouter.
 
-This module centralizes provider/model selection so individual pipelines only need to
-focus on their prompts. Adding new models or tweaking API settings now only requires
-changing this file.
+Model metadata and aliases live in :mod:`common.llm_registry`; this module
+re-exports that public catalog for compatibility and owns only SDK-backed calls.
 """
 from __future__ import annotations
 
@@ -11,7 +9,6 @@ import json
 import os
 import logging
 import re
-from dataclasses import dataclass, fields
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
 from dotenv import load_dotenv
@@ -47,539 +44,31 @@ load_dotenv()
 
 LOGGER = logging.getLogger(__name__)
 
-PROVIDER_OPENAI = "openai"
-PROVIDER_GEMINI = "gemini"
-PROVIDER_MISTRAL = "mistral"
-PROVIDER_OPENROUTER = "openrouter"
-
-# OpenAI GPT-5.6 family (released 2026-07-09): three durable capability tiers
-# replacing the old numbered lineup. There is no mini/nano variant in this
-# generation. The bare "gpt-5.6" id routes to Sol.
-OPENAI_SOL_MODEL = "gpt-5.6-sol"      # flagship   — $5 / $30 per 1M tokens
-OPENAI_TERRA_MODEL = "gpt-5.6-terra"  # balanced   — $2.50 / $15 per 1M tokens
-OPENAI_LUNA_MODEL = "gpt-5.6-luna"    # high-volume — $1 / $6 per 1M tokens
-DEFAULT_OPENAI_MODEL = OPENAI_LUNA_MODEL
-OPENAI_FULL_MODEL = OPENAI_SOL_MODEL
-DEFAULT_GEMINI_FLASH = "gemini-flash-latest"  # rolling alias -> newest stable Flash
-# Pinned Flash. The rolling alias reports its version as literally "Gemini Flash
-# Latest", so a run against it cannot record which model answered — fine for
-# mechanical work, not for annotations that become a published dataset column.
-DEFAULT_GEMINI_36_FLASH = "gemini-3.6-flash"
-DEFAULT_GEMINI_FLASH_LITE = "gemini-flash-lite-latest"  # rolling alias -> newest stable Flash-Lite
-DEFAULT_GEMINI_35_FLASH_LITE = "gemini-3.5-flash-lite"  # pinned, $0.30/$2.50 per 1M
-DEFAULT_GEMINI_31_FLASH_LITE = "gemini-3.1-flash-lite"  # pinned, $0.25/$1.50 per 1M
-# The only pinned 3.1 Pro id Google publishes; there is no non-preview form.
-DEFAULT_GEMINI_31_PRO = "gemini-3.1-pro-preview"
-DEFAULT_GEMINI_PRO = "gemini-pro-latest"  # rolling alias -> newest stable Pro
-DEFAULT_GEMMA_4 = "gemma-4-31b-it"
-DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
-DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
-DEFAULT_MISTRAL_SMALL = "mistral-small-2603"  # /v1/models describes it as "Mistral Small 4."
-
-# ---------------------------------------------------------------------------
-# OpenRouter
-#
-# OpenRouter is a router, not a lab: one API key and one OpenAI-compatible
-# endpoint in front of the open-weights models (Qwen, DeepSeek, ...) that the
-# three first-party SDKs above do not serve. It exists here so a francophone
-# corpus can be run against open models at a fraction of GPT/Gemini prices,
-# and so a fresh clone needs one key instead of three.
-#
-# Registry entries use exact OpenRouter slugs. Dated releases stay pinned so
-# model provenance remains meaningful; generic user-facing aliases such as
-# ``deepseek`` can move forward deliberately while old keys remain callable.
-# ---------------------------------------------------------------------------
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-# Qwen 3.5, in its OPEN-WEIGHTS releases (Apache-2.0, downloadable from the
-# Qwen org on Hugging Face, runnable locally — which is the point: these are
-# the panel members whose weights can be archived alongside the annotations).
-# Deliberately NOT the Flash / Plus / Max slugs: those are Alibaba's hosted API
-# tiers with no published weights. (For the record, qwen3.7-flash additionally
-# has a single endpoint that does not declare ``structured_outputs``, so it
-# cannot be routed under ``require_parameters`` at all.)
-#
-# Sizing note (2026-07-31): the sentiment panel pairs its Qwen slot with
-# DeepSeek V4 Flash, which activates 13B of 284B. ``qwen3.5-35b-a3b`` activates
-# 3B — about a quarter the active compute — so the panel's open-weights members
-# were not on comparable footing. ``qwen3.5-122b-a10b`` activates 10B under the
-# same Apache-2.0 terms and is the tier match; the 35B stays registered for
-# cheaper work where that asymmetry does not matter.
-OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"    # 122B total / 10B active
-OPENROUTER_QWEN_SMALL_MOE_MODEL = "qwen/qwen3.5-35b-a3b"  # 35B total / 3B active
-OPENROUTER_QWEN_DENSE_MODEL = "qwen/qwen3.5-27b"        # dense 27B, 6 endpoints
-# The dated slug is intentional. DeepSeek describes 0731 as the official
-# release superseding the April preview; published annotations must not follow
-# an alias that can later point at a different checkpoint.
-OPENROUTER_DEEPSEEK_FLASH_0731_MODEL = "deepseek/deepseek-v4-flash-0731"
-OPENROUTER_DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
-OPENROUTER_DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
-
-# Default for every text-to-text pipeline. Multimodal extraction stages keep
-# their native Gemini/Mistral/Voxtral models and may hand their extracted text
-# to this model in a later stage.
-DEFAULT_TEXT_MODEL_KEY = "deepseek-v4-flash-0731"
-
-#: Routing policy applied to *every* OpenRouter request.
-#:
-#: ``data_collection: "deny"`` is the important one. OpenRouter dispatches to
-#: third-party inference backends and defaults to "allow", i.e. backends that
-#: may retain or train on the payload. These pipelines send whole archival
-#: documents — the same reason ``ModelOption.default_store`` is False for
-#: OpenAI — so restrict routing to backends that do not collect user data.
-#:
-#: ``require_parameters: True`` keeps structured output honest: json_schema
-#: support varies per backend, and without this a request can be routed to one
-#: that silently ignores ``response_format`` and returns prose.
-OPENROUTER_PROVIDER_PREFS: Dict[str, Any] = {
-    "data_collection": "deny",
-    "require_parameters": True,
-}
-
-#: Optional attribution headers; OpenRouter shows them on the account's
-#: activity page, which makes a runaway pipeline easy to spot.
-OPENROUTER_HEADERS: Dict[str, str] = {
-    "HTTP-Referer": "https://github.com/fmadore/iwac-ai-pipelines",
-    "X-Title": "IWAC AI Pipelines",
-}
-
-@dataclass(frozen=True)
-class ModelOption:
-    key: str
-    provider: str
-    model: str
-    label: str
-    description: str
-    # Sampling temperature, or None to send no temperature parameter at all.
-    # None is the default because this is now a per-vendor decision rather than
-    # a knob a pipeline should turn: Gemini 3 and DeepSeek V4 are tuned for their
-    # own defaults and degrade (looping, collapsed reasoning) when it is lowered,
-    # while Mistral explicitly recommends a low value for non-creative work. Each
-    # entry below records its vendor's published guidance, and pipelines inherit
-    # it rather than passing a temperature of their own.
-    default_temperature: Optional[float] = None
-    # OpenAI-specific defaults
-    # GPT-5.6: none/low/medium/high/xhigh/max. None means "send no reasoning
-    # parameter at all" — used by the OpenRouter entries, where the accepted
-    # effort values differ per model and an unsupported one narrows routing.
-    default_reasoning_effort: Optional[str] = "low"
-    # OpenRouter-only: the effort values this model accepts. Empty means the
-    # model takes no reasoning parameter, so none is sent. A requested effort
-    # outside this set falls back to ``default_reasoning_effort`` rather than
-    # being forwarded, because ``require_parameters`` would otherwise strand
-    # the request with no eligible backend. Ignored by the first-party clients,
-    # whose SDKs validate the value themselves.
-    supported_reasoning_efforts: tuple = ()
-    default_text_verbosity: str = "low"    # "low", "medium", "high"
-    # Do not retain request/response bodies server-side by default: these
-    # pipelines send full archival documents, and there is no need for a
-    # 30-day copy of the collection on the provider's side.
-    default_store: bool = False
-    # Gemini-specific defaults
-    default_thinking_level: Optional[str] = None  # For Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
-
-@dataclass
-class LLMConfig:
-    """Configuration for LLM generation requests.
-    
-    Scripts can create instances of this class to customize behavior per use case.
-    
-    OpenAI parameters:
-        reasoning_effort: controls reasoning depth. GPT-5.6 accepts "none", "low",
-                          "medium", "high", "xhigh" or "max" (API default "medium";
-                          this project defaults to "low" for cost). "none" makes the
-                          model behave like a non-reasoning one — the cheapest option
-                          for mechanical work (OCR correction, summarization). When
-                          migrating, OpenAI advises testing your current level and one
-                          lower — GPT-5.6 often holds quality with fewer reasoning tokens.
-        text_verbosity: "low", "medium", or "high" - controls response length
-        store: whether OpenAI retains the request/response server-side (default
-               False; these pipelines send full archival documents)
-
-    Sampling:
-        temperature: Leave unset. Every model's vendor-recommended value lives in
-                     MODEL_REGISTRY and is applied automatically, and for Gemini 3
-                     the recommendation is to send no temperature at all — lowering
-                     it is a documented cause of looping. Setting it here overrides
-                     that guidance for whichever model the run happens to pick, so
-                     constrain output through the system prompt instead. (OpenAI's
-                     Responses API ignores the parameter either way.)
-
-    Gemini parameters:
-        For Gemini 3 (Flash and Pro):
-            thinking_level: Controls reasoning depth (cannot be disabled)
-                           Flash: "MINIMAL", "LOW", "MEDIUM", or "HIGH"
-                           Pro: "LOW" or "HIGH" only
-
-        For Gemma 4:
-            thinking_level: "MINIMAL" or "HIGH" only (LOW/MEDIUM are remapped)
-    
-    Example:
-        # High-quality reasoning for complex NER
-        config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
-
-        # Fast OCR with Gemini Pro (low thinking)
-        config = LLMConfig(thinking_level="low")
-
-        # Fast OCR correction with Gemini Flash (minimal thinking)
-        config = LLMConfig(thinking_level="minimal")
-    """
-    temperature: Optional[float] = None
-    reasoning_effort: Optional[str] = None
-    text_verbosity: Optional[str] = None
-    store: Optional[bool] = None
-    thinking_level: Optional[str] = None  # Gemini 3: Flash="minimal"/"low"/"medium"/"high", Pro="low"/"high"
-
-    def merged_over(self, base: "LLMConfig") -> "LLMConfig":
-        """Return a copy where unset (None) fields fall back to ``base``."""
-        return LLMConfig(**{
-            f.name: getattr(self, f.name) if getattr(self, f.name) is not None else getattr(base, f.name)
-            for f in fields(self)
-        })
-
-MODEL_REGISTRY: Dict[str, ModelOption] = {
-    "gpt-5.6-luna": ModelOption(
-        key="gpt-5.6-luna",
-        provider=PROVIDER_OPENAI,
-        model=OPENAI_LUNA_MODEL,
-        label="ChatGPT (GPT-5.6 Luna)",
-        description="OpenAI Responses API — cost-optimized tier ($1/$6 per 1M tokens)"
-    ),
-    "gpt-5.6-terra": ModelOption(
-        key="gpt-5.6-terra",
-        provider=PROVIDER_OPENAI,
-        model=OPENAI_TERRA_MODEL,
-        label="ChatGPT (GPT-5.6 Terra)",
-        description="OpenAI Responses API — balanced tier ($2.50/$15 per 1M tokens)"
-    ),
-    "gpt-5.6-sol": ModelOption(
-        key="gpt-5.6-sol",
-        provider=PROVIDER_OPENAI,
-        model=OPENAI_SOL_MODEL,
-        label="ChatGPT (GPT-5.6 Sol)",
-        description="OpenAI Responses API — flagship tier ($5/$30 per 1M tokens)"
-    ),
-    # Gemini 3.x and Gemma send no temperature at all (default_temperature stays
-    # None). Google's Gemini 3 guide is explicit: "For all Gemini 3 models, we
-    # strongly recommend keeping the temperature parameter at its default value
-    # of 1.0", because lowering it "may lead to unexpected behavior, such as
-    # looping or degraded performance". Looping is the expensive failure here — a
-    # transcript that repeats a paragraph for the rest of a 90-minute interview,
-    # or OCR that stalls on one line. Gemma is a different family with no
-    # published recommendation to lower it, so it also inherits the API default.
-    # Use system-instruction rules, not sampling, when output must be constrained.
-    "gemini-flash": ModelOption(
-        key="gemini-flash",
-        provider=PROVIDER_GEMINI,
-        model=DEFAULT_GEMINI_FLASH,
-        label="Gemini Flash",
-        description="Google Gemini Flash — latest stable (rolling alias gemini-flash-latest), fast & cost-effective",
-        default_thinking_level="MINIMAL"  # Flash supports minimal/low/medium/high
-    ),
-    "gemini-3.6-flash": ModelOption(
-        key="gemini-3.6-flash",
-        provider=PROVIDER_GEMINI,
-        model=DEFAULT_GEMINI_36_FLASH,
-        label="Gemini 3.6 Flash",
-        description="Google Gemini 3.6 Flash — version-pinned Flash, for runs whose model must stay on the record",
-        default_thinking_level="MINIMAL"
-    ),
-    "gemini-flash-lite": ModelOption(
-        key="gemini-flash-lite",
-        provider=PROVIDER_GEMINI,
-        model=DEFAULT_GEMINI_FLASH_LITE,
-        label="Gemini Flash-Lite",
-        description="Google Gemini Flash-Lite — latest stable (rolling alias gemini-flash-lite-latest), cheapest/lowest latency",
-        default_thinking_level="MINIMAL"  # Flash-Lite uses thinking_level; minimal keeps it cheap
-    ),
-    # Pinned siblings of the above. A rolling alias is right for a pipeline
-    # whose output is re-read and re-generated at will; it is wrong for an
-    # annotation campaign, where "which model wrote this value" has to stay
-    # answerable years later and the alias will by then point somewhere else.
-    # The same reasoning gives gemini-3.6-flash its pinned entry.
-    #
-    # These are also why the "gemini-3.1-flash-lite" MODEL_ALIASES entry had to
-    # go: normalize_model_key() consults the alias table *before* the registry,
-    # so an alias of the same name silently shadows the pinned option it looks
-    # like it names.
-    "gemini-3.5-flash-lite": ModelOption(
-        key="gemini-3.5-flash-lite",
-        provider=PROVIDER_GEMINI,
-        model=DEFAULT_GEMINI_35_FLASH_LITE,
-        label="Gemini 3.5 Flash-Lite",
-        description="Google Gemini 3.5 Flash-Lite — version-pinned high-volume tier ($0.30/$2.50 per 1M tokens)",
-        default_thinking_level="MINIMAL"
-    ),
-    "gemini-3.1-flash-lite": ModelOption(
-        key="gemini-3.1-flash-lite",
-        provider=PROVIDER_GEMINI,
-        model=DEFAULT_GEMINI_31_FLASH_LITE,
-        label="Gemini 3.1 Flash-Lite",
-        description="Google Gemini 3.1 Flash-Lite — version-pinned, prior Flash-Lite generation ($0.25/$1.50 per 1M tokens)",
-        default_thinking_level="MINIMAL"
-    ),
-    "gemini-3.1-pro": ModelOption(
-        key="gemini-3.1-pro",
-        provider=PROVIDER_GEMINI,
-        model=DEFAULT_GEMINI_31_PRO,
-        label="Gemini 3.1 Pro",
-        description="Google Gemini 3.1 Pro — version-pinned quality tier, for runs whose model must stay on the record",
-        default_thinking_level="LOW"  # Pro supports LOW or HIGH
-    ),
-    "gemini-pro": ModelOption(
-        key="gemini-pro",
-        provider=PROVIDER_GEMINI,
-        model=DEFAULT_GEMINI_PRO,
-        label="Gemini Pro",
-        description="Google Gemini Pro — latest stable (rolling alias gemini-pro-latest), highest quality",
-        default_thinking_level="LOW"  # Pro supports LOW or HIGH
-    ),
-    "gemma-4": ModelOption(
-        key="gemma-4",
-        provider=PROVIDER_GEMINI,  # Served via the Gemini API (same google-genai client)
-        model=DEFAULT_GEMMA_4,
-        label="Gemma 4 31B",
-        description="Google Gemma 4 31B dense — open-weights flagship, via Gemini API",
-        default_thinking_level="HIGH"  # Gemma 4 supports only MINIMAL or HIGH
-    ),
-    "mistral-large": ModelOption(
-        key="mistral-large",
-        provider=PROVIDER_MISTRAL,
-        model=DEFAULT_MISTRAL_LARGE,
-        label="Mistral Large 3",
-        description="Mistral AI Large 3 — 41B active params, multimodal MoE",
-        # Mistral is the one vendor here that recommends a *low* temperature:
-        # 0.05-0.20 for instruct work where the model should not be creative.
-        default_temperature=0.2
-    ),
-    "ministral-14b": ModelOption(
-        key="ministral-14b",
-        provider=PROVIDER_MISTRAL,
-        model=DEFAULT_MINISTRAL_14B,
-        label="Ministral 3 14B",
-        description="Mistral Ministral 3 14B — fast, cost-effective ($0.2/M tokens)",
-        default_temperature=0.2
-    ),
-    "mistral-small": ModelOption(
-        key="mistral-small",
-        provider=PROVIDER_MISTRAL,
-        model=DEFAULT_MISTRAL_SMALL,
-        label="Mistral Small 4",
-        description="Mistral Small 4 (2603) — 262k context, absorbed the Magistral reasoning line",
-        # 0.3, not the 0.2 used for Large/Ministral: /v1/models reports
-        # default_model_temperature 0.3 for this release specifically.
-        default_temperature=0.3,
-        # Hybrid instruct/reasoning model, but the API accepts ONLY these two:
-        # "low" and "medium" are hard 400s (verified 2026-07-29). This is the
-        # one panel member that cannot be set to a middling effort.
-        supported_reasoning_efforts=("none", "high"),
-        default_reasoning_effort=None,
-    ),
-    # OpenRouter-served open-weights models. The two Flash tiers cost roughly a
-    # tenth of gpt-5.6-luna, which is what makes a full-corpus NER or sentiment
-    # pass affordable; Pro is the quality tier for the harder pipelines.
-    "qwen3.5-moe": ModelOption(
-        key="qwen3.5-moe",
-        provider=PROVIDER_OPENROUTER,
-        model=OPENROUTER_QWEN_MOE_MODEL,
-        label="Qwen3.5 122B-A10B (OpenRouter)",
-        description="Qwen3.5 122B-A10B — Apache-2.0 open weights, MoE 10B active ($0.26/$2.08 per 1M tokens)",
-        # Qwen's published non-thinking sampling recipe is temperature 0.7 (with
-        # top_p 0.8 / top_k 20, which OpenRouter backends set themselves). Qwen
-        # warns that near-greedy decoding "can lead to performance degradation
-        # and endless repetitions" — the same looping failure Gemini 3 describes.
-        default_temperature=0.7,
-        default_reasoning_effort=None,
-        # Verified against OpenRouter 2026-07-29: effort medium and high both
-        # route and return reasoning_details under data_collection=deny +
-        # require_parameters.
-        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
-    ),
-    "qwen3.5-moe-small": ModelOption(
-        key="qwen3.5-moe-small",
-        provider=PROVIDER_OPENROUTER,
-        model=OPENROUTER_QWEN_SMALL_MOE_MODEL,
-        label="Qwen3.5 35B-A3B (OpenRouter)",
-        description="Qwen3.5 35B-A3B — Apache-2.0 open weights, MoE 3B active ($0.14/$1.00 per 1M tokens)",
-        default_temperature=0.7,
-        default_reasoning_effort=None,
-        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
-    ),
-    "qwen3.5-dense": ModelOption(
-        key="qwen3.5-dense",
-        provider=PROVIDER_OPENROUTER,
-        model=OPENROUTER_QWEN_DENSE_MODEL,
-        label="Qwen3.5 27B (OpenRouter)",
-        description="Qwen3.5 27B dense — Apache-2.0 open weights ($0.195/$1.56 per 1M tokens)",
-        default_temperature=0.7,
-        default_reasoning_effort=None,
-        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
-    ),
-    "deepseek-v4-flash-0731": ModelOption(
-        key="deepseek-v4-flash-0731",
-        provider=PROVIDER_OPENROUTER,
-        model=OPENROUTER_DEEPSEEK_FLASH_0731_MODEL,
-        label="DeepSeek V4 Flash 0731 (OpenRouter)",
-        description=(
-            "DeepSeek V4 Flash 0731 — official 284B/13B-active MoE release, "
-            "1M context (from $0.09/$0.18 per 1M tokens)"
-        ),
-        # The official model card recommends temperature=1.0 for local
-        # deployment in every non-agentic scenario (top_p is left to the
-        # backend). Lowering it is not a generic determinism control here.
-        default_temperature=1.0,
-        # 0731 exposes exactly low/high/max. Use low for bulk archive work;
-        # callers such as the sentiment panel can explicitly request high.
-        default_reasoning_effort="low",
-        supported_reasoning_efforts=("low", "high", "max"),
-    ),
-    "deepseek-v4-flash": ModelOption(
-        key="deepseek-v4-flash",
-        provider=PROVIDER_OPENROUTER,
-        model=OPENROUTER_DEEPSEEK_FLASH_MODEL,
-        label="DeepSeek V4 Flash Preview (OpenRouter)",
-        description="DeepSeek V4 Flash preview (2026-04-23) — superseded by the dated 0731 release",
-        # DeepSeek's V4 model card gives one recipe for every mode and both
-        # sizes: "we recommend setting the sampling parameters to
-        # temperature = 1.0, top_p = 1.0". Lowering it collapses the reasoning
-        # trace rather than making the model more literal.
-        default_temperature=1.0,
-        # V4 Flash is a hybrid thinking/non-thinking model: default to
-        # non-thinking (cheapest for mechanical work), but honour an explicit
-        # high/xhigh from a caller that wants the reasoning path.
-        default_reasoning_effort=None,
-        # Verified against OpenRouter 2026-07-29: medium routes and returns
-        # reasoning_details. The former ("high", "xhigh") restriction silently
-        # downgraded a medium request to no reasoning at all.
-        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
-    ),
-    "deepseek-v4-pro": ModelOption(
-        key="deepseek-v4-pro",
-        provider=PROVIDER_OPENROUTER,
-        model=OPENROUTER_DEEPSEEK_PRO_MODEL,
-        label="DeepSeek V4 Pro (OpenRouter)",
-        description="DeepSeek V4 Pro — 1.6T/49B active MoE flagship, 1M context ($0.435/$0.87 per 1M tokens)",
-        default_temperature=1.0,  # Same V4 recipe as Flash; see above.
-        # Quality tier: reasoning on by default. xhigh maps to max reasoning.
-        default_reasoning_effort="high",
-        supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
-    ),
-}
-
-MODEL_ALIASES = {
-    "gemini": "gemini-flash",
-    # Gemini Flash-Lite aliases
-    "flash-lite": "gemini-flash-lite",
-    "gemini-flash-lite-latest": "gemini-flash-lite",
-    "gemini-flash-lite-3.1": "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",  # legacy preview id
-    # OpenAI GPT-5.6 tier aliases
-    "openai": "gpt-5.6-luna",  # Generic name -> cost-optimized tier
-    "gpt-5.6": "gpt-5.6-sol",  # Bare id routes to Sol, per OpenAI
-    "sol": "gpt-5.6-sol",
-    "terra": "gpt-5.6-terra",
-    "luna": "gpt-5.6-luna",
-    "openai:gpt-5.6": "gpt-5.6-sol",
-    "openai:gpt-5.6-sol": "gpt-5.6-sol",
-    "openai:gpt-5.6-terra": "gpt-5.6-terra",
-    "openai:gpt-5.6-luna": "gpt-5.6-luna",
-    # Legacy OpenAI keys. The GPT-5/5.1 snapshots shut down 2026-10-23; these
-    # keep older invocations, docs and muscle memory working.
-    "gpt-5-mini": "gpt-5.6-luna",
-    "openai:gpt-5-mini": "gpt-5.6-luna",
-    "openai-mini": "gpt-5.6-luna",
-    "gpt-5-nano": "gpt-5.6-luna",
-    "gpt-5.1-mini": "gpt-5.6-luna",  # Legacy incorrect naming
-    "openai:gpt-5.1-mini": "gpt-5.6-luna",
-    "gpt-5.1": "gpt-5.6-sol",  # Previous flagship
-    "openai:gpt-5.1": "gpt-5.6-sol",
-    "gpt-5": "gpt-5.6-sol",
-    "openai:gpt-5": "gpt-5.6-sol",
-    "openai-5": "gpt-5.6-sol",  # Legacy key name
-    "openai-5.1": "gpt-5.6-sol",  # Legacy key name
-    "gemini-flash-latest": "gemini-flash",
-    "gemini-3.5-flash": "gemini-flash",  # pinned (explicit version)
-    "gemini-3-flash-preview": "gemini-flash",  # legacy (Gemini 3 Flash)
-    "gemini-pro-latest": "gemini-pro",
-    "gemini-3.1-pro-preview": "gemini-pro",  # pinned (explicit version)
-    "gemini-3-pro-preview": "gemini-pro",  # legacy
-    # Gemma 4 aliases
-    "gemma": "gemma-4",
-    "gemma-4-31b": "gemma-4",
-    "gemma-4-31b-it": "gemma-4",
-    # Mistral aliases
-    "mistral": "mistral-large",
-    "mistral-large-latest": "mistral-large",
-    "mistral-large-2512": "mistral-large",
-    # Ministral aliases
-    "ministral": "ministral-14b",
-    "ministral-3": "ministral-14b",
-    "ministral-14b-2512": "ministral-14b",
-    # Mistral Small aliases
-    "mistral-small-latest": "mistral-small",
-    "mistral-small-2603": "mistral-small",
-    "mistral-small-4": "mistral-small",
-    # OpenRouter aliases. The full slugs are accepted so a model id copied
-    # straight off openrouter.ai resolves without translation.
-    "qwen": "qwen3.5-moe",
-    "qwen3.5": "qwen3.5-moe",
-    "qwen3.5-122b-a10b": "qwen3.5-moe",
-    "qwen/qwen3.5-122b-a10b": "qwen3.5-moe",
-    "qwen3.5-35b-a3b": "qwen3.5-moe-small",
-    "qwen/qwen3.5-35b-a3b": "qwen3.5-moe-small",
-    "qwen3.5-27b": "qwen3.5-dense",
-    "qwen/qwen3.5-27b": "qwen3.5-dense",
-    "deepseek": "deepseek-v4-flash-0731",
-    "deepseek-flash": "deepseek-v4-flash-0731",
-    "deepseek-flash-0731": "deepseek-v4-flash-0731",
-    "deepseek/deepseek-v4-flash-0731": "deepseek-v4-flash-0731",
-    # The former slug remains explicit for reproducibility of preview-era
-    # runs; only the generic aliases move to the official release.
-    "deepseek/deepseek-v4-flash": "deepseek-v4-flash",
-    "deepseek-pro": "deepseek-v4-pro",
-    "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
-}
-
-# ---------------------------------------------------------------------------
-# Model tiers
-#
-# Pipelines used to each carry their own ``ALLOWED_MODELS`` literal, so adding
-# or retiring a model meant grepping for the old key across every pipeline,
-# README and .env.example. Pick a tier here instead; the lists below reproduce
-# what each pipeline previously declared, so interactive menu ordering is
-# unchanged.
-# ---------------------------------------------------------------------------
-
-#: Cost-optimized tiers. Enough for mechanical work: summarization, correction.
-TEXT_ECONOMY_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-flash", "ministral-14b",
-]
-
-#: Open-weights models served through OpenRouter (one OPENROUTER_API_KEY).
-TEXT_OPEN_MODELS: List[str] = [
-    "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
-    "deepseek-v4-flash-0731", "deepseek-v4-flash", "deepseek-v4-pro",
-]
-
-#: Economy tiers plus the open-weights and flagship Mistral options (NER).
-TEXT_EXTENDED_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-flash", "gemma-4",
-    "mistral-large", "ministral-14b", "mistral-small", "qwen3.5-moe",
-]
-
-#: Every text model, including the quality tiers, for output-quality-critical work.
-TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-flash", "gemini-pro", "gpt-5.6-luna", "gpt-5.6-sol",
-    "mistral-large", "ministral-14b", "mistral-small",
-    "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-flash", "deepseek-v4-pro",
-]
-
-#: Models served via the Gemini API that accept native PDF/vision input.
-GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-flash", "gemini-pro", "gemma-4"]
-
-#: Retired keys still accepted on the CLI; ``normalize_model_key`` maps them forward.
-LEGACY_CLI_MODEL_KEYS: List[str] = ["gpt-5-mini", "gpt-5.1", "gpt-5", "gpt-5-nano"]
-
+from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    DEFAULT_TEXT_MODEL_KEY,
+    GEMINI_DOCUMENT_MODELS,
+    LEGACY_CLI_MODEL_KEYS,
+    LLMConfig,
+    MODEL_ALIASES,
+    MODEL_REGISTRY,
+    ModelOption,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_HEADERS,
+    OPENROUTER_PROVIDER_PREFS,
+    PROVIDER_GEMINI,
+    PROVIDER_MISTRAL,
+    PROVIDER_OPENAI,
+    PROVIDER_OPENROUTER,
+    TEXT_ECONOMY_MODELS,
+    TEXT_EXTENDED_MODELS,
+    TEXT_FULL_MODELS,
+    TEXT_OPEN_MODELS,
+    get_model_option,
+    normalize_model_key,
+    prompt_for_model_choice,
+    summary_from_option,
+)
 
 class BaseLLMClient:
     """Minimal interface implemented by provider-specific clients."""
@@ -593,6 +82,7 @@ class BaseLLMClient:
             text_verbosity=option.default_text_verbosity,
             store=option.default_store,
             thinking_level=option.default_thinking_level,
+            request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
         )
         self.config = (config or LLMConfig()).merged_over(model_defaults)
 
@@ -663,7 +153,12 @@ class OpenAIResponsesClient(BaseLLMClient):
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY not set")
         super().__init__(option, config)
-        self._client = OpenAI()
+        client_kwargs: Dict[str, Any] = {
+            "timeout": self.config.request_timeout_seconds,
+        }
+        if self.config.sdk_max_retries is not None:
+            client_kwargs["max_retries"] = self.config.sdk_max_retries
+        self._client = OpenAI(**client_kwargs)
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
@@ -762,19 +257,26 @@ class GeminiGenerateContentClient(BaseLLMClient):
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
         if genai is None:
             raise RuntimeError("google-genai package is not installed")
+        super().__init__(option, config)
         api_key = os.getenv("GEMINI_API_KEY")
+        http_options = (
+            genai_types.HttpOptions(
+                timeout=max(1, int(self.config.request_timeout_seconds * 1000))
+            )
+            if genai_types is not None and self.config.request_timeout_seconds is not None
+            else None
+        )
         self._client = None
         if os.getenv("GOOGLE_APPLICATION_CREDENTIALS") and os.path.exists(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")):
             try:
-                self._client = genai.Client()
+                self._client = genai.Client(http_options=http_options)
                 LOGGER.info("Gemini client initialized via ADC.")
             except Exception as exc:  # pragma: no cover - ADC fallback
                 LOGGER.warning("ADC init failed: %s; falling back to API key", exc)
         if self._client is None:
             if not api_key:
                 raise RuntimeError("GEMINI_API_KEY not set")
-            self._client = genai.Client(api_key=api_key)
-        super().__init__(option, config)
+            self._client = genai.Client(api_key=api_key, http_options=http_options)
 
     def _build_generation_config(self, effective_config: LLMConfig) -> Any:
         """Build Gemini generation config with thinking support.
@@ -941,7 +443,11 @@ class MistralClient(BaseLLMClient):
         if not api_key:
             raise RuntimeError("MISTRAL_API_KEY not set")
         super().__init__(option, config)
-        self._client = Mistral(api_key=api_key)
+        timeout_ms = (
+            max(1, int(self.config.request_timeout_seconds * 1000))
+            if self.config.request_timeout_seconds is not None else None
+        )
+        self._client = Mistral(api_key=api_key, timeout_ms=timeout_ms)
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
@@ -1087,7 +593,14 @@ class OpenRouterClient(BaseLLMClient):
         if not api_key:
             raise RuntimeError("OPENROUTER_API_KEY not set")
         super().__init__(option, config)
-        self._client = OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+        client_kwargs: Dict[str, Any] = {
+            "api_key": api_key,
+            "base_url": OPENROUTER_BASE_URL,
+            "timeout": self.config.request_timeout_seconds,
+        }
+        if self.config.sdk_max_retries is not None:
+            client_kwargs["max_retries"] = self.config.sdk_max_retries
+        self._client = OpenAI(**client_kwargs)
 
     def _resolve_reasoning_effort(self, effective_config: LLMConfig) -> Optional[str]:
         """Pick the reasoning effort to send, or None to send none at all.
@@ -1291,54 +804,6 @@ def _extract_json_payload(text: str) -> str:
     return text
 
 
-def normalize_model_key(model_key: Optional[str]) -> Optional[str]:
-    if not model_key:
-        return None
-    key = model_key.strip().lower()
-    return MODEL_ALIASES.get(key, key)
-
-def get_model_option(model_key: Optional[str], allowed_keys: Optional[List[str]] = None) -> ModelOption:
-    """Get model option by key or prompt user for selection.
-    
-    Args:
-        model_key: Model key string (e.g., 'openai', 'gemini-flash')
-        allowed_keys: Optional list of allowed model keys to restrict choices
-    
-    Returns:
-        Selected ModelOption
-    """
-    normalized = normalize_model_key(model_key)
-    normalized_allowed = [normalize_model_key(key) for key in allowed_keys] if allowed_keys else None
-    if normalized and normalized in MODEL_REGISTRY:
-        if normalized_allowed and normalized not in normalized_allowed:
-            raise ValueError(f"Model '{model_key}' not allowed. Choose from: {', '.join(allowed_keys)}")
-        return MODEL_REGISTRY[normalized]
-    if normalized:
-        raise ValueError(f"Unsupported model key: {model_key}")
-    return prompt_for_model_choice(allowed_keys=normalized_allowed)
-
-def prompt_for_model_choice(allowed_keys: Optional[List[str]] = None) -> ModelOption:
-    """Prompt user to select a model, optionally filtered by allowed keys.
-    
-    Args:
-        allowed_keys: Optional list of model keys to show. If None, shows all.
-    """
-    if allowed_keys:
-        options = [MODEL_REGISTRY[key] for key in allowed_keys if key in MODEL_REGISTRY]
-    else:
-        options = list(MODEL_REGISTRY.values())
-    
-    print("Select AI model:")
-    for idx, option in enumerate(options, start=1):
-        print(f"  {idx}) {option.label} - {option.description}")
-    while True:
-        choice = input("Enter choice number: ").strip()
-        if choice.isdigit():
-            idx = int(choice)
-            if 1 <= idx <= len(options):
-                return options[idx - 1]
-        print("Invalid choice. Please select a valid option.")
-
 def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None, temperature: Optional[float] = None) -> BaseLLMClient:
     """Build an LLM client with optional configuration.
     
@@ -1377,6 +842,3 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
     if option.provider == PROVIDER_OPENROUTER:
         return OpenRouterClient(option, config)
     raise ValueError(f"Unsupported provider: {option.provider}")
-
-def summary_from_option(option: ModelOption) -> str:
-    return f"{option.label} ({option.model})"

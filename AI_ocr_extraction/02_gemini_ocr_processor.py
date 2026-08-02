@@ -49,14 +49,9 @@ console = Console()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import count_table, key_value_table, print_file_table, standard_progress
 from common.gemini_page_processor import GeminiPageProcessor, PagePolicy, process_pdf_batch
-from common.gemini_utils import build_generation_config, get_thinking_level
+from common.gemini_utils import build_generation_config, build_gemini_client, get_thinking_level
 from common.llm_provider import GEMINI_DOCUMENT_MODELS, LLMConfig, get_model_option, summary_from_option
 from common.rate_limiter import RateLimiter
-
-try:
-    from google import genai
-except ImportError as exc:
-    raise RuntimeError("google-genai package is required for PDF processing") from exc
 
 # Set up logging configuration for tracking OCR operations and errors
 script_dir = Path(__file__).resolve().parent
@@ -163,7 +158,7 @@ def main():
     print_file_table(console, pdf_files, title=f"📚 PDF Files to Process ({len(pdf_files)})")
 
     processor = GeminiPageProcessor(
-        genai.Client(api_key=api_key),
+        build_gemini_client(api_key),
         model_option.model,
         build_generation_config(
             model_option.model,

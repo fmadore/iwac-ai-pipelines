@@ -69,7 +69,7 @@ The issue-indexing Claude agent reads PDFs directly without LLM API calls and ha
 | **Gemini** (light profile) | Gemini Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
 | Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |
 
-Gemini model IDs come from the shared registry (`common/llm_provider.py`) via the
+Gemini model IDs come from the shared registry (`common/llm_registry.py`) via the
 rolling `gemini-pro-latest` / `gemini-flash-latest` aliases, so they always track
 the newest stable models. The Gemini version produces significantly better
 results than Mistral; use Mistral only for experimentation.

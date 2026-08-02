@@ -28,9 +28,23 @@ python 01_NER_AI.py --item-set-id 123 --model gemma-4
 # Match against authority records
 python 02_NER_reconciliation_Omeka.py
 
-# Update Omeka S database
+# Preview the Omeka writes — no PATCH is sent
+python 03_Omeka_update.py --dry-run
+
+# Update Omeka S database (asks before the first write)
 python 03_Omeka_update.py
 ```
+
+Step 3 writes to the live archive. It reports what would change under
+`--dry-run`, dumps every pre-write payload to `output/_pre_write_ner_links_*.json`,
+and asks for confirmation before the first PATCH. `--yes` skips the prompt for
+unattended runs; `--input` applies a specific CSV instead of the newest one.
+
+The extraction CSV is resumable. Each completed row is flushed immediately,
+and a sidecar checkpoint records the exact model, prompt, item-set scope, and
+spatial filter. Re-running skips IDs already present in a compatible CSV and
+retries failed items. The pipeline refuses to append to output with missing or
+different provenance; use `--force` to replace it deliberately.
 
 ## Supported Models
 

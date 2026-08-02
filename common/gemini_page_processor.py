@@ -238,21 +238,9 @@ class GeminiPageProcessor:
         expire after 48h, but leaked multi-GB files waste quota meanwhile.
         """
         for attempt in range(self.policy.max_retries):
-            uploaded = None
             retryable = False
             try:
-                try:
-                    if self.verbose:
-                        self.console.print(f"  └─ [cyan]⬆[/]  Uploading page {page_num}...")
-                    uploaded = upload_and_wait_active(
-                        self.client, page_bytes,
-                        mime_type="application/pdf", max_wait=60, poll_interval=1.0,
-                    )
-                    return self._extract(self._generate(uploaded), uploaded, page_num)
-                finally:
-                    if uploaded is not None:
-                        delete_uploaded_file(self.client, uploaded)
-
+                return self._process_uploaded_page(page_bytes, page_num)
             except QuotaExhaustedError:
                 raise
             except genai_errors.APIError as exc:
@@ -282,6 +270,24 @@ class GeminiPageProcessor:
                 self.console.print(f"  [red]✗[/] Page {page_num}: max retries reached.")
 
         return None
+
+    def _process_uploaded_page(self, page_bytes: bytes, page_num: int) -> Optional[str]:
+        """Upload, generate, and always release one temporary Gemini file."""
+        uploaded = None
+        try:
+            if self.verbose:
+                self.console.print(f"  └─ [cyan]⬆[/]  Uploading page {page_num}...")
+            uploaded = upload_and_wait_active(
+                self.client,
+                page_bytes,
+                mime_type="application/pdf",
+                max_wait=60,
+                poll_interval=1.0,
+            )
+            return self._extract(self._generate(uploaded), uploaded, page_num)
+        finally:
+            if uploaded is not None:
+                delete_uploaded_file(self.client, uploaded)
 
     def process_page(self, page_bytes: bytes, page_num: int) -> Optional[str]:
         """Try inline, then the Files API. Returns text or None."""

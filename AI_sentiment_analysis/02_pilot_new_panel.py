@@ -40,6 +40,7 @@ import json
 import random
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
@@ -53,6 +54,7 @@ from rich import box
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
+from common.checkpoint import atomic_write_text
 from common.console_utils import standard_progress
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -272,9 +274,17 @@ def load_partial(
     return done
 
 
-def build_clients(
-    selected: List[str], logger: logging.Logger
-) -> tuple[Dict[str, BaseLLMClient], Dict[str, str], List[tuple]]:
+@dataclass(frozen=True)
+class PilotModels:
+    """Reachable pilot clients and the metadata needed in its manifest."""
+
+    clients: Dict[str, BaseLLMClient]
+    labels: Dict[str, str]
+    model_ids: Dict[str, str]
+    skipped: List[tuple[str, str, str]]
+
+
+def build_clients(selected: List[str], logger: logging.Logger) -> PilotModels:
     """Build one client per requested model; report the ones we cannot reach."""
     clients: Dict[str, BaseLLMClient] = {}
     labels: Dict[str, str] = {}
@@ -297,19 +307,11 @@ def build_clients(
             model_ids[prefix] = option.model
         except (RuntimeError, ValueError) as exc:
             skipped.append((prefix, member.label, str(exc)))
-    return clients, labels, (skipped, model_ids)
+    return PilotModels(clients, labels, model_ids, skipped)
 
 
-def main() -> int:
-    logger = configure_logging()
-
-    console.print(Panel.fit(
-        "[bold cyan]Sentiment Panel Pilot[/bold cyan]\n"
-        "[dim]Candidate models vs the generation-1 annotations — "
-        "reads Omeka, writes nothing to it[/dim]",
-        border_style="cyan",
-    ))
-
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the pilot CLI."""
     parser = argparse.ArgumentParser(
         description="Pilot a candidate sentiment panel on a sample of annotated articles. "
                     "Never writes to Omeka."
@@ -329,41 +331,43 @@ def main() -> int:
                              "definitions and boundary rules. The second arm of "
                              "the examples A/B: run both on the same --seed and "
                              "compare with 03_pilot_report.py")
-    args = parser.parse_args()
+    return parser
 
-    selected = list(V2_PANEL)
-    if args.models:
-        selected = [m.strip() for m in args.models.split(",") if m.strip()]
-        unknown = [m for m in selected if m not in V2_PANEL]
-        if unknown:
-            console.print(f"[red]✗[/] Unknown model(s): {', '.join(unknown)}")
-            console.print(f"[dim]Available: {', '.join(V2_PANEL)}[/]")
-            return 2
 
-    try:
-        client = OmekaClient.from_env()
-    except ValueError as exc:
-        console.print(f"[red]✗[/] {exc}")
-        return 2
+def selected_models(raw_models: Optional[str]) -> List[str]:
+    """Validate an optional comma-separated subset of panel member keys."""
+    selected = list(V2_PANEL) if raw_models is None else [
+        model.strip() for model in raw_models.split(",") if model.strip()
+    ]
+    unknown = [model for model in selected if model not in V2_PANEL]
+    if unknown:
+        raise ValueError(f"Unknown model(s): {', '.join(unknown)}")
+    if not selected:
+        raise ValueError("No models selected")
+    return selected
 
-    clients, labels, (skipped, model_ids) = build_clients(selected, logger)
 
-    if skipped:
-        console.print()
-        for _prefix, label, reason in skipped:
-            console.print(f"[yellow]![/] Skipping [bold]{label}[/] — {reason}")
-        console.print(
-            "[dim]  Qwen and DeepSeek both need OPENROUTER_API_KEY; the pilot "
-            "continues with whatever is reachable.[/]"
-        )
+def show_skipped_models(skipped: List[tuple[str, str, str]]) -> None:
+    """Explain unavailable providers while allowing a partial pilot."""
+    if not skipped:
+        return
+    console.print()
+    for _prefix, label, reason in skipped:
+        console.print(f"[yellow]![/] Skipping [bold]{label}[/] — {reason}")
+    console.print(
+        "[dim]  Qwen and DeepSeek both need OPENROUTER_API_KEY; the pilot "
+        "continues with whatever is reachable.[/]"
+    )
 
-    if not clients:
-        console.print("\n[red]✗[/] No models available — nothing to pilot.")
-        return 1
 
-    system_prompt = load_system_prompt(include_examples=not args.without_examples)
-    prompt_id = prompt_fingerprint(system_prompt)
-
+def show_configuration(
+    args: argparse.Namespace,
+    client: OmekaClient,
+    models: PilotModels,
+    system_prompt: str,
+    prompt_id: str,
+) -> None:
+    """Display the complete read-only pilot configuration."""
     config_table = Table(title="Pilot configuration", box=box.ROUNDED)
     config_table.add_column("Setting", style="dim")
     config_table.add_column("Value", style="green")
@@ -371,16 +375,202 @@ def main() -> int:
     config_table.add_row("Sample size", str(args.sample_size))
     config_table.add_row("Seed", str(args.seed))
     config_table.add_row("Repeats", str(args.repeats))
-    config_table.add_row("Models", "\n".join(f"{labels[p]}  [dim]{model_ids[p]}[/]" for p in clients))
     config_table.add_row(
-        "Prompt",
-        f"#{prompt_id} · {len(system_prompt):,} chars · "
-        + ("with examples" if not args.without_examples
-           else "[yellow]examples stripped[/]"),
+        "Models",
+        "\n".join(
+            f"{models.labels[prefix]}  [dim]{models.model_ids[prefix]}[/]"
+            for prefix in models.clients
+        ),
+    )
+    example_status = "with examples" if not args.without_examples else "[yellow]examples stripped[/]"
+    config_table.add_row(
+        "Prompt", f"#{prompt_id} · {len(system_prompt):,} chars · {example_status}",
     )
     config_table.add_row("Writes to Omeka", "[bold green]none[/]")
     console.print(config_table)
     console.print()
+
+
+def resolve_output_path(raw_output: Optional[str], timestamp: str) -> Path:
+    """Resolve an explicit output or the timestamped default pilot path."""
+    if raw_output:
+        return Path(raw_output)
+    return Path(__file__).resolve().parent / OUTPUT_DIR_NAME / f"pilot_{timestamp}.json"
+
+
+def annotate_articles(
+    articles: List[Dict[str, Any]],
+    models: PilotModels,
+    system_prompt: str,
+    prompt_id: str,
+    repeats: int,
+    partial_path: Path,
+    completed: Dict[str, Dict[int, Dict[str, Any]]],
+    logger: logging.Logger,
+) -> tuple[Dict[str, Any], int]:
+    """Run or resume all article repeats, appending each completed call."""
+    results: Dict[str, Any] = {}
+    errors = 0
+    total_calls = len(articles) * repeats
+    console.rule("[bold cyan]Annotating")
+    with open(partial_path, "a", encoding="utf-8") as partial, \
+            standard_progress(console, show_eta=True) as progress:
+        task = progress.add_task("[cyan]Running panel...", total=total_calls)
+        for item in articles:
+            item_id = str(item.get("o:id"))
+            content = get_item_content(item)
+            cached = completed.get(item_id, {})
+            runs = []
+            for run_index in range(repeats):
+                run = cached.get(run_index)
+                if run is None:
+                    run = analyze_with_all_models(
+                        content, models.clients, system_prompt, logger, models.labels
+                    )
+                    partial.write(json.dumps({
+                        "prompt": prompt_id,
+                        "item_id": item_id,
+                        "run": run_index,
+                        "result": run,
+                    }, ensure_ascii=False) + "\n")
+                    partial.flush()
+                errors += sum(
+                    1 for result in run.values() if result.get("analysis_error")
+                )
+                runs.append(run)
+                progress.update(task, advance=1)
+            results[item_id] = {
+                "title": item.get("o:title"),
+                "n_chars": len(content),
+                "v1": read_v1_annotations(item),
+                "v2_runs": runs,
+            }
+    return results, errors
+
+
+def build_payload(
+    *,
+    timestamp: str,
+    articles: List[Dict[str, Any]],
+    results: Dict[str, Any],
+    models: PilotModels,
+    seed: int,
+    repeats: int,
+    system_prompt: str,
+    prompt_id: str,
+    prompt_examples: bool,
+) -> Dict[str, Any]:
+    """Build a self-describing pilot artifact for later comparison."""
+    return {
+        "manifest": {
+            "generated_utc": timestamp,
+            "sample_size": len(articles),
+            "seed": seed,
+            "repeats": repeats,
+            "sampling": "two-stage cluster: random pages, random items within page",
+            "v2_models": {
+                prefix: {
+                    "label": models.labels[prefix],
+                    "model_id": models.model_ids[prefix],
+                }
+                for prefix in models.clients
+            },
+            "v2_skipped": [
+                {"prefix": prefix, "label": label, "reason": reason}
+                for prefix, label, reason in models.skipped
+            ],
+            "v2_reasoning_requested": {
+                prefix: panel_reasoning(prefix) for prefix in models.clients
+            },
+            "v2_reasoning_effective": {
+                prefix: PANEL_REASONING_EFFECTIVE[prefix] for prefix in models.clients
+            },
+            "v1_models": {
+                "gemini_3_flash_preview": "gemini-3-flash-preview",
+                "gpt_5_mini": "gpt-5-mini",
+                "ministral_14b_2512": "ministral-14b-2512",
+            },
+            "v1_run_config": {
+                "gemini_3_flash_preview": "temperature=0.2; response_schema; no thinking_level",
+                "gpt_5_mini": "response_format schema only; no temperature; no reasoning_effort",
+                "ministral_14b_2512": "temperature=0.2; max_tokens=512; response_format schema",
+            },
+            "prompt_chars": len(system_prompt),
+            "prompt_fingerprint": prompt_id,
+            "prompt_examples": prompt_examples,
+        },
+        "articles": results,
+    }
+
+
+def show_summary(
+    results: Dict[str, Any],
+    models: PilotModels,
+    repeats: int,
+    errors: int,
+    out_path: Path,
+) -> None:
+    """Display pilot totals and the next report command."""
+    summary = Table(title="Pilot summary", box=box.ROUNDED)
+    summary.add_column("Metric", style="dim")
+    summary.add_column("Value", justify="right")
+    summary.add_row("Articles annotated", str(len(results)))
+    summary.add_row("Models run", str(len(models.clients)))
+    summary.add_row(
+        "Models skipped",
+        f"[yellow]{len(models.skipped)}[/]" if models.skipped else "[dim]0[/]",
+    )
+    summary.add_row("Total annotations", str(len(results) * repeats * len(models.clients)))
+    summary.add_row("Annotation errors", f"[red]{errors}[/]" if errors else "[dim]0[/]")
+    console.print()
+    console.print(summary)
+    console.print()
+    console.print(Panel.fit(
+        "[bold green]✓ Pilot complete[/bold green]\n\n"
+        f"Results: [cyan]{out_path}[/]\n"
+        f"[dim]Nothing was written to Omeka. Next: 03_pilot_report.py {out_path.name}[/]",
+        title="Done",
+        border_style="green",
+    ))
+
+
+def main() -> int:
+    logger = configure_logging()
+    console.print(Panel.fit(
+        "[bold cyan]Sentiment Panel Pilot[/bold cyan]\n"
+        "[dim]Candidate models vs the generation-1 annotations — "
+        "reads Omeka, writes nothing to it[/dim]",
+        border_style="cyan",
+    ))
+    args = build_argument_parser().parse_args()
+
+    if args.sample_size <= 0 or args.repeats <= 0:
+        console.print("[red]✗[/] --sample-size and --repeats must be positive")
+        return 2
+
+    try:
+        selected = selected_models(args.models)
+    except ValueError as exc:
+        console.print(f"[red]✗[/] {exc}")
+        console.print(f"[dim]Available: {', '.join(V2_PANEL)}[/]")
+        return 2
+
+    try:
+        client = OmekaClient.from_env()
+    except ValueError as exc:
+        console.print(f"[red]✗[/] {exc}")
+        return 2
+
+    models = build_clients(selected, logger)
+    show_skipped_models(models.skipped)
+    if not models.clients:
+        console.print("\n[red]✗[/] No models available — nothing to pilot.")
+        return 1
+
+    system_prompt = load_system_prompt(include_examples=not args.without_examples)
+    prompt_id = prompt_fingerprint(system_prompt)
+
+    show_configuration(args, client, models, system_prompt, prompt_id)
 
     articles = sample_articles(client, args.sample_size, args.seed, console)
     if not articles:
@@ -388,13 +578,8 @@ def main() -> int:
         return 1
     console.print(f"[green]✓[/] Sampled [bold]{len(articles)}[/] articles\n")
 
-    # Resolved before annotating, not after: the partial file lives beside the
-    # output, so the output path has to exist before the first call is made.
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = (
-        Path(args.output) if args.output
-        else Path(__file__).resolve().parent / OUTPUT_DIR_NAME / f"pilot_{timestamp}.json"
-    )
+    out_path = resolve_output_path(args.output, timestamp)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Persist each repeat as it lands. A 50x3 pilot is hours of API calls, and
@@ -409,104 +594,32 @@ def main() -> int:
             f"repeat(s) already recorded in [dim]{partial_path.name}[/]\n"
         )
 
-    results: Dict[str, Any] = {}
-    errors = 0
-
-    console.rule("[bold cyan]Annotating")
-    total_calls = len(articles) * args.repeats
-    with open(partial_path, "a", encoding="utf-8") as partial, \
-            standard_progress(console, show_eta=True) as progress:
-        task = progress.add_task("[cyan]Running panel...", total=total_calls)
-        for item in articles:
-            item_id = str(item.get("o:id"))
-            content = get_item_content(item)
-            cached = done.get(item_id, {})
-            runs = []
-            for run_index in range(args.repeats):
-                run = cached.get(run_index)
-                if run is None:
-                    run = analyze_with_all_models(
-                        content, clients, system_prompt, logger, labels
-                    )
-                    partial.write(json.dumps({
-                        "prompt": prompt_id,
-                        "item_id": item_id,
-                        "run": run_index,
-                        "result": run,
-                    }, ensure_ascii=False) + "\n")
-                    partial.flush()
-                errors += sum(1 for r in run.values() if r.get("analysis_error"))
-                runs.append(run)
-                progress.update(task, advance=1)
-
-            results[item_id] = {
-                "title": item.get("o:title"),
-                "n_chars": len(content),
-                "v1": read_v1_annotations(item),
-                "v2_runs": runs,
-            }
-
-    payload = {
-        "manifest": {
-            "generated_utc": timestamp,
-            "sample_size": len(articles),
-            "seed": args.seed,
-            "repeats": args.repeats,
-            "sampling": "two-stage cluster: random pages, random items within page",
-            "v2_models": {p: {"label": labels[p], "model_id": model_ids[p]} for p in clients},
-            "v2_skipped": [{"prefix": p, "label": lbl, "reason": r} for p, lbl, r in skipped],
-            # Requested depth, plus what each model actually accepted — they
-            # differ for Mistral, and a run record that hid that would be wrong.
-            "v2_reasoning_requested": {
-                p: panel_reasoning(p) for p in clients
-            },
-            "v2_reasoning_effective": {
-                p: PANEL_REASONING_EFFECTIVE[p] for p in clients
-            },
-            # Generation-1 models and the config they actually ran with,
-            # recovered from commit 07fb007 (2026-01-27).
-            "v1_models": {
-                "gemini_3_flash_preview": "gemini-3-flash-preview",
-                "gpt_5_mini": "gpt-5-mini",
-                "ministral_14b_2512": "ministral-14b-2512",
-            },
-            "v1_run_config": {
-                "gemini_3_flash_preview": "temperature=0.2; response_schema; no thinking_level",
-                "gpt_5_mini": "response_format schema only; no temperature; no reasoning_effort",
-                "ministral_14b_2512": "temperature=0.2; max_tokens=512; response_format schema",
-            },
-            "prompt_chars": len(system_prompt),
-            # Prompt wording moves label distributions in ways a diff does not
-            # predict, so a pilot that cannot name its prompt cannot be
-            # compared with the run it was meant to validate.
-            "prompt_fingerprint": prompt_fingerprint(system_prompt),
-            "prompt_examples": not args.without_examples,
-        },
-        "articles": results,
-    }
-    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    results, errors = annotate_articles(
+        articles,
+        models,
+        system_prompt,
+        prompt_id,
+        args.repeats,
+        partial_path,
+        done,
+        logger,
+    )
+    payload = build_payload(
+        timestamp=timestamp,
+        articles=articles,
+        results=results,
+        models=models,
+        seed=args.seed,
+        repeats=args.repeats,
+        system_prompt=system_prompt,
+        prompt_id=prompt_id,
+        prompt_examples=not args.without_examples,
+    )
+    atomic_write_text(out_path, json.dumps(payload, indent=2, ensure_ascii=False))
     # Scaffolding, removed only once the real output is safely on disk.
     partial_path.unlink(missing_ok=True)
 
-    summary = Table(title="Pilot summary", box=box.ROUNDED)
-    summary.add_column("Metric", style="dim")
-    summary.add_column("Value", justify="right")
-    summary.add_row("Articles annotated", str(len(results)))
-    summary.add_row("Models run", str(len(clients)))
-    summary.add_row("Models skipped", f"[yellow]{len(skipped)}[/]" if skipped else "[dim]0[/]")
-    summary.add_row("Total annotations", str(total_calls * len(clients)))
-    summary.add_row("Annotation errors", f"[red]{errors}[/]" if errors else "[dim]0[/]")
-    console.print()
-    console.print(summary)
-
-    console.print()
-    console.print(Panel.fit(
-        f"[bold green]✓ Pilot complete[/bold green]\n\n"
-        f"Results: [cyan]{out_path}[/]\n"
-        f"[dim]Nothing was written to Omeka. Next: 03_pilot_report.py {out_path.name}[/]",
-        title="Done",
-        border_style="green",
-    ))
+    show_summary(results, models, args.repeats, errors, out_path)
     return 0
 
 

@@ -201,68 +201,60 @@ class MediaDownloader:
         item_id = item.get('o:id')
 
         try:
-            # Get detailed item data including media attachments
             item_data = self.client.get_item(item_id)
             if not item_data:
                 logging.error(f"Could not fetch item {item_id} from Omeka")
                 return None
-            media_urls = []
-
-            # Search through media attachments for supported audio/video files
-            if 'o:media' in item_data:
-                for media in item_data['o:media']:
-                    # Get detailed media data
-                    media_data = self.client.get_resource(media['@id'])
-
-                    if media_data and 'o:source' in media_data:
-                        source = media_data.get('o:source', '')
-
-                        # Check if this media is a supported audio/video file
-                        if self.is_supported_media(source):
-                            # Prefer original URL if available
-                            download_url = media_data.get('o:original_url')
-                            if download_url:
-                                media_urls.append((download_url, media_data))
-
+            media_urls = self._find_media_urls(item_data)
             if not media_urls:
                 logging.info(f"No audio/video media found for item {item_id}")
                 return None
-
-            # Download all media files associated with this item
-            downloaded_files = []
-            total_media = len(media_urls)
-
-            for index, (media_url, media_data) in enumerate(media_urls):
-                # Create descriptive filename
-                filename = self.create_filename(item_data, media_data, index, total_media)
-                file_path = self.media_folder / filename
-
-                # Skip if file already exists
-                if file_path.exists():
-                    logging.info(f"File already exists, skipping: {filename}")
-                    downloaded_files.append(str(file_path))
-                    continue
-
-                # Get media type for logging
-                media_type = self.get_media_type(media_data.get('o:source', ''))
-
-                # Attempt to download the media file
-                logging.info(f"Downloading {media_type}: {filename}")
-                downloaded_path = self.download_file(media_url, file_path)
-
-                if downloaded_path:
-                    downloaded_files.append(str(downloaded_path))
-                    logging.info(f"Downloaded {media_type}: {downloaded_path}")
-                else:
-                    logging.error(f"Failed to download: {filename}")
-
-            if downloaded_files:
-                return str(item_id), downloaded_files
-            return None
-
+            downloaded_files = self._download_media(item_data, media_urls)
+            return (str(item_id), downloaded_files) if downloaded_files else None
         except Exception as e:
             logging.error(f"Error processing item {item_id}: {e}")
             return None
+
+    def _find_media_urls(
+        self,
+        item_data: Dict[str, Any],
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """Resolve downloadable original URLs for supported attached media."""
+        media_urls = []
+        for reference in item_data.get("o:media", []):
+            media_data = self.client.get_resource(reference["@id"])
+            if not media_data:
+                continue
+            source = media_data.get("o:source", "")
+            download_url = media_data.get("o:original_url")
+            if self.is_supported_media(source) and download_url:
+                media_urls.append((download_url, media_data))
+        return media_urls
+
+    def _download_media(
+        self,
+        item_data: Dict[str, Any],
+        media_urls: List[Tuple[str, Dict[str, Any]]],
+    ) -> List[str]:
+        """Download discovered media and return existing or completed paths."""
+        downloaded_files = []
+        for index, (media_url, media_data) in enumerate(media_urls):
+            filename = self.create_filename(item_data, media_data, index, len(media_urls))
+            file_path = self.media_folder / filename
+            if file_path.exists():
+                logging.info(f"File already exists, skipping: {filename}")
+                downloaded_files.append(str(file_path))
+                continue
+
+            media_type = self.get_media_type(media_data.get("o:source", ""))
+            logging.info(f"Downloading {media_type}: {filename}")
+            downloaded_path = self.download_file(media_url, file_path)
+            if downloaded_path:
+                downloaded_files.append(str(downloaded_path))
+                logging.info(f"Downloaded {media_type}: {downloaded_path}")
+            else:
+                logging.error(f"Failed to download: {filename}")
+        return downloaded_files
 
 
 def setup_logging(script_dir: Path) -> None:

@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
 
@@ -26,6 +25,7 @@ _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.gemini_utils import (
     INLINE_REQUEST_LIMIT_BYTES,
     build_generation_config,
+    build_gemini_client,
     delete_uploaded_file,
     extract_text_from_response,
     upload_and_wait_active,
@@ -91,7 +91,7 @@ class VideoProcessor:
         self.model = model
 
         # Initialize the Gemini client
-        self.client = genai.Client(api_key=self.api_key)
+        self.client = build_gemini_client(self.api_key)
 
         # Rate limiter for proactive throttling
         self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))

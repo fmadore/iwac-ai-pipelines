@@ -39,14 +39,14 @@ console = Console()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import count_table, key_value_table, print_file_table, standard_progress
 from common.gemini_page_processor import GeminiPageProcessor, PagePolicy, process_pdf_batch
-from common.gemini_utils import build_generation_config, extract_text_from_response, get_thinking_level
+from common.gemini_utils import (
+    build_generation_config,
+    build_gemini_client,
+    extract_text_from_response,
+    get_thinking_level,
+)
 from common.llm_provider import get_model_option, summary_from_option
 from common.rate_limiter import QuotaExhaustedError, RateLimiter, is_quota_exhausted
-
-try:
-    from google import genai
-except ImportError as exc:
-    raise RuntimeError("google-genai package is required for PDF processing") from exc
 
 script_dir = Path(__file__).resolve().parent
 log_dir = script_dir / 'log'
@@ -254,7 +254,7 @@ def main():
     console.print()
     print_file_table(console, pdf_files, title=f"📚 PDF Files to Process ({len(pdf_files)})")
 
-    client = genai.Client(api_key=api_key)
+    client = build_gemini_client(api_key)
     rate_limiter = RateLimiter(args.rpm, logger=LOGGER)
     generation_config = build_generation_config(
         model_option.model,

@@ -46,9 +46,11 @@ import argparse
 import asyncio
 import logging
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Callable
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Callable, Iterator, TextIO
 from functools import partial
 
 from dotenv import load_dotenv
@@ -70,6 +72,12 @@ if REPO_ROOT not in sys.path:
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
+from common.checkpoint import (  # noqa: E402
+    CheckpointMismatch,
+    JsonCheckpoint,
+    load_csv_ids,
+    sha256_text,
+)
 from common.llm_provider import (  # noqa: E402
     DEFAULT_TEXT_MODEL_KEY,
     LEGACY_CLI_MODEL_KEYS,
@@ -371,14 +379,30 @@ def _progress_description(stats: ProcessingStats) -> str:
     return (f"[cyan]NER extraction[/] [green]✓{stats.successful_items}[/] "
             f"[red]✗{stats.failed_items}[/] [dim]○{stats.empty_content_items}[/]")
 
-class _LockedWriter:
-    """Serialize ``writerow`` calls when items are processed in worker threads."""
-    def __init__(self, writer: csv.DictWriter):
+class _DurableWriter:
+    """Serialize rows and flush each one so interruption loses no completed item."""
+
+    def __init__(self, writer: csv.DictWriter, handle: TextIO):
         self._writer = writer
+        self._handle = handle
         self._lock = threading.Lock()
+
     def writerow(self, row: Dict[str, Any]) -> None:
         with self._lock:
             self._writer.writerow(row)
+            self._handle.flush()
+
+
+@contextmanager
+def durable_csv_writer(output_csv: str, *, resume: bool) -> Iterator[_DurableWriter]:
+    path = Path(output_csv)
+    mode = "a" if resume and path.exists() else "w"
+    with path.open(mode, newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDNAMES)
+        if mode == "w" or path.stat().st_size == 0:
+            writer.writeheader()
+            handle.flush()
+        yield _DurableWriter(writer, handle)
 
 async def process_item_async(item: Dict[str, Any], writer, stats: ProcessingStats,
                              spatial_filter: Optional[str], ner_fn: Callable[[str], NERResult],
@@ -400,16 +424,14 @@ def process_items_batch(items: List[Dict[str, Any]], writer: csv.DictWriter, sta
 
 async def process_items_async(items: List[Dict[str, Any]], output_csv: str, stats: ProcessingStats,
                               spatial_filter: Optional[str], batch_size: int,
-                              ner_fn: Callable[[str], NERResult], progress: Progress, task_id) -> None:
+                              ner_fn: Callable[[str], NERResult], progress: Progress,
+                              task_id, *, resume: bool = False) -> None:
     semaphore = asyncio.Semaphore(batch_size)
     async def worker(item: Dict[str, Any], writer):
         async with semaphore:
             await process_item_async(item, writer, stats, spatial_filter, ner_fn, progress, task_id)
-    with open(output_csv, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
-        writer.writeheader()
-        locked_writer = _LockedWriter(writer)
-        tasks = [worker(item, locked_writer) for item in items]
+    with durable_csv_writer(output_csv, resume=resume) as writer:
+        tasks = [worker(item, writer) for item in items]
         for chunk_start in range(0, len(tasks), batch_size):
             chunk = tasks[chunk_start:chunk_start + batch_size]
             await asyncio.gather(*chunk)
@@ -455,6 +477,10 @@ def parse_arguments():
     parser.add_argument("--async", action="store_true", help="Use async processing")
     parser.add_argument("--output-dir", type=str, help="Directory for output CSV")
     parser.add_argument(
+        "--force", action="store_true",
+        help="Replace an output whose model, prompt, or source scope differs",
+    )
+    parser.add_argument(
         "--model",
         type=str,
         choices=ALLOWED_MODEL_KEYS + LEGACY_MODEL_KEYS,
@@ -497,6 +523,42 @@ class RunSetup:
     items: List[Dict[str, Any]]
     spatial_filter: Optional[str]
     output_csv: str
+    resume: bool = False
+    resumed_items: int = 0
+
+
+def _deduplicate_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Preserve API order while removing records repeated across item sets."""
+    unique: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        item_id = str(item.get("o:id", "")).strip()
+        if item_id and item_id not in unique:
+            unique[item_id] = item
+    return list(unique.values())
+
+
+def _prepare_checkpointed_output(
+    output_csv: str,
+    *,
+    context: Dict[str, Any],
+    items: List[Dict[str, Any]],
+    force: bool,
+) -> tuple[List[Dict[str, Any]], bool, int]:
+    output_path = Path(output_csv)
+    checkpoint_path = output_path.with_suffix(output_path.suffix + ".checkpoint.json")
+    if output_path.exists() and not checkpoint_path.exists() and not force:
+        raise CheckpointMismatch(
+            f"Existing NER CSV has no provenance checkpoint: {output_path}. "
+            "Use --force to replace it."
+        )
+    JsonCheckpoint.open(checkpoint_path, context, reset=force)
+    processed_ids = set() if force else load_csv_ids(output_path, "o:id")
+    pending = [
+        item for item in items
+        if str(item.get("o:id", "")).strip() not in processed_ids
+    ]
+    resume = output_path.exists() and not force
+    return pending, resume, len(processed_ids)
 
 def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
     """Shared startup for both drivers: banner, model selection, config
@@ -550,7 +612,7 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
     if spatial_filter:
         console.print(f"[cyan]🌍 Spatial filter:[/] {spatial_filter}")
 
-    items = get_items_from_multiple_sets(client, item_set_ids)
+    items = _deduplicate_items(get_items_from_multiple_sets(client, item_set_ids))
     if not items:
         console.print("[yellow]⚠[/] No items found.")
         return None
@@ -560,6 +622,25 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
     output_dir = args.output_dir or os.path.join(SCRIPT_DIR, 'output')
     os.makedirs(output_dir, exist_ok=True)
     output_csv = _build_output_path(item_set_ids, output_dir, model_option.key)
+    items, resume, resumed_items = _prepare_checkpointed_output(
+        output_csv,
+        context={
+            "pipeline": "ner-csv-v2",
+            "model_key": model_option.key,
+            "model_id": model_option.model,
+            "prompt_sha256": sha256_text(get_ner_system_prompt()),
+            "item_set_ids": item_set_ids,
+            "spatial_filter": spatial_filter,
+            "fieldnames": CSV_FIELDNAMES,
+        },
+        items=items,
+        force=args.force,
+    )
+    if resumed_items:
+        console.print(
+            f"[green]✓[/] Resuming: [bold]{resumed_items}[/] completed item(s), "
+            f"[bold]{len(items)}[/] remaining"
+        )
 
     return RunSetup(
         config=config,
@@ -567,11 +648,16 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
         items=items,
         spatial_filter=spatial_filter,
         output_csv=output_csv,
+        resume=resume,
+        resumed_items=resumed_items,
     )
 
 async def async_main(args) -> None:
     setup = prepare_run(args, mode_label="[yellow]Async[/]")
     if setup is None:
+        return
+    if not setup.items:
+        console.print("[green]✓[/] Output is already complete for this model and prompt.")
         return
 
     stats = ProcessingStats(total_items=len(setup.items))
@@ -580,32 +666,39 @@ async def async_main(args) -> None:
     with _build_progress() as progress:
         task_id = progress.add_task("[cyan]NER extraction[/]", total=stats.total_items)
         await process_items_async(setup.items, setup.output_csv, stats, setup.spatial_filter,
-                                  setup.config.batch_size, ner_fn, progress, task_id)
+                                  setup.config.batch_size, ner_fn, progress, task_id,
+                                  resume=setup.resume)
 
     summarize(stats, setup.output_csv)
 
 def main() -> None:
     args = parse_arguments()
-    if getattr(args, 'async', False):
-        asyncio.run(async_main(args))
-        return
+    try:
+        if getattr(args, 'async', False):
+            asyncio.run(async_main(args))
+            return
 
-    setup = prepare_run(args, mode_label="Sync")
-    if setup is None:
-        return
+        setup = prepare_run(args, mode_label="Sync")
+        if setup is None:
+            return
+        if not setup.items:
+            console.print("[green]✓[/] Output is already complete for this model and prompt.")
+            return
 
-    stats = ProcessingStats(total_items=len(setup.items))
-    ner_fn = partial(perform_ner, setup.llm_client)
+        stats = ProcessingStats(total_items=len(setup.items))
+        ner_fn = partial(perform_ner, setup.llm_client)
 
-    with open(setup.output_csv, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
-        writer.writeheader()
+        with durable_csv_writer(setup.output_csv, resume=setup.resume) as writer:
+            with _build_progress() as progress:
+                task_id = progress.add_task("[cyan]NER extraction[/]", total=stats.total_items)
+                process_items_batch(
+                    setup.items, writer, stats, setup.spatial_filter, ner_fn, progress, task_id
+                )
 
-        with _build_progress() as progress:
-            task_id = progress.add_task("[cyan]NER extraction[/]", total=stats.total_items)
-            process_items_batch(setup.items, writer, stats, setup.spatial_filter, ner_fn, progress, task_id)
+        summarize(stats, setup.output_csv)
+    except (CheckpointMismatch, ValueError) as exc:
+        console.print(f"[red]✗[/] {exc}")
 
-    summarize(stats, setup.output_csv)
 
 if __name__ == '__main__':
     main()

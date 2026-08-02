@@ -72,7 +72,11 @@ from common.llm_provider import (  # noqa: E402
     get_model_option,
     summary_from_option,
 )
-from common.gemini_utils import build_generation_config, extract_text_from_response  # noqa: E402
+from common.gemini_utils import (  # noqa: E402
+    build_generation_config,
+    build_gemini_client,
+    extract_text_from_response,
+)
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
 
@@ -258,7 +262,7 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
         raise RuntimeError("GEMINI_API_KEY not found in environment variables")
 
     # Initialize Gemini client
-    client = genai.Client(api_key=api_key)
+    client = build_gemini_client(api_key)
 
     # Configure for each step - all Gemini 3 models use thinking_level.
     # Step 1 (per-page extraction) is the quality-critical step - Pro (standard)

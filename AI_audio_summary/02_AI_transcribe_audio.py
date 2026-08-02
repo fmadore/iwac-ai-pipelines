@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
-from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
 
@@ -23,6 +22,7 @@ _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.gemini_utils import (
     INLINE_REQUEST_LIMIT_BYTES,
     build_generation_config,
+    build_gemini_client,
     delete_uploaded_file,
     extract_text_from_response,
     upload_and_wait_active,
@@ -117,7 +117,7 @@ class AudioTranscriber(TranscriberBase):
         self.generator_label = f"Google {model}"
 
         # Initialize the Gemini client
-        self.client = genai.Client(api_key=self.api_key)
+        self.client = build_gemini_client(self.api_key)
 
         # Short, human-readable reason for the most recent transcription failure
         # (e.g. "RECITATION", "MAX_TOKENS", "API-503"). Surfaced in the
@@ -169,107 +169,106 @@ class AudioTranscriber(TranscriberBase):
         """
         console.print(f"[cyan]🎤[/] Transcribing: [bold]{audio_file_path.name}[/]")
 
+        if max_retries <= 0:
+            raise ValueError("max_retries must be positive")
+
         mime_type = get_mime_type(audio_file_path)
         if not mime_type:
             console.print(f"[red]✗[/] Could not determine MIME type for [cyan]{audio_file_path.name}[/]")
             return None
+        uploaded_file = None
+        try:
+            media_part, uploaded_file = self._prepare_media_part(
+                audio_file_path, mime_type,
+            )
+            if media_part is None:
+                return None
+            prompt = custom_prompt or self.transcription_prompt
+            return self._transcribe_with_retries(
+                media_part, prompt, audio_file_path, max_retries,
+            )
+        finally:
+            if uploaded_file is not None:
+                delete_uploaded_file(self.client, uploaded_file)
+                console.print(f"[dim]🧹 Removed uploaded file: {uploaded_file.name}[/]")
 
-        # Choose transport by size: small payloads go inline; anything above the
-        # 20 MB inline cap is uploaded via the Files API instead.
+    def _prepare_media_part(self, audio_file_path: Path, mime_type: str):
+        """Choose inline bytes or an uploaded Files API handle by payload size."""
         try:
             file_size = audio_file_path.stat().st_size
         except OSError:
             file_size = 0
+        if file_size > INLINE_REQUEST_LIMIT_BYTES:
+            uploaded = self._upload_via_files_api(audio_file_path, mime_type)
+            return uploaded, uploaded
+        audio_bytes, _ = self.prepare_audio_for_api(audio_file_path)
+        if not audio_bytes:
+            return None, None
+        return types.Part.from_bytes(data=audio_bytes, mime_type=mime_type), None
 
-        uploaded_file = None
-        try:
-            if file_size > INLINE_REQUEST_LIMIT_BYTES:
-                uploaded_file = self._upload_via_files_api(audio_file_path, mime_type)
-                if uploaded_file is None:
-                    return None
-                media_part = uploaded_file
-            else:
-                audio_bytes, _ = self.prepare_audio_for_api(audio_file_path)
-                if not audio_bytes:
-                    return None
-                media_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+    def _transcribe_with_retries(
+        self,
+        media_part,
+        prompt: str,
+        audio_file_path: Path,
+        max_retries: int,
+    ) -> Optional[str]:
+        """Generate with retry/backoff for transient API and response failures."""
+        self.last_failure_reason = None
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                self.rate_limiter.wait()
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=[media_part, prompt],
+                    config=build_generation_config(
+                        self.model,
+                        max_output_tokens=65536,
+                    ),
+                )
+                return self._response_to_text(response, audio_file_path)
+            except QuotaExhaustedError:
+                raise
+            except genai_errors.APIError as exc:
+                if is_quota_exhausted(exc):
+                    raise QuotaExhaustedError(str(exc)) from exc
+                last_error = exc
+                self.last_failure_reason = f"API-{getattr(exc, 'code', '?')}"
+            except _RetryableResponse as exc:
+                last_error = exc
+                self.last_failure_reason = str(exc)
+            except Exception as exc:
+                last_error = exc
+                self.last_failure_reason = "error"
+            self._report_retry(audio_file_path, attempt, max_retries, last_error)
+        return None
 
-            # Use custom prompt or default
-            prompt = custom_prompt or self.transcription_prompt
-
-            # Retry loop with exponential backoff.
-            #
-            # Beyond transient API/network errors, this also retries *empty or
-            # blocked* responses — RECITATION, a momentary blank candidate, or
-            # MAX_TOKENS with no recoverable text. For audio these are usually
-            # non-deterministic, so a fresh sample typically succeeds where the
-            # first failed.
-            #
-            # Every attempt now runs at the model's default temperature. This
-            # used to start at 0.1 and climb toward 0.7 on later attempts, to
-            # shake the model out of recitation and repetition loops. Google's
-            # Gemini 3 guidance identifies the low starting point as the likely
-            # *cause* of those loops rather than a defence against them: sending
-            # no temperature is recommended, and a value below 1.0 "may lead to
-            # unexpected behavior, such as looping or degraded performance". On a
-            # 90-minute interview a loop is the worst failure available — the
-            # transcript repeats a paragraph until it hits max_output_tokens — so
-            # the ladder is gone and re-sampling alone carries the retry.
-            self.last_failure_reason = None
-            last_error = None
-            for attempt in range(max_retries):
-                try:
-                    # Generate transcription using the selected model.
-                    # IMPORTANT: Audio part must come FIRST, then the prompt text.
-                    self.rate_limiter.wait()
-                    response = self.client.models.generate_content(
-                        model=self.model,
-                        contents=[media_part, prompt],
-                        config=build_generation_config(
-                            self.model,
-                            max_output_tokens=65536,
-                        ),
-                    )
-
-                    # Returns text (or recovered partial text on MAX_TOKENS);
-                    # raises _RetryableResponse for empty/blocked output.
-                    return self._response_to_text(response, audio_file_path)
-
-                except QuotaExhaustedError:
-                    raise
-                except genai_errors.APIError as e:
-                    if is_quota_exhausted(e):
-                        raise QuotaExhaustedError(str(e)) from e
-                    last_error = e
-                    self.last_failure_reason = f"API-{getattr(e, 'code', '?')}"
-                except _RetryableResponse as e:
-                    last_error = e
-                    self.last_failure_reason = str(e)
-                except Exception as e:
-                    last_error = e
-                    self.last_failure_reason = "error"
-
-                # Shared backoff for every retryable failure handled above.
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
-                    console.print(
-                        f"[red]✗[/] Transcription attempt failed for [cyan]{audio_file_path.name}[/] "
-                        f"([yellow]{self.last_failure_reason}[/]): {last_error}"
-                    )
-                    console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f}s... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                else:
-                    console.print(
-                        f"[red]✗[/] Giving up on [cyan]{audio_file_path.name}[/] after {max_retries} attempts "
-                        f"([yellow]{self.last_failure_reason}[/]): {last_error}"
-                    )
-
-            return None
-        finally:
-            # Always remove any Files API upload, on success or failure.
-            if uploaded_file is not None:
-                delete_uploaded_file(self.client, uploaded_file)
-                console.print(f"[dim]🧹 Removed uploaded file: {uploaded_file.name}[/]")
+    def _report_retry(
+        self,
+        audio_file_path: Path,
+        attempt: int,
+        max_retries: int,
+        error: Optional[Exception],
+    ) -> None:
+        """Report one failure and sleep only when another attempt remains."""
+        if attempt >= max_retries - 1:
+            console.print(
+                f"[red]✗[/] Giving up on [cyan]{audio_file_path.name}[/] after "
+                f"{max_retries} attempts ([yellow]{self.last_failure_reason}[/]): {error}"
+            )
+            return
+        wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+        console.print(
+            f"[red]✗[/] Transcription attempt failed for "
+            f"[cyan]{audio_file_path.name}[/] "
+            f"([yellow]{self.last_failure_reason}[/]): {error}"
+        )
+        console.print(
+            f"[yellow]⏳[/] Retrying in {wait_time:.1f}s... "
+            f"(attempt {attempt + 1}/{max_retries})"
+        )
+        time.sleep(wait_time)
 
     def _response_to_text(self, response, audio_file_path):
         """Extract transcription text from a Gemini response, or signal a retry.
@@ -505,6 +504,76 @@ class AudioTranscriber(TranscriberBase):
 
     # ---- Orchestration -----------------------------------------------------------
 
+    def _classify_media_files(self, media_files, output_folder):
+        """Partition media into new, failed-segment, and complete buckets."""
+        files_to_process = []
+        files_to_retry = []
+        files_complete = []
+        for file_path, is_video in media_files:
+            exists, failed_segments, total_segments, header_minutes = (
+                check_existing_transcription(file_path, SCRIPT_DIR / output_folder)
+            )
+            if not exists:
+                files_to_process.append((file_path, is_video, None))
+            elif failed_segments:
+                files_to_retry.append(
+                    (file_path, is_video, failed_segments, total_segments, header_minutes)
+                )
+            else:
+                files_complete.append((file_path, is_video))
+        return files_to_process, files_to_retry, files_complete
+
+    @staticmethod
+    def _select_normal_work(files_to_process, files_to_retry):
+        """Optionally add failed segments to the normal new-file batch."""
+        selected = files_to_process.copy()
+        if not files_to_retry:
+            return selected
+        retry_choice = console.input(
+            f"\n[bold]Found {len(files_to_retry)} file(s) with failed segments. "
+            "Retry them? (Y/n):[/] "
+        ).strip().lower()
+        if retry_choice == "n":
+            return selected
+        selected.extend(
+            (file_path, is_video, (failed, total, header_minutes))
+            for file_path, is_video, failed, total, header_minutes in files_to_retry
+        )
+        return selected
+
+    def _process_batch_item(
+        self,
+        item,
+        *,
+        custom_prompt,
+        output_folder,
+        segment_minutes,
+        split_segments,
+    ) -> bool:
+        """Process one new file or retry record from a normal batch."""
+        original_file, is_video, retry_info = item
+        if retry_info:
+            failed_segments, total_segments, header_minutes = retry_info
+            _, still_failed = self.retry_failed_segments(
+                original_file,
+                is_video,
+                failed_segments,
+                total_segments,
+                custom_prompt=custom_prompt,
+                output_folder=output_folder,
+                segment_minutes=segment_minutes,
+                header_minutes=header_minutes,
+            )
+            return still_failed == 0
+        return self.transcribe_new_file(
+            original_file,
+            is_video,
+            custom_prompt=custom_prompt,
+            split_segments=split_segments,
+            segment_minutes=segment_minutes,
+            output_folder=output_folder,
+        )
+
     def transcribe_all_audio_files(
         self,
         audio_folder="Audio",
@@ -532,22 +601,9 @@ class AudioTranscriber(TranscriberBase):
             self.print_no_files_warning()
             return
 
-        # Check for files needing processing
-        files_to_process = []
-        files_to_retry = []  # Files with failed segments
-        files_complete = []  # Files already fully transcribed
-
-        for file_path, is_video in media_files:
-            exists, failed_segments, total_segments, header_minutes = check_existing_transcription(
-                file_path, SCRIPT_DIR / output_folder
-            )
-
-            if not exists:
-                files_to_process.append((file_path, is_video, None))
-            elif failed_segments:
-                files_to_retry.append((file_path, is_video, failed_segments, total_segments, header_minutes))
-            else:
-                files_complete.append((file_path, is_video))
+        files_to_process, files_to_retry, files_complete = self._classify_media_files(
+            media_files, output_folder,
+        )
 
         video_count = sum(1 for _, is_video, *_ in media_files if is_video)
 
@@ -559,17 +615,9 @@ class AudioTranscriber(TranscriberBase):
             self._resume_failed_segments(files_to_retry, custom_prompt, output_folder, segment_minutes)
             return
 
-        # Normal mode: process new files and optionally retry failed ones
-        all_files_to_process = files_to_process.copy()
-
-        # Ask about retrying failed segments if any exist
-        if files_to_retry:
-            retry_choice = console.input(
-                f"\n[bold]Found {len(files_to_retry)} file(s) with failed segments. Retry them? (Y/n):[/] "
-            ).strip().lower()
-            if retry_choice != "n":
-                for file_path, is_video, failed_segs, total_segs, header_minutes in files_to_retry:
-                    all_files_to_process.append((file_path, is_video, (failed_segs, total_segs, header_minutes)))
+        all_files_to_process = self._select_normal_work(
+            files_to_process, files_to_retry,
+        )
 
         if not all_files_to_process:
             console.print("[green]✓[/] All files are already transcribed successfully!")
@@ -587,27 +635,15 @@ class AudioTranscriber(TranscriberBase):
         console.rule("[bold]Starting Transcription Process", style="cyan")
         console.print()
 
-        def _process_item(item) -> bool:
-            original_file, is_video = item[0], item[1]
-            retry_info = item[2] if len(item) > 2 else None
-
-            if retry_info:
-                failed_segments, total_segments, header_minutes = retry_info
-                _, still_failed = self.retry_failed_segments(
-                    original_file, is_video, failed_segments, total_segments,
-                    custom_prompt=custom_prompt, output_folder=output_folder,
-                    segment_minutes=segment_minutes, header_minutes=header_minutes,
-                )
-                return still_failed == 0
-
-            return self.transcribe_new_file(
-                original_file, is_video,
-                custom_prompt=custom_prompt, split_segments=split_segments,
-                segment_minutes=segment_minutes, output_folder=output_folder,
-            )
-
         successful_transcriptions, failed_transcriptions = self.run_processing_loop(
-            all_files_to_process, _process_item
+            all_files_to_process,
+            lambda item: self._process_batch_item(
+                item,
+                custom_prompt=custom_prompt,
+                output_folder=output_folder,
+                segment_minutes=segment_minutes,
+                split_segments=split_segments,
+            ),
         )
 
         self.print_summary_table(len(media_files), successful_transcriptions, failed_transcriptions, output_folder)
@@ -728,10 +764,63 @@ def select_model_interactive():
     return 'gemini-pro-latest'
 
 
-def main():
-    """
-    Main function to run the audio transcription script.
-    """
+def choose_split_mode(args, transcriber: AudioTranscriber, ffmpeg_ready: bool) -> bool:
+    """Resolve CLI, prompt-driven, or interactive splitting and its dependency."""
+    split_segments = args.split or transcriber.auto_split
+    if transcriber.auto_split and not args.split:
+        console.print("  [dim]→ Audio splitting automatically enabled for detailed transcription[/]")
+    if not split_segments:
+        split_choice = console.input(
+            "\n[bold]Split audio into 20-minute segments for improved accuracy? (y/N):[/] "
+        ).strip().lower()
+        split_segments = split_choice in {"y", "yes"}
+    if split_segments and not ffmpeg_ready:
+        console.print(
+            "[yellow]⚠[/] Audio splitting requires 'pydub' and ffmpeg; "
+            "proceeding without splitting."
+        )
+        return False
+    return split_segments
+
+
+def show_transcription_configuration(args, selected_model: str, split_segments: bool) -> None:
+    """Display the resolved batch configuration."""
+    config_rows = [
+        ("Model", selected_model),
+        ("Audio Folder", args.audio_folder),
+        ("Output Folder", args.output_folder),
+        ("Split Segments", "Yes" if split_segments else "No"),
+    ]
+    if split_segments:
+        config_rows.append(("Segment Length", f"{args.segment_minutes} minutes"))
+    config_rows.append(
+        ("Resume Mode", "[cyan]Yes (retry failed only)[/]" if args.resume else "No")
+    )
+    console.print()
+    console.print(make_config_table(config_rows))
+    console.print()
+
+
+def build_transcriber(args) -> tuple[AudioTranscriber, str]:
+    """Resolve model and prompt, then construct the non-interactive worker."""
+    selected_model = args.model or select_model_interactive()
+    verb = "Using" if args.model else "Selected"
+    console.print(f"[green]✓[/] {verb}: [cyan]{selected_model}[/]")
+    transcription_prompt, prompt_number = select_prompt_interactive(
+        SCRIPT_DIR / "prompts",
+        console,
+        default_prompt=DEFAULT_PROMPT,
+        title="Available Transcription Prompts",
+    )
+    return AudioTranscriber(
+        model=selected_model,
+        transcription_prompt=transcription_prompt,
+        auto_split=prompt_number == 1,
+    ), selected_model
+
+
+def main() -> int:
+    """Run the audio transcription CLI."""
     args = parse_args()
 
     # Display welcome banner
@@ -742,73 +831,11 @@ def main():
     ))
 
     try:
-        # Select model via CLI or interactive
-        if args.model:
-            selected_model = args.model
-            console.print(f"\n[green]✓[/] Using model: [cyan]{selected_model}[/]")
-        else:
-            selected_model = select_model_interactive()
-            console.print(f"[green]✓[/] Selected: [cyan]{selected_model}[/]")
-
-        # Select the transcription prompt up front, then inject it into the
-        # transcriber (constructing the class never blocks on stdin).
-        transcription_prompt, prompt_number = select_prompt_interactive(
-            SCRIPT_DIR / "prompts",
-            console,
-            default_prompt=DEFAULT_PROMPT,
-            title="Available Transcription Prompts",
-        )
-        # Auto-enable splitting for prompt #1 (full audio transcription)
-        auto_split = prompt_number == 1
-        if auto_split:
-            console.print("  [dim]→ Audio splitting automatically enabled for detailed transcription[/]")
-
-        transcriber = AudioTranscriber(
-            model=selected_model,
-            transcription_prompt=transcription_prompt,
-            auto_split=auto_split,
-        )
-
-        # Check pydub + ffmpeg availability once
-        _pydub_ready = detect_ffmpeg()
-
-        # Determine if splitting should be used
-        if args.split:
-            # CLI flag takes precedence
-            split_segments = True
-            if not _pydub_ready:
-                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub' and ffmpeg. Proceeding without splitting.")
-                split_segments = False
-        elif transcriber.auto_split:
-            # Auto-split is enabled for this prompt
-            split_segments = True
-            if not _pydub_ready:
-                console.print("[yellow]⚠[/] Warning: Audio splitting requires 'pydub' and ffmpeg. Proceeding without splitting.")
-                split_segments = False
-        else:
-            # Ask user if they want to split audio into 20-minute segments
-            split_choice = console.input(
-                "\n[bold]Split audio into 20-minute segments for improved accuracy? (y/N):[/] "
-            ).strip().lower()
-            split_segments = split_choice in {"y", "yes"}
-            if split_segments and not _pydub_ready:
-                console.print("[yellow]⚠[/] You chose to split audio, but 'pydub' or ffmpeg is not available. Proceeding without splitting.")
-                split_segments = False
-
-        # Display configuration
-        config_rows = [
-            ("Model", selected_model),
-            ("Audio Folder", args.audio_folder),
-            ("Output Folder", args.output_folder),
-            ("Split Segments", "Yes" if split_segments else "No"),
-        ]
-        if split_segments:
-            config_rows.append(("Segment Length", f"{args.segment_minutes} minutes"))
-        config_rows.append(("Resume Mode", "[cyan]Yes (retry failed only)[/]" if args.resume else "No"))
-
-        console.print()
-        console.print(make_config_table(config_rows))
-        console.print()
+        if args.segment_minutes <= 0:
+            raise ValueError("--segment-minutes must be positive")
+        transcriber, selected_model = build_transcriber(args)
+        split_segments = choose_split_mode(args, transcriber, detect_ffmpeg())
+        show_transcription_configuration(args, selected_model, split_segments)
 
         # Transcribe all audio files (optionally split into segments)
         transcriber.transcribe_all_audio_files(
@@ -818,6 +845,7 @@ def main():
             segment_minutes=args.segment_minutes,
             resume_mode=args.resume
         )
+        return 0
 
     except ValueError as e:
         console.print(f"\n[red]✗ Configuration Error:[/] {e}")
@@ -826,10 +854,12 @@ def main():
         console.print("  2. Edit the .env file in this directory")
         console.print("  3. Replace 'your-api-key-here' with your actual API key")
         console.print("  4. Save the file and run this script again")
+        return 1
 
     except Exception as e:
         console.print(f"\n[red]✗ Unexpected error:[/] {e}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -30,6 +30,11 @@ The summarization script prompts you to select a model interactively, or use `--
 python 02_AI_generate_summaries.py  # DeepSeek V4 Flash 0731 by default
 ```
 
+Successful files are checkpointed with the exact model ID, prompt hash, and
+source-text hash. Re-running skips exact matches and regenerates only changed
+or previously failed inputs. If existing output has no matching provenance,
+the script stops instead of mixing runs; use `--force` to replace it.
+
 ## Supported Models
 
 | Model | Provider | Speed | Cost |

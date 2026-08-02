@@ -7,9 +7,13 @@ mappings from step 4. For each item, deduplicates against existing links and
 PATCHes via OmekaClient.
 
 Usage:
+    python 05_update_omeka.py --dry-run
     python 05_update_omeka.py
     python 05_update_omeka.py --new-subject output/newly_created_items_subject_20260307.csv
     python 05_update_omeka.py --new-spatial output/newly_created_items_spatial_20260307.csv
+
+Writes are gated: --dry-run reports without PATCHing, the pre-write payloads are
+dumped to output/ first, and a live run asks before the first write.
 """
 from __future__ import annotations
 
@@ -17,7 +21,10 @@ import argparse
 import csv
 import os
 import sys
-from typing import Dict, List, Optional
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence
 
 from rich.console import Console
 from rich.panel import Panel
@@ -40,6 +47,12 @@ from common.iwac_config import (  # noqa: E402
     DCTERMS_SUBJECT_PROPERTY_ID,
 )
 from common.console_utils import standard_progress  # noqa: E402
+from common.omeka_link_updater import (  # noqa: E402
+    ResourceLinkSpec,
+    parse_resource_ids,
+    update_item_resource_links,
+)
+from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -74,25 +87,206 @@ def find_latest_reconciled_csv() -> Optional[str]:
         return None
 
 
-def parse_id_list(ids_str: str) -> List[int]:
-    """Parse a pipe-separated ID column into ints, dropping unparseable entries."""
-    ids: List[int] = []
-    for raw_id in (ids_str or "").split("|"):
-        raw_id = raw_id.strip()
-        if not raw_id:
-            continue
-        try:
-            ids.append(int(raw_id))
-        except ValueError:
-            continue
+parse_id_list = parse_resource_ids
+
+
+def read_reconciled_rows(csv_path: str) -> List[Dict[str, str]]:
+    """Read and validate a reconciled export."""
+    csv.field_size_limit(10 * 1024 * 1024)  # sys.maxsize overflows C long on Windows
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError("CSV is empty")
+        missing = [column for column in ("o:id",) if column not in reader.fieldnames]
+        if missing:
+            raise ValueError(f"Missing columns: {', '.join(missing)}")
+        return list(reader)
+
+
+def resolved_ids(
+    row: Mapping[str, str],
+    reconciled_column: str,
+    source_column: str,
+    new_mapping: Mapping[str, str],
+) -> List[int]:
+    """Combine reconciled IDs with IDs for newly created authority terms."""
+    ids = parse_id_list(row.get(reconciled_column, ""))
+    mapped_ids = (
+        new_mapping.get(term.strip().lower(), "")
+        for term in row.get(source_column, "").split("|")
+    )
+    ids.extend(parse_id_list("|".join(mapped_ids)))
     return ids
 
 
-def main():
+@dataclass(frozen=True)
+class ItemUpdateResult:
+    """Outcome of attempting to update one reconciled CSV row."""
+
+    status: str
+    spatial_added: int = 0
+    subject_added: int = 0
+
+
+def update_reconciled_item(
+    client: OmekaClient,
+    row: Mapping[str, str],
+    *,
+    new_spatial_map: Mapping[str, str],
+    new_subject_map: Mapping[str, str],
+    dry_run: bool = False,
+    on_pre_write: Callable[[MutableMapping[str, Any]], None] | None = None,
+) -> ItemUpdateResult:
+    """Apply resource links from one row and return a countable outcome."""
+    raw_item_id = row.get("o:id", "").strip()
+    if not raw_item_id:
+        return ItemUpdateResult("skipped")
+    spatial_ids = resolved_ids(
+        row, "Spatial AI Reconciled ID", "Spatial AI", new_spatial_map,
+    )
+    subject_ids = resolved_ids(
+        row, "Subject AI Reconciled ID", "Subject AI", new_subject_map,
+    )
+    if not spatial_ids and not subject_ids:
+        return ItemUpdateResult("skipped")
+
+    result = update_item_resource_links(client, raw_item_id, [
+        ResourceLinkSpec(
+            "dcterms:spatial",
+            DCTERMS_SPATIAL_PROPERTY_ID,
+            spatial_ids,
+            "Spatial Coverage",
+        ),
+        ResourceLinkSpec(
+            "dcterms:subject",
+            DCTERMS_SUBJECT_PROPERTY_ID,
+            subject_ids,
+            "Subject",
+        ),
+    ], dry_run=dry_run, on_pre_write=on_pre_write)
+    if result.status == "unchanged":
+        return ItemUpdateResult("skipped")
+    if result.status not in {"updated", "would_update"}:
+        return ItemUpdateResult("error")
+    return ItemUpdateResult(
+        "modified",
+        result.added_by_term["dcterms:spatial"],
+        result.added_by_term["dcterms:subject"],
+    )
+
+
+def update_reconciled_items(
+    client: OmekaClient,
+    rows: Sequence[Mapping[str, str]],
+    *,
+    new_spatial_map: Mapping[str, str],
+    new_subject_map: Mapping[str, str],
+    guard: WriteGuard | None = None,
+) -> Counter:
+    """Update all rows with progress reporting and aggregate their outcomes."""
+    guard = guard or WriteGuard()
+    stats = Counter(total=len(rows))
+    pre_write: List[MutableMapping[str, Any]] = []
+    console.rule("[bold cyan]Processing Items")
+    with standard_progress(console) as progress:
+        task = progress.add_task(
+            "[cyan]Checking Omeka items...[/]" if guard.dry_run
+            else "[cyan]Updating Omeka items...[/]",
+            total=len(rows),
+        )
+        for row in rows:
+            result = update_reconciled_item(
+                client,
+                row,
+                new_spatial_map=new_spatial_map,
+                new_subject_map=new_subject_map,
+                dry_run=guard.dry_run,
+                on_pre_write=pre_write.append,
+            )
+            stats[result.status] += 1
+            stats["spatial_added"] += result.spatial_added
+            stats["subject_added"] += result.subject_added
+            progress.update(task, advance=1)
+
+    backup_path = guard.dump_backup(pre_write, label="reference_links")
+    if backup_path is not None:
+        console.print(f"[dim]Pre-write payloads saved to {backup_path}[/]")
+    return stats
+
+
+def show_configuration(
+    input_name: str,
+    client: OmekaClient,
+    new_subject_map: Mapping[str, str],
+    new_spatial_map: Mapping[str, str],
+) -> None:
+    """Display the resolved input and authority-map configuration."""
+    config_table = Table(title="Configuration", box=box.ROUNDED)
+    config_table.add_column("Setting", style="dim")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("Input file", input_name)
+    config_table.add_row("Omeka URL", client.base_url)
+    if new_subject_map:
+        config_table.add_row("New subject terms", str(len(new_subject_map)))
+    if new_spatial_map:
+        config_table.add_row("New spatial terms", str(len(new_spatial_map)))
+    console.print(config_table)
+    console.print()
+
+
+def show_summary(stats: Mapping[str, int], *, dry_run: bool = False) -> None:
+    """Display aggregate update counts."""
+    console.print()
+    summary = Table(
+        title="Dry-run Summary" if dry_run else "Update Summary", box=box.ROUNDED
+    )
+    summary.add_column("Metric", style="dim")
+    summary.add_column("Count", justify="right")
+    summary.add_row("Total items processed", str(stats["total"]))
+    summary.add_row(
+        "Items that would change" if dry_run else "Items modified",
+        f"[green]{stats['modified']}[/]",
+    )
+    summary.add_row("Items skipped (no changes)", f"[dim]{stats['skipped']}[/]")
+    errors = stats["error"]
+    summary.add_row("Errors", f"[red]{errors}[/]" if errors else "[dim]0[/]")
+    summary.add_row("Spatial links added", f"[cyan]{stats['spatial_added']}[/]")
+    summary.add_row("Subject links added", f"[cyan]{stats['subject_added']}[/]")
+    console.print(summary)
+
+    console.print()
+    if dry_run:
+        console.print(Panel(
+            f"[cyan]Dry run — nothing was written.[/]\n\n"
+            f"A live run would modify [cyan]{stats['modified']}[/] items with "
+            f"[cyan]{stats['spatial_added']}[/] spatial and "
+            f"[cyan]{stats['subject_added']}[/] subject links",
+            title="Step 5 Dry Run",
+            border_style="cyan",
+        ))
+        return
+    console.print(Panel(
+        f"[green]✓[/] Update complete!\n\n"
+        f"Modified [cyan]{stats['modified']}[/] items with "
+        f"[cyan]{stats['spatial_added']}[/] spatial and "
+        f"[cyan]{stats['subject_added']}[/] subject links",
+        title="Step 5 Complete",
+        border_style="green",
+    ))
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the command-line interface."""
     parser = argparse.ArgumentParser(description="Update Omeka items with reconciled metadata links")
     parser.add_argument("--new-subject", default=None, help="CSV with newly created subject items (term,o:id)")
     parser.add_argument("--new-spatial", default=None, help="CSV with newly created spatial items (term,o:id)")
-    args = parser.parse_args()
+    add_write_guard_args(parser, default_backup_dir=Path(OUTPUT_DIR))
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_argument_parser().parse_args(argv)
+    guard = WriteGuard.from_args(args, default_backup_dir=Path(OUTPUT_DIR))
 
     console.print(Panel(
         "[bold]Reference Indexing — Step 5[/bold]\n"
@@ -107,145 +301,40 @@ def main():
     latest = find_latest_reconciled_csv()
     if not latest:
         console.print("[red]✗[/] No *_reconciled.csv found in output/")
-        return
+        return 1
 
     input_path = os.path.join(OUTPUT_DIR, latest)
 
     # Load newly created mappings (optional)
     new_subject_map = load_newly_created_mapping(args.new_subject) if args.new_subject else {}
     new_spatial_map = load_newly_created_mapping(args.new_spatial) if args.new_spatial else {}
+    show_configuration(latest, client, new_subject_map, new_spatial_map)
 
-    config_table = Table(title="Configuration", box=box.ROUNDED)
-    config_table.add_column("Setting", style="dim")
-    config_table.add_column("Value", style="green")
-    config_table.add_row("Input file", latest)
-    config_table.add_row("Omeka URL", client.base_url)
-    if new_subject_map:
-        config_table.add_row("New subject terms", str(len(new_subject_map)))
-    if new_spatial_map:
-        config_table.add_row("New spatial terms", str(len(new_spatial_map)))
-    console.print(config_table)
-    console.print()
+    try:
+        rows = read_reconciled_rows(input_path)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]✗[/] {exc}")
+        return 1
 
-    # Read rows — reconciled CSV may contain large bibo:content fields
-    csv.field_size_limit(10 * 1024 * 1024)  # sys.maxsize overflows C long on Windows
-    with open(input_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        if not reader.fieldnames:
-            console.print("[red]✗[/] CSV is empty")
-            return
-        required = ["o:id"]
-        missing = [c for c in required if c not in reader.fieldnames]
-        if missing:
-            console.print(f"[red]✗[/] Missing columns: {', '.join(missing)}")
-            return
-        rows = list(reader)
+    if not guard.confirm(
+        console,
+        action="Append dcterms:spatial and dcterms:subject links to references",
+        base_url=client.base_url,
+        item_count=len(rows),
+        details=[f"Source:        {latest}"],
+    ):
+        return 1
 
-    stats = {
-        "total": len(rows),
-        "modified": 0,
-        "skipped": 0,
-        "errors": 0,
-        "spatial_added": 0,
-        "subject_added": 0,
-    }
-
-    console.rule("[bold cyan]Processing Items")
-
-    with standard_progress(console) as progress:
-        task = progress.add_task("[cyan]Updating Omeka items...", total=len(rows))
-
-        for row in rows:
-            item_id = row.get("o:id", "").strip()
-            if not item_id:
-                stats["skipped"] += 1
-                progress.update(task, advance=1)
-                continue
-
-            spatial_ids = row.get("Spatial AI Reconciled ID", "")
-            subject_ids = row.get("Subject AI Reconciled ID", "")
-
-            # If we have unreconciled terms and newly created mappings, resolve them
-            if new_spatial_map:
-                spatial_raw = row.get("Spatial AI", "")
-                if spatial_raw:
-                    extra = []
-                    for term in spatial_raw.split("|"):
-                        t = term.strip().lower()
-                        if t in new_spatial_map:
-                            extra.append(new_spatial_map[t])
-                    if extra:
-                        existing = spatial_ids.split("|") if spatial_ids else []
-                        spatial_ids = "|".join(existing + extra)
-
-            if new_subject_map:
-                subject_raw = row.get("Subject AI", "")
-                if subject_raw:
-                    extra = []
-                    for term in subject_raw.split("|"):
-                        t = term.strip().lower()
-                        if t in new_subject_map:
-                            extra.append(new_subject_map[t])
-                    if extra:
-                        existing = subject_ids.split("|") if subject_ids else []
-                        subject_ids = "|".join(existing + extra)
-
-            if not spatial_ids and not subject_ids:
-                stats["skipped"] += 1
-                progress.update(task, advance=1)
-                continue
-
-            item_data = client.get_item(int(item_id))
-            if not item_data:
-                stats["errors"] += 1
-                progress.update(task, advance=1)
-                continue
-
-            # append_resource_links already skips IDs the item carries, so the
-            # dedupe pass this script used to do by hand is redundant.
-            s_added = OmekaClient.append_resource_links(
-                item_data, "dcterms:spatial", DCTERMS_SPATIAL_PROPERTY_ID,
-                parse_id_list(spatial_ids), property_label="Spatial Coverage",
-            )
-            subj_added = OmekaClient.append_resource_links(
-                item_data, "dcterms:subject", DCTERMS_SUBJECT_PROPERTY_ID,
-                parse_id_list(subject_ids), property_label="Subject",
-            )
-
-            if s_added or subj_added:
-                if client.update_item(int(item_id), item_data):
-                    stats["modified"] += 1
-                    stats["spatial_added"] += s_added
-                    stats["subject_added"] += subj_added
-                else:
-                    stats["errors"] += 1
-            else:
-                stats["skipped"] += 1
-
-            progress.update(task, advance=1)
-
-    # Summary
-    console.print()
-    summary = Table(title="Update Summary", box=box.ROUNDED)
-    summary.add_column("Metric", style="dim")
-    summary.add_column("Count", justify="right")
-    summary.add_row("Total items processed", str(stats["total"]))
-    summary.add_row("Items modified", f"[green]{stats['modified']}[/]")
-    summary.add_row("Items skipped (no changes)", f"[dim]{stats['skipped']}[/]")
-    summary.add_row("Errors", f"[red]{stats['errors']}[/]" if stats["errors"] else "[dim]0[/]")
-    summary.add_row("Spatial links added", f"[cyan]{stats['spatial_added']}[/]")
-    summary.add_row("Subject links added", f"[cyan]{stats['subject_added']}[/]")
-    console.print(summary)
-
-    console.print()
-    console.print(Panel(
-        f"[green]✓[/] Update complete!\n\n"
-        f"Modified [cyan]{stats['modified']}[/] items with "
-        f"[cyan]{stats['spatial_added']}[/] spatial and [cyan]{stats['subject_added']}[/] subject links",
-        title="Step 5 Complete",
-        border_style="green",
-    ))
+    stats = update_reconciled_items(
+        client,
+        rows,
+        new_spatial_map=new_spatial_map,
+        new_subject_map=new_subject_map,
+        guard=guard,
+    )
+    show_summary(stats, dry_run=guard.dry_run)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

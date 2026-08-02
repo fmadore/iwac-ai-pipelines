@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-for pipeline in ("AI_sentiment_analysis", "AI_summary_issue"):
+for pipeline in ("AI_audio_summary", "AI_sentiment_analysis", "AI_summary_issue"):
     path = str(REPO_ROOT / pipeline)
     if path not in sys.path:
         sys.path.insert(0, path)

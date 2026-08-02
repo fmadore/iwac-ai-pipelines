@@ -26,6 +26,12 @@ from common.iwac_config import AI_MODEL_ITEMS
 from common.llm_provider import BaseLLMClient
 from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
 
+# The production runner owns this retry budget. Provider SDK retries are
+# disabled there so the item-level timeout is not multiplied invisibly by a
+# second retry loop inside the SDK.
+MODEL_MAX_ATTEMPTS = 3
+MODEL_RETRY_DELAYS = (1, 2)
+
 # ---------------------------------------------------------------------------
 # Controlled vocabulary
 # ---------------------------------------------------------------------------
@@ -416,7 +422,7 @@ def analyze_with_model(
     system_prompt: str,
     model_label: str,
     logger: logging.Logger,
-    max_retries: int = 3
+    max_retries: int = MODEL_MAX_ATTEMPTS
 ) -> Dict[str, Any]:
     """Analyze text using any LLM provider via the shared provider."""
     default_error = {
@@ -462,7 +468,12 @@ def analyze_with_model(
             last_error = f"{type(e).__name__}: {e}"
             logger.debug(f"{model_label} attempt {attempt + 1} failed: {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
+                delay = (
+                    MODEL_RETRY_DELAYS[attempt]
+                    if attempt < len(MODEL_RETRY_DELAYS)
+                    else 2 ** attempt
+                )
+                time.sleep(delay)
 
     # Keep the real error: "Max retries exceeded" alone makes a bad API key and
     # a malformed response look identical when triaging a failed run.
@@ -481,13 +492,34 @@ def _timeout_result(reason: str) -> Dict[str, Any]:
     }
 
 
+def request_timeout_for_budget(
+    total_seconds: float,
+    *,
+    attempts: int = MODEL_MAX_ATTEMPTS,
+    safety_seconds: float = 5.0,
+) -> float:
+    """Return the per-attempt HTTP timeout inside one model's total budget.
+
+    Retry sleeps and a small scheduling margin are reserved first. This makes
+    the outer future timeout enforceable: even the final SDK call must return
+    before the future reaches its deadline.
+    """
+    if total_seconds <= 0:
+        raise ValueError("total_seconds must be positive")
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
+    retry_sleep = sum(MODEL_RETRY_DELAYS[: max(0, attempts - 1)])
+    available = total_seconds - retry_sleep - safety_seconds
+    return max(1.0, available / attempts)
+
+
 def analyze_with_all_models(
     text: str,
     llm_clients: Dict[str, BaseLLMClient],
     system_prompt: str,
     logger: logging.Logger,
     labels: Optional[Dict[str, str]] = None,
-    timeout: int = 120,
+    timeout: float = 120.0,
 ) -> Dict[str, Dict[str, Any]]:
     """Run sentiment analysis with all supplied models concurrently.
 

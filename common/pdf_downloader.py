@@ -96,59 +96,55 @@ class PDFDownloader:
         """
         item_id = item.get('o:id')
         try:
-            # Get detailed item data including media attachments
             item_data = self.client.get_item(item_id)
             if not item_data:
                 LOGGER.error("Could not fetch item %s from Omeka", item_id)
                 return None
-
-            pdf_urls = []
-
-            # Search through media attachments for PDF files
-            for media in item_data.get('o:media', []):
-                # Get detailed media data
-                media_data = self.client.get_resource(media['@id'])
-
-                if media_data and 'o:source' in media_data:
-                    source = media_data['o:source']
-
-                    # Check if this media is a PDF file
-                    if source.lower().endswith('.pdf'):
-                        # Prefer original URL if available, fallback to source
-                        pdf_urls.append(media_data.get('o:original_url', source))
-
+            pdf_urls = self._find_pdf_urls(item_data)
             if not pdf_urls:
                 LOGGER.warning("No PDF URLs found for item %s", item_id)
                 return None
-
-            # Download all PDF files associated with this item
-            downloaded_files = []
-            for index, pdf_url in enumerate(pdf_urls):
-                pdf_filename = self.create_valid_filename(item_data)
-
-                # Handle multiple PDFs per item by adding index suffix
-                if len(pdf_urls) > 1:
-                    pdf_filename = pdf_filename.replace('.pdf', f'_{index + 1}.pdf')
-
-                pdf_path = self.pdf_folder / pdf_filename
-
-                # Attempt to download the PDF
-                downloaded_pdf_path = self.download_pdf(pdf_url, pdf_path)
-                if downloaded_pdf_path:
-                    downloaded_files.append(str(downloaded_pdf_path))
-                    LOGGER.info("Downloaded PDF: %s", downloaded_pdf_path)
-                else:
-                    LOGGER.error("Failed to download %s for item %s", pdf_url, item_id)
-
+            downloaded_files = self._download_pdfs(item_data, pdf_urls)
             if not downloaded_files:
-                # Every download for this item failed — report it as a failure.
                 return None
-
             return item_data['o:id'], '|'.join(downloaded_files)
-
         except Exception as e:
             LOGGER.error("Error processing item %s: %s", item_id, e)
             return None
+
+    def _find_pdf_urls(self, item_data: Dict[str, Any]) -> list[str]:
+        """Resolve original URLs for PDF media attached to an item."""
+        pdf_urls = []
+        for media in item_data.get("o:media", []):
+            media_data = self.client.get_resource(media["@id"])
+            if not media_data or "o:source" not in media_data:
+                continue
+            source = media_data["o:source"]
+            if source.lower().endswith(".pdf"):
+                pdf_urls.append(media_data.get("o:original_url", source))
+        return pdf_urls
+
+    def _download_pdfs(
+        self,
+        item_data: Dict[str, Any],
+        pdf_urls: list[str],
+    ) -> list[str]:
+        """Download all discovered PDFs using deterministic item-based names."""
+        downloaded_files = []
+        for index, pdf_url in enumerate(pdf_urls, start=1):
+            pdf_filename = self.create_valid_filename(item_data)
+            if len(pdf_urls) > 1:
+                pdf_filename = pdf_filename.replace(".pdf", f"_{index}.pdf")
+            pdf_path = self.pdf_folder / pdf_filename
+            downloaded = self.download_pdf(pdf_url, pdf_path)
+            if downloaded:
+                downloaded_files.append(str(downloaded))
+                LOGGER.info("Downloaded PDF: %s", downloaded)
+            else:
+                LOGGER.error(
+                    "Failed to download %s for item %s", pdf_url, item_data["o:id"],
+                )
+        return downloaded_files
 
 
 def download_pdfs_from_item_set(

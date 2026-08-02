@@ -16,6 +16,7 @@ from common.gemini_page_processor import (
     PagePolicy,
     _join_pages,
 )
+from common import gemini_utils
 from common.gemini_utils import INLINE_REQUEST_LIMIT_BYTES
 from common.rate_limiter import QuotaExhaustedError
 
@@ -201,3 +202,69 @@ def test_quota_exhaustion_saves_partial_then_raises(tmp_path):
 
     # Partial results must survive the abort.
     assert output.read_text(encoding="utf-8") == "first page"
+
+
+def test_direct_multimodal_client_has_finite_timeout(monkeypatch):
+    constructor = MagicMock()
+    monkeypatch.setattr(gemini_utils.genai, "Client", constructor)
+
+    gemini_utils.build_gemini_client("test-key", timeout_seconds=45)
+
+    kwargs = constructor.call_args.kwargs
+    assert kwargs["api_key"] == "test-key"
+    assert kwargs["http_options"].timeout == 45_000
+
+
+def test_direct_multimodal_client_rejects_nonpositive_timeout():
+    with pytest.raises(ValueError, match="positive"):
+        gemini_utils.build_gemini_client("test-key", timeout_seconds=0)
+
+
+def uploaded_file(state="ACTIVE", name="files/123"):
+    uploaded = MagicMock()
+    uploaded.name = name
+    uploaded.state.name = state
+    return uploaded
+
+
+def test_upload_bytes_requires_mime_type():
+    with pytest.raises(ValueError, match="mime_type"):
+        gemini_utils.upload_and_wait_active(MagicMock(), b"data")
+
+
+def test_active_upload_returns_without_polling():
+    client = MagicMock()
+    uploaded = uploaded_file()
+    client.files.upload.return_value = uploaded
+
+    assert gemini_utils.upload_and_wait_active(
+        client, b"data", mime_type="audio/mpeg",
+    ) is uploaded
+    client.files.get.assert_not_called()
+
+
+def test_failed_upload_is_deleted_before_error():
+    client = MagicMock()
+    uploaded = uploaded_file("FAILED")
+    client.files.upload.return_value = uploaded
+
+    with pytest.raises(RuntimeError, match="FAILED"):
+        gemini_utils.upload_and_wait_active(
+            client, b"data", mime_type="audio/mpeg",
+        )
+
+    client.files.delete.assert_called_once_with(name="files/123")
+
+
+def test_processing_upload_honors_zero_wait_budget():
+    client = MagicMock()
+    uploaded = uploaded_file("PROCESSING")
+    client.files.upload.return_value = uploaded
+
+    with pytest.raises(TimeoutError, match="not ACTIVE"):
+        gemini_utils.upload_and_wait_active(
+            client, "recording.mp3", max_wait=0,
+        )
+
+    client.files.get.assert_not_called()
+    client.files.delete.assert_called_once_with(name="files/123")

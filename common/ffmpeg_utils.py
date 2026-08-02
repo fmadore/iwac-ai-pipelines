@@ -385,31 +385,36 @@ def cleanup_files(file_paths: List[Path], remove_parents: bool = False) -> None:
         remove_parents: If ``True``, attempt to remove each file's parent
             directory (and *its* parent) when empty.
     """
-    parents_to_check: List[Path] = []
-
-    for fp in file_paths:
-        try:
-            if fp.exists():
-                fp.unlink()
-                LOGGER.debug("Removed %s", fp)
-                if remove_parents:
-                    parents_to_check.append(fp.parent)
-        except Exception as exc:
-            LOGGER.warning("Could not remove %s: %s", fp, exc)
+    parents_to_check = [
+        parent for fp in file_paths
+        if (parent := _remove_file(fp, track_parent=remove_parents)) is not None
+    ]
 
     if not remove_parents:
         return
 
-    # Deduplicate, then try to remove empty dirs (child first, then parent)
-    seen: set = set()
-    for d in parents_to_check:
-        if d in seen:
-            continue
-        seen.add(d)
-        for target in (d, d.parent):
+    _remove_empty_parents(parents_to_check)
+
+
+def _remove_file(file_path: Path, *, track_parent: bool) -> Optional[Path]:
+    """Remove one file and optionally return its parent for empty-dir cleanup."""
+    try:
+        if not file_path.exists():
+            return None
+        file_path.unlink()
+        LOGGER.debug("Removed %s", file_path)
+        return file_path.parent if track_parent else None
+    except Exception as exc:
+        LOGGER.warning("Could not remove %s: %s", file_path, exc)
+        return None
+
+
+def _remove_empty_parents(parents: List[Path]) -> None:
+    """Best-effort removal of unique empty directories and their parents."""
+    for directory in dict.fromkeys(parents):
+        for target in (directory, directory.parent):
             try:
-                if target.exists() and target.is_dir():
-                    target.rmdir()  # only succeeds if empty
-                    LOGGER.debug("Removed empty directory %s", target)
+                target.rmdir()  # only succeeds when target exists and is empty
+                LOGGER.debug("Removed empty directory %s", target)
             except OSError:
                 pass

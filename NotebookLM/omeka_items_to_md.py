@@ -75,6 +75,8 @@ Notes
 import os
 import re
 import sys
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union, Tuple
 
@@ -90,6 +92,7 @@ console = Console()
 # Shared Omeka client
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
+from common.checkpoint import atomic_write_text
 
 # Lightweight aliases to make intent clearer when reading types
 JSONObj = Dict[str, Any]
@@ -121,6 +124,7 @@ COUNTRY_ITEM_SETS: Dict[str, List[str]] = {
         "67437", "25304", "67399", "9458", "67407", "67460", "67480", "67430", "5498", "67436", "67456", "5499"
     ],
 }
+MAX_ITEMS_PER_FILE = 250
 
 # Fail loudly on malformed entries: a non-numeric string would otherwise be
 # silently skipped at export time, dropping whole collections.
@@ -438,6 +442,55 @@ def fetch_item_or_resource(client: OmekaClient, id_str: str) -> Optional[JSONObj
     return fetch_resource(client, id_str)
 
 
+def _reference_item_id(reference: JSONObj) -> Optional[str]:
+    """Extract an Omeka item ID from a reverse-link representation."""
+    item_id = reference.get("o:id")
+    if isinstance(item_id, int):
+        return str(item_id)
+    if isinstance(item_id, str) and item_id.isdigit():
+        return item_id
+    at_id = reference.get("@id")
+    return parse_id_from_at_id(at_id) if isinstance(at_id, str) else None
+
+
+def _fetch_subject_reference(
+    client: OmekaClient,
+    reference: Any,
+    seen_ids: set[str],
+) -> tuple[str, Optional[JSONObj]]:
+    """Resolve one reverse link and classify its article-fetch outcome."""
+    if not isinstance(reference, dict):
+        return "invalid", None
+    ref_types = reference.get("@type")
+    if isinstance(ref_types, list) and "bibo:Article" not in ref_types:
+        return "non_article", None
+    resource_id = _reference_item_id(reference)
+    if not resource_id:
+        return "invalid", None
+    if resource_id in seen_ids:
+        return "duplicate", None
+    seen_ids.add(resource_id)
+
+    item = fetch_item_or_resource(client, resource_id)
+    if not isinstance(item, dict):
+        return "fetch_error", None
+    item_types = item.get("@type", [])
+    if not isinstance(item_types, list) or "bibo:Article" not in item_types:
+        return "non_article", None
+    return "article", item
+
+
+def _show_subject_fetch_stats(stats: Counter) -> None:
+    stats_table = Table(show_header=False, box=box.SIMPLE)
+    stats_table.add_column("Metric", style="dim")
+    stats_table.add_column("Value", style="green")
+    stats_table.add_row("Articles collected", str(stats["article"]))
+    stats_table.add_row("Skipped (non-article)", str(stats["non_article"]))
+    stats_table.add_row("Duplicates", str(stats["duplicate"]))
+    stats_table.add_row("Fetch errors", str(stats["fetch_error"]))
+    console.print(stats_table)
+
+
 def fetch_articles_with_subject(client: OmekaClient, subject_item_id: str) -> Tuple[Optional[JSONObj], List[JSONObj]]:
     """Find all newspaper articles that reference a specific subject/topic item.
 
@@ -457,22 +510,16 @@ def fetch_articles_with_subject(client: OmekaClient, subject_item_id: str) -> Tu
     if not subject_item:
         return None, []
 
-    # Extract reverse subject references - this is where Omeka stores "what items point to this one"
     reverse = subject_item.get("@reverse") or {}
-    refs = []
-    if isinstance(reverse, dict):
-        refs = reverse.get("dcterms:subject") or []
+    refs = reverse.get("dcterms:subject") or [] if isinstance(reverse, dict) else []
     if not isinstance(refs, list):
         refs = []
     total_refs = len(refs)
     console.print(f"[cyan]ℹ[/] Found {total_refs} reverse subject references.")
 
-    # Process each reference to collect actual article items
     article_items: List[JSONObj] = []
-    seen_ids: set[str] = set()  # Avoid duplicate processing
-    skipped_non_article = 0      # Track items that aren't articles
-    fetch_fail = 0               # Track API failures  
-    dupes = 0                    # Track duplicate IDs encountered
+    seen_ids: set[str] = set()
+    stats = Counter()
     
     with Progress(
         SpinnerColumn(),
@@ -485,60 +532,21 @@ def fetch_articles_with_subject(client: OmekaClient, subject_item_id: str) -> Tu
     ) as progress:
         task = progress.add_task("Fetching articles...", total=total_refs)
         
-        for ref in refs:
-            if not isinstance(ref, dict):
-                progress.update(task, advance=1)
-                continue
-            
-            # Optimization: Skip obvious non-articles using embedded type information
-            ref_types = ref.get("@type")
-            if isinstance(ref_types, list) and "bibo:Article" not in ref_types:
-                skipped_non_article += 1
-                progress.update(task, advance=1, description=f"Fetching articles... [dim](added={len(article_items)}, skipped={skipped_non_article})[/]")
-                continue
-                
-            # Extract the numeric ID from various possible locations in the reference
-            rid = None
-            if isinstance(ref.get("o:id"), int):
-                rid = str(ref["o:id"]) 
-            elif isinstance(ref.get("o:id"), str) and ref["o:id"].isdigit():
-                rid = ref["o:id"]
-            elif isinstance(ref.get("@id"), str):
-                rid = parse_id_from_at_id(ref["@id"])
-            if not rid:
-                progress.update(task, advance=1)
-                continue
-                
-            # Skip if we've already processed this ID
-            if rid in seen_ids:
-                dupes += 1
-                progress.update(task, advance=1)
-                continue
-            seen_ids.add(rid)
-            
-            # Fetch the full item record to get complete content and confirm type
-            item = fetch_item_or_resource(client, rid)
-            if not isinstance(item, dict):
-                fetch_fail += 1
-                progress.update(task, advance=1)
-                continue
-                
-            # Final type check: only keep actual articles (exclude bibo:Issue which are full newspaper editions)
-            types = item.get("@type", [])
-            if isinstance(types, list) and "bibo:Article" in types:
+        for reference in refs:
+            status, item = _fetch_subject_reference(client, reference, seen_ids)
+            stats[status] += 1
+            if item is not None:
                 article_items.append(item)
-                
-            progress.update(task, advance=1, description=f"Fetching articles... [dim](added={len(article_items)}, skipped={skipped_non_article})[/]")
+            progress.update(
+                task,
+                advance=1,
+                description=(
+                    "Fetching articles... "
+                    f"[dim](added={len(article_items)}, skipped={stats['non_article']})[/]"
+                ),
+            )
 
-    # Summary stats
-    stats_table = Table(show_header=False, box=box.SIMPLE)
-    stats_table.add_column("Metric", style="dim")
-    stats_table.add_column("Value", style="green")
-    stats_table.add_row("Articles collected", str(len(article_items)))
-    stats_table.add_row("Skipped (non-article)", str(skipped_non_article))
-    stats_table.add_row("Duplicates", str(dupes))
-    stats_table.add_row("Fetch errors", str(fetch_fail))
-    console.print(stats_table)
+    _show_subject_fetch_stats(stats)
 
     return subject_item, article_items
 
@@ -772,12 +780,161 @@ def write_articles_to_file(
         client: OmekaClient instance for fetching publisher country.
         country: Optional country name to include in all articles' metadata.
     """
-    with open(file_path, "w", encoding="utf-8") as f:
-        for art in articles:
-            f.write(format_article(art, client, country))
+    content = "".join(format_article(article, client, country) for article in articles)
+    atomic_write_text(Path(file_path), content)
 
 
-def main():
+@dataclass(frozen=True)
+class ExportRequest:
+    """One validated exporter mode and its optional Omeka identifier."""
+
+    mode: str
+    item_id: Optional[str] = None
+
+
+def parse_cli_request(argv: List[str]) -> Optional[ExportRequest]:
+    """Parse the exporter’s compact backwards-compatible CLI syntax."""
+    if not argv:
+        return None
+    first = argv[0].strip()
+    lowered = first.lower()
+    if lowered in ("all", "--all"):
+        return ExportRequest("all")
+    if lowered.startswith(("subject:", "s:")):
+        item_id = first.split(":", 1)[1]
+        return ExportRequest("subject", item_id) if item_id.isdigit() else None
+    if lowered == "--subject" and len(argv) > 1 and argv[1].strip().isdigit():
+        return ExportRequest("subject", argv[1].strip())
+    if first.isdigit():
+        return ExportRequest("item_set", first)
+    return None
+
+
+def prompt_export_request() -> Optional[ExportRequest]:
+    """Prompt for an export mode when no valid CLI request was supplied."""
+    console.print("[bold]Choose export mode:[/]")
+    console.print("  [cyan]1[/] Whole IWAC collection (all countries)")
+    console.print("  [cyan]2[/] Single Item Set by ID")
+    console.print("  [cyan]3[/] Articles by subject Item ID (reverse lookup)")
+    mode = console.input("\n[bold]Enter choice (1/2/3):[/] ").strip().lower()
+    if mode in ("1", "all", "a"):
+        return ExportRequest("all")
+    if mode in ("3", "subject", "s"):
+        item_id = console.input("[bold]Enter the subject Item ID:[/] ").strip()
+        if item_id.isdigit():
+            return ExportRequest("subject", item_id)
+        console.print("[red]✗[/] Subject Item ID must be a number.")
+        return None
+    item_id = console.input("[bold]Enter the Omeka Item Set ID:[/] ").strip()
+    if item_id.isdigit():
+        return ExportRequest("item_set", item_id)
+    console.print("[red]✗[/] Item Set ID must be a number.")
+    return None
+
+
+def export_file_extension() -> str:
+    """Resolve the supported Markdown/plain-text output extension."""
+    extension = os.getenv("NOTEBOOKLM_EXPORT_EXT", "md").lower().lstrip(".")
+    if extension in ("md", "txt"):
+        return extension
+    console.print(
+        f"[yellow]⚠[/] Unrecognized NOTEBOOKLM_EXPORT_EXT='{extension}', "
+        "defaulting to 'md'."
+    )
+    return "md"
+
+
+def show_export_configuration(out_dir: str, file_ext: str) -> None:
+    config_table = Table(show_header=False, box=box.ROUNDED, title="⚙️ Configuration")
+    config_table.add_column("Setting", style="dim")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("Output directory", out_dir)
+    config_table.add_row("File format", f".{file_ext}")
+    config_table.add_row("Max articles/file", str(MAX_ITEMS_PER_FILE))
+    console.print(config_table)
+    console.print()
+
+
+def show_written_files(files: List[str]) -> None:
+    for path in files:
+        console.print(f"  [dim]{path}[/]")
+
+
+def export_whole_collection(
+    client: OmekaClient,
+    out_dir: str,
+    file_ext: str,
+) -> Tuple[int, List[str]]:
+    """Export every configured country/item-set pair."""
+    console.rule("[bold cyan]Whole IWAC Collection Export[/]")
+    grand_total = 0
+    all_written: List[str] = []
+    for country, set_ids in COUNTRY_ITEM_SETS.items():
+        if not set_ids:
+            console.print(f"[dim]Skip {country}: no Item Set IDs configured.[/]")
+            continue
+        console.rule(f"[bold]{country}[/]", style="dim")
+        for set_id in set_ids:
+            count, files = process_item_set(
+                client,
+                set_id,
+                out_dir,
+                MAX_ITEMS_PER_FILE,
+                country_label=country,
+                file_ext=file_ext,
+            )
+            grand_total += count
+            all_written.extend(files)
+    return grand_total, all_written
+
+
+def show_whole_export_summary(article_count: int, files: List[str]) -> None:
+    console.print()
+    summary_table = Table(title="📊 Export Summary", box=box.ROUNDED)
+    summary_table.add_column("Metric", style="dim")
+    summary_table.add_column("Value", style="green bold")
+    summary_table.add_row("Total articles exported", str(article_count))
+    summary_table.add_row("Files created", str(len(files)))
+    console.print(summary_table)
+    if files:
+        console.print("\n[bold]Files created:[/]")
+        show_written_files(files)
+    else:
+        console.print(
+            "[yellow]⚠[/] No files were created. Ensure COUNTRY_ITEM_SETS is configured."
+        )
+
+
+def export_one_request(
+    client: OmekaClient,
+    request: ExportRequest,
+    out_dir: str,
+    file_ext: str,
+) -> None:
+    """Run a subject or single-item-set request and display its result."""
+    assert request.item_id is not None
+    is_subject = request.mode == "subject"
+    console.rule(
+        "[bold cyan]Subject-based Export[/]"
+        if is_subject else "[bold cyan]Single Item Set Export[/]"
+    )
+    processor = process_subject_items if is_subject else process_item_set
+    count, files = processor(
+        client, request.item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext
+    )
+    if files:
+        console.print(Panel(
+            f"[green]✓[/] Exported [bold]{count}[/] articles to {len(files)} file(s)",
+            title="✅ Export Complete",
+            border_style="green",
+        ))
+        show_written_files(files)
+        return
+    noun = "subject" if is_subject else "Item Set"
+    console.print(f"[yellow]⚠[/] No files were created for the specified {noun}.")
+
+
+def main() -> int:
     """Main entry point for the Omeka to NotebookLM Markdown exporter.
     
     This function handles:
@@ -812,145 +969,32 @@ def main():
         client = OmekaClient.from_env()
     except ValueError as e:
         console.print(f"[red]✗[/] {e}")
-        sys.exit(1)
-
-    # Configuration: Maximum items per file to respect NotebookLM's 500k word limit
-    MAX_ITEMS_PER_FILE = 250
+        return 1
 
     # Set up output directory structure
     script_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(script_dir, "extracted_articles")
     os.makedirs(out_dir, exist_ok=True)
+    file_ext = export_file_extension()
+    show_export_configuration(out_dir, file_ext)
 
-    # Determine output file format
-    file_ext = os.getenv("NOTEBOOKLM_EXPORT_EXT", "md").lower().lstrip(".")
-    if file_ext not in ("md", "txt"):
-        console.print(f"[yellow]⚠[/] Unrecognized NOTEBOOKLM_EXPORT_EXT='{file_ext}', defaulting to 'md'.")
-        file_ext = "md"
-
-    # Show configuration
-    config_table = Table(show_header=False, box=box.ROUNDED, title="⚙️ Configuration")
-    config_table.add_column("Setting", style="dim")
-    config_table.add_column("Value", style="green")
-    config_table.add_row("Output directory", out_dir)
-    config_table.add_row("File format", f".{file_ext}")
-    config_table.add_row("Max articles/file", str(MAX_ITEMS_PER_FILE))
-    console.print(config_table)
-    console.print()
-
-    # Parse command-line arguments for batch processing
-    cli_arg = sys.argv[1].strip() if len(sys.argv) > 1 else None
-    export_whole = False
-    single_set_id: Optional[str] = None
-    subject_item_id: Optional[str] = None
-    
-    if cli_arg:
-        low = cli_arg.lower()
-        if low in ("all", "--all"):
-            export_whole = True
-        elif low.startswith("subject:") or low.startswith("s:"):
-            maybe_id = cli_arg.split(":", 1)[1]
-            if maybe_id.isdigit():
-                subject_item_id = maybe_id
-        elif low == "--subject" and len(sys.argv) > 2 and sys.argv[2].strip().isdigit():
-            subject_item_id = sys.argv[2].strip()
-        elif cli_arg.isdigit():
-            single_set_id = cli_arg
-        else:
-            console.print(f"[yellow]⚠[/] Unrecognized CLI arg '{cli_arg}'. Switching to interactive mode...")
-            cli_arg = None
-
-    # If no valid CLI args, prompt user for interactive mode selection
-    if not cli_arg:
-        console.print("[bold]Choose export mode:[/]")
-        console.print("  [cyan]1[/] Whole IWAC collection (all countries)")
-        console.print("  [cyan]2[/] Single Item Set by ID")
-        console.print("  [cyan]3[/] Articles by subject Item ID (reverse lookup)")
-        mode = console.input("\n[bold]Enter choice (1/2/3):[/] ").strip().lower()
-        
-        if mode in ("1", "all", "a"):
-            export_whole = True
-        elif mode in ("3", "subject", "s"):
-            subject_item_id = console.input("[bold]Enter the subject Item ID:[/] ").strip()
-            if not subject_item_id.isdigit():
-                console.print("[red]✗[/] Subject Item ID must be a number.")
-                sys.exit(1)
-        else:
-            single_set_id = console.input("[bold]Enter the Omeka Item Set ID:[/] ").strip()
-            if not single_set_id.isdigit():
-                console.print("[red]✗[/] Item Set ID must be a number.")
-                sys.exit(1)
-
-    # Execute the selected export mode
-    if export_whole:
-        console.rule("[bold cyan]Whole IWAC Collection Export[/]")
-        grand_total = 0
-        all_written: List[str] = []
-        
-        for country in ["Benin", "Burkina Faso", "Côte d'Ivoire", "Niger", "Togo"]:
-            set_ids = COUNTRY_ITEM_SETS.get(country, [])
-            if not set_ids:
-                console.print(f"[dim]Skip {country}: no Item Set IDs configured.[/]")
-                continue
-            
-            console.rule(f"[bold]{country}[/]", style="dim")
-            
-            for sid in set_ids:
-                if not isinstance(sid, str) or not sid.isdigit():
-                    console.print(f"[yellow]⚠[/] Skipping invalid Item Set ID '{sid}' for {country}.")
-                    continue
-                count, files = process_item_set(client, sid, out_dir, MAX_ITEMS_PER_FILE, country_label=country, file_ext=file_ext)
-                grand_total += count
-                all_written.extend(files)
-
-        # Summary
-        console.print()
-        summary_table = Table(title="📊 Export Summary", box=box.ROUNDED)
-        summary_table.add_column("Metric", style="dim")
-        summary_table.add_column("Value", style="green bold")
-        summary_table.add_row("Total articles exported", str(grand_total))
-        summary_table.add_row("Files created", str(len(all_written)))
-        console.print(summary_table)
-        
-        if all_written:
-            console.print("\n[bold]Files created:[/]")
-            for p in all_written:
-                console.print(f"  [dim]{p}[/]")
-        else:
-            console.print("[yellow]⚠[/] No files were created. Ensure COUNTRY_ITEM_SETS is configured.")
-        return
-
-    # Mode 3: Export articles that reference a specific subject authority
-    if subject_item_id:
-        console.rule("[bold cyan]Subject-based Export[/]")
-        count, files = process_subject_items(client, subject_item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
-        if files:
-            console.print(Panel(
-                f"[green]✓[/] Exported [bold]{count}[/] articles to {len(files)} file(s)",
-                title="✅ Export Complete",
-                border_style="green"
-            ))
-            for p in files:
-                console.print(f"  [dim]{p}[/]")
-        else:
-            console.print("[yellow]⚠[/] No files were created for the specified subject.")
-        return
-
-    # Mode 2: Export a single Item Set by its ID
-    assert single_set_id is not None
-    console.rule("[bold cyan]Single Item Set Export[/]")
-    count, files = process_item_set(client, single_set_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext)
-    if files:
-        console.print(Panel(
-            f"[green]✓[/] Exported [bold]{count}[/] articles to {len(files)} file(s)",
-            title="✅ Export Complete",
-            border_style="green"
-        ))
-        for p in files:
-            console.print(f"  [dim]{p}[/]")
+    argv = sys.argv[1:]
+    request = parse_cli_request(argv)
+    if request is None and argv:
+        console.print(
+            f"[yellow]⚠[/] Unrecognized CLI arguments '{' '.join(argv)}'. "
+            "Switching to interactive mode..."
+        )
+    request = request or prompt_export_request()
+    if request is None:
+        return 1
+    if request.mode == "all":
+        article_count, files = export_whole_collection(client, out_dir, file_ext)
+        show_whole_export_summary(article_count, files)
     else:
-        console.print("[yellow]⚠[/] No files were created for the specified Item Set.")
+        export_one_request(client, request, out_dir, file_ext)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

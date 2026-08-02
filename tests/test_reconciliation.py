@@ -1,9 +1,13 @@
 """Tests for common.reconciliation normalization and matching."""
 
+import csv
+
 from common.reconciliation import (
     build_authority_dict,
     calculate_similarity,
+    find_potential_matches,
     normalize_location_name,
+    reconcile_column_values,
 )
 
 
@@ -79,3 +83,42 @@ def test_build_authority_dict_skips_linked_resource_titles():
     authority, _, metadata = build_authority_dict(client, ["1"])
     assert authority["niamey"] == "30"
     assert metadata["30"]["primary_title"] == "Niamey"
+
+
+def test_potential_matches_keep_best_title_per_authority_item():
+    metadata = {
+        "10": {"primary_title": "Bamako", "alternatives": ["Ville de Bamako"]},
+        "20": {"primary_title": "Cotonou", "alternatives": []},
+    }
+    matches = find_potential_matches("Bamako", metadata, max_candidates=5)
+    assert matches == [("10", "Bamako", 1.0, "primary_title")]
+
+
+def test_reconcile_column_preserves_ambiguity_and_counts(tmp_path):
+    source = tmp_path / "input.csv"
+    output = tmp_path / "output.csv"
+    with source.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["o:id", "Subject AI"])
+        writer.writeheader()
+        writer.writerow({"o:id": "1", "Subject AI": "Bamako|Union|Unknown"})
+
+    result = reconcile_column_values(
+        str(source),
+        str(output),
+        {"bamako": "10"},
+        "Subject AI",
+        "Subject IDs",
+        str(tmp_path / "input"),
+        "subject",
+        {"union": ["20", "30"]},
+    )
+
+    assert result == (str(output), 1, 3, 2)
+    with output.open("r", encoding="utf-8", newline="") as handle:
+        row = next(csv.DictReader(handle))
+    assert row["Subject IDs"] == "10"
+    unreconciled = (tmp_path / "input_unreconciled_subject.csv").read_text(
+        encoding="utf-8"
+    )
+    assert "Union (Ambiguous)" in unreconciled
+    assert "Unknown" in unreconciled

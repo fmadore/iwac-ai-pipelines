@@ -7,6 +7,7 @@ import argparse
 import os
 import sys
 import logging
+from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -29,6 +30,12 @@ from common.llm_provider import (  # noqa: E402
     build_llm_client,
     get_model_option,
     summary_from_option,
+)
+from common.checkpoint import (  # noqa: E402
+    CheckpointMismatch,
+    JsonCheckpoint,
+    atomic_write_text,
+    sha256_text,
 )
 
 # ------------------------------------------------------------------
@@ -95,21 +102,28 @@ def generate_summary(llm_client: BaseLLMClient, text: str, system_prompt: str) -
 # ------------------------------------------------------------------
 # File Processing
 # ------------------------------------------------------------------
-def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str, system_prompt: str) -> tuple[int, int]:
-    """Process all text files in input directory. Returns (success_count, error_count)."""
+def process_txt_files(
+    llm_client: BaseLLMClient,
+    input_dir: str,
+    output_dir: str,
+    system_prompt: str,
+    checkpoint: JsonCheckpoint,
+) -> tuple[int, int, int]:
+    """Process text files, resuming only exact input/provenance matches."""
     if not os.path.exists(input_dir):
         console.print(f"[red]✗[/red] Input directory not found: {input_dir}")
-        return 0, 0
+        return 0, 0, 0
     os.makedirs(output_dir, exist_ok=True)
-    txt_files = [f for f in os.listdir(input_dir) if f.endswith('.txt')]
+    txt_files = sorted(f for f in os.listdir(input_dir) if f.endswith('.txt'))
     if not txt_files:
         console.print("[yellow]⚠[/yellow] No .txt files to process.")
-        return 0, 0
+        return 0, 0, 0
     
     console.print(f"\n[cyan]📁 Processing {len(txt_files)} files[/cyan]\n")
     
     success_count = 0
     error_count = 0
+    skipped_count = 0
     
     for fname in tqdm(txt_files, desc="Generating Summaries", 
                       bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"):
@@ -121,10 +135,14 @@ def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str
             if not original_text.strip():
                 tqdm.write(f"  [yellow]⚠[/yellow] Skipped (empty): {fname}")
                 continue
+            source_fingerprint = sha256_text(original_text)
+            if checkpoint.matches(fname, source_fingerprint) and os.path.exists(output_path):
+                skipped_count += 1
+                continue
             summary = generate_summary(llm_client, original_text, system_prompt)
             if summary:
-                with open(output_path, 'w', encoding='utf-8') as out:
-                    out.write(summary)
+                atomic_write_text(Path(output_path), summary)
+                checkpoint.mark(fname, source_fingerprint)
                 success_count += 1
             else:
                 tqdm.write(f"  [red]✗[/red] No summary: {fname}")
@@ -133,7 +151,7 @@ def process_txt_files(llm_client: BaseLLMClient, input_dir: str, output_dir: str
             tqdm.write(f"  [red]✗[/red] Error processing {fname}: {e}")
             error_count += 1
     
-    return success_count, error_count
+    return success_count, error_count, skipped_count
 
 def main():
     parser = argparse.ArgumentParser(description="Generate French summaries for extracted texts")
@@ -142,6 +160,10 @@ def main():
         choices=ALLOWED_MODEL_KEYS + LEGACY_MODEL_KEYS,
         default=DEFAULT_TEXT_MODEL_KEY,
         help=f"Model key (default: {DEFAULT_TEXT_MODEL_KEY})",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Replace output/checkpoint even when model or prompt provenance differs",
     )
     args = parser.parse_args()
 
@@ -162,6 +184,25 @@ def main():
         
         # Get model selection (restricted to cost-effective models)
         model_option = get_model_option(args.model, allowed_keys=ALLOWED_MODEL_KEYS)
+
+        os.makedirs(output_dir, exist_ok=True)
+        checkpoint_path = Path(output_dir) / ".summary_checkpoint.json"
+        existing_outputs = list(Path(output_dir).glob("*.txt"))
+        if existing_outputs and not checkpoint_path.exists() and not args.force:
+            raise CheckpointMismatch(
+                f"Existing summaries have no provenance checkpoint: {output_dir}. "
+                "Use --force to replace them."
+            )
+        checkpoint = JsonCheckpoint.open(
+            checkpoint_path,
+            {
+                "pipeline": "french-summary-v2",
+                "model_key": model_option.key,
+                "model_id": model_option.model,
+                "prompt_sha256": sha256_text(system_prompt),
+            },
+            reset=args.force,
+        )
         
         # Configure for cost-effective summarization
         config = LLMConfig(
@@ -184,14 +225,17 @@ def main():
         console.print(config_table)
         
         llm_client = build_llm_client(model_option, config=config)
-        success_count, error_count = process_txt_files(llm_client, input_dir, output_dir, system_prompt)
+        success_count, error_count, skipped_count = process_txt_files(
+            llm_client, input_dir, output_dir, system_prompt, checkpoint
+        )
         
         # Display results
         console.print()
         if error_count == 0 and success_count > 0:
             console.print(Panel.fit(
                 f"[bold green]✓ Completed successfully![/bold green]\n\n"
-                f"[green]📄 {success_count} files summarized[/green]",
+                f"[green]📄 {success_count} files summarized[/green]\n"
+                f"[dim]↷ {skipped_count} resumed from checkpoint[/dim]",
                 border_style="green",
                 box=box.ROUNDED
             ))
@@ -199,9 +243,17 @@ def main():
             console.print(Panel.fit(
                 f"[bold yellow]⚠ Completed with warnings[/bold yellow]\n\n"
                 f"[green]✓ {success_count} files summarized[/green]\n"
+                f"[dim]↷ {skipped_count} resumed from checkpoint[/dim]\n"
                 f"[red]✗ {error_count} files failed[/red]",
                 border_style="yellow",
                 box=box.ROUNDED
+            ))
+        elif skipped_count:
+            console.print(Panel.fit(
+                f"[bold green]✓ Already complete[/bold green]\n\n"
+                f"[dim]↷ {skipped_count} files matched the checkpoint[/dim]",
+                border_style="green",
+                box=box.ROUNDED,
             ))
         else:
             console.print(Panel.fit(

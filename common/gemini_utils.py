@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Optional, Union
 
+from google import genai
 from google.genai import types
 
 LOGGER = logging.getLogger(__name__)
@@ -33,6 +34,21 @@ LOGGER = logging.getLogger(__name__)
 # inline media payloads should stay below this margin before falling back to
 # the Files API.
 INLINE_REQUEST_LIMIT_BYTES = 18 * 1024 * 1024
+DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS = 600.0
+
+
+def build_gemini_client(
+    api_key: str,
+    *,
+    timeout_seconds: float = DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS,
+) -> genai.Client:
+    """Create a direct multimodal client with a finite HTTP deadline."""
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=max(1, int(timeout_seconds * 1000))),
+    )
 
 # ---------------------------------------------------------------------------
 # Reusable safety settings — disable all content filters for document
@@ -156,17 +172,11 @@ def upload_and_wait_active(
         TimeoutError: If the file is not ACTIVE within *max_wait* seconds.
             The upload is deleted first.
     """
-    if isinstance(source, bytes):
-        if not mime_type:
-            raise ValueError("mime_type is required when uploading bytes")
-        uploaded = client.files.upload(file=io.BytesIO(source), config={"mime_type": mime_type})
-    elif isinstance(source, (str, Path)):
-        config = {"mime_type": mime_type} if mime_type else None
-        uploaded = client.files.upload(file=str(source), config=config)
-    else:  # open stream
-        if not mime_type:
-            raise ValueError("mime_type is required when uploading a stream")
-        uploaded = client.files.upload(file=source, config={"mime_type": mime_type})
+    if max_wait < 0:
+        raise ValueError("max_wait must not be negative")
+    if poll_interval <= 0:
+        raise ValueError("poll_interval must be positive")
+    uploaded = _upload_file(client, source, mime_type)
 
     if not uploaded or not uploaded.name:
         raise RuntimeError("Gemini Files API upload returned no file handle")
@@ -189,6 +199,26 @@ def upload_and_wait_active(
         time.sleep(poll_interval)
         waited += poll_interval
         current = client.files.get(name=uploaded.name)
+
+
+def _upload_file(
+    client,
+    source: Union[str, Path, bytes, io.IOBase],
+    mime_type: Optional[str],
+):
+    """Normalize supported sources into one Gemini Files API upload call."""
+    if isinstance(source, bytes):
+        if not mime_type:
+            raise ValueError("mime_type is required when uploading bytes")
+        source = io.BytesIO(source)
+    elif isinstance(source, (str, Path)):
+        return client.files.upload(
+            file=str(source),
+            config={"mime_type": mime_type} if mime_type else None,
+        )
+    elif not mime_type:
+        raise ValueError("mime_type is required when uploading a stream")
+    return client.files.upload(file=source, config={"mime_type": mime_type})
 
 
 def delete_uploaded_file(client, uploaded_file) -> None:

@@ -43,6 +43,67 @@ OMEKA_KEY_CREDENTIAL=your_key_credential
 
 ---
 
+## Omeka Resource-Link Updater (`omeka_link_updater.py`)
+
+Shared idempotent fetch/mutate/PATCH transaction for pipelines that append
+`resource:item` values such as `dcterms:subject` and `dcterms:spatial`. It
+deduplicates existing links and reports `updated`, `would_update`, `unchanged`,
+`not_found`, `failed`, or `invalid_id`, so a failed PATCH never inflates
+persisted-link counts and a dry run reports the totals a live run would produce.
+
+`on_pre_write` fires once per item that is *about to change*, with the item
+exactly as fetched. That snapshot is the only pre-write state that exists.
+
+```python
+from common.omeka_link_updater import ResourceLinkSpec, update_item_resource_links
+
+pre_write = []
+result = update_item_resource_links(client, item_id, [
+    ResourceLinkSpec("dcterms:subject", subject_property_id, subject_ids, "Subject"),
+], dry_run=guard.dry_run, on_pre_write=pre_write.append)
+```
+
+---
+
+## Write Guard (`write_guard.py`)
+
+The gate every Omeka write entry point must pass through: `--dry-run`, `--yes`,
+`--backup-dir`, `--no-backup`, a blast-radius panel, and a pre-write payload dump.
+
+This exists because of a real incident. On 2026-08-02 `AI_NER/03_Omeka_update.py`
+had no argument parser, so a `--help` invocation was not recognised as a request
+for help — it fell straight through to the real update and PATCHed 630 live items
+before it was killed. **Ignoring argv is the dangerous part.** A write script must
+refuse an argument it does not understand rather than treat it as consent.
+
+```python
+parser = argparse.ArgumentParser(description="...")
+add_write_guard_args(parser, default_backup_dir=OUTPUT_DIR)
+args = parser.parse_args()
+guard = WriteGuard.from_args(args, default_backup_dir=OUTPUT_DIR)
+
+if not guard.confirm(console, action="Append subject links",
+                     base_url=client.base_url, item_count=len(rows)):
+    return 1
+...
+guard.dump_backup(pre_write, label="ner_links")
+```
+
+A closed or non-interactive stdin counts as declining: an unattended run has to
+pass `--yes` on purpose rather than inherit consent from an EOF.
+
+---
+
+## Durable Checkpoints (`checkpoint.py`)
+
+`JsonCheckpoint` records both completed entries and an exact provenance context
+(model ID, prompt hash, input scope). A resume refuses incompatible context
+instead of silently mixing two runs. `atomic_write_text()` writes through a
+temporary file and `os.replace`, so interrupted writes do not leave a partial
+artifact at the final path.
+
+---
+
 ## FFmpeg Utilities (`ffmpeg_utils.py`)
 
 Shared FFmpeg discovery, pydub configuration, video/audio format constants, conversion, splitting, and cleanup helpers for multimodal pipelines.
@@ -242,7 +303,9 @@ interrupted halfway must not be mistaken for a finished file next time.
 
 # LLM Provider Configuration Guide
 
-This guide explains how to use `llm_provider.py` to configure AI model behavior for different pipeline use cases.
+This guide explains how to use `llm_registry.py` for model configuration and
+`llm_provider.py` for provider calls. The provider re-exports the registry API,
+so existing imports remain compatible.
 
 ## Overview
 
@@ -303,7 +366,7 @@ The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-5.6-luna`, and
 `gpt-5.1` / `gpt-5` → `gpt-5.6-sol`. Their underlying snapshots shut down on
 2026-10-23, so prefer the new tier keys in new code.
 
-See `MODEL_ALIASES` in `llm_provider.py` for the full list of legacy aliases.
+See `MODEL_ALIASES` in `llm_registry.py` for the full list of legacy aliases.
 
 ## Quick Start
 
@@ -688,7 +751,7 @@ if __name__ == "__main__":
 
 To add a new model to the registry:
 
-1. Update `MODEL_REGISTRY` in `llm_provider.py`
+1. Update `MODEL_REGISTRY` in `llm_registry.py`
 2. Set appropriate defaults (e.g., `default_thinking_level` for Gemini 3 models).
    Look up the vendor's own sampling recommendation and record it as
    `default_temperature`, with a comment citing it — leave it unset to send no

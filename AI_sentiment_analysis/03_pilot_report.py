@@ -172,27 +172,161 @@ def self_consistency(payload: Dict[str, Any], field: str) -> Dict[str, Optional[
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> int:
+def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Report agreement for a sentiment panel pilot. Read-only."
     )
     parser.add_argument("pilot_file", nargs="?", default=None,
                         help="Pilot JSON (default: newest in cache/pilot/)")
-    args = parser.parse_args()
+    return parser
 
-    if args.pilot_file:
-        path = Path(args.pilot_file)
-        if not path.exists() and (PILOT_DIR / args.pilot_file).exists():
-            path = PILOT_DIR / args.pilot_file
-    else:
-        candidates = sorted(PILOT_DIR.glob("pilot_*.json"))
-        if not candidates:
-            console.print(f"[red]✗[/] No pilot files in {PILOT_DIR}")
-            return 2
-        path = candidates[-1]
 
-    if not path.exists():
-        console.print(f"[red]✗[/] Not found: {path}")
+def resolve_pilot_path(pilot_file: Optional[str]) -> Optional[Path]:
+    """Resolve an explicit pilot path or select the newest default output."""
+    if pilot_file:
+        path = Path(pilot_file)
+        if not path.exists() and (PILOT_DIR / pilot_file).exists():
+            return PILOT_DIR / pilot_file
+        return path
+    candidates = sorted(PILOT_DIR.glob("pilot_*.json"))
+    return candidates[-1] if candidates else None
+
+
+def show_models(manifest: Dict[str, Any]) -> None:
+    """Display models that ran and candidates skipped during the pilot."""
+    models_table = Table(title="Models", box=box.ROUNDED)
+    models_table.add_column("Generation", style="dim")
+    models_table.add_column("Prefix")
+    models_table.add_column("Model id", style="green")
+    for prefix, model_id in manifest["v1_models"].items():
+        models_table.add_row("v1 (Jan–Feb 2026)", prefix, model_id)
+    for prefix, info in manifest["v2_models"].items():
+        models_table.add_row("v2 (candidate)", prefix, info["model_id"])
+    for skip in manifest.get("v2_skipped", []):
+        models_table.add_row("v2 (skipped)", skip["prefix"], f"[yellow]{skip['reason']}[/]")
+    console.print(models_table)
+
+
+def _paired_count(values: List[Any], target: List[Any]) -> int:
+    return sum(
+        1 for value, expected in zip(values, target, strict=True)
+        if value is not None and expected is not None
+    )
+
+
+def consensus_table(
+    dim_name: str,
+    v1: Dict[str, List[Any]],
+    v2: Dict[str, List[Any]],
+    v1_consensus: List[Any],
+    v1_loo: Dict[str, List[Any]],
+) -> Table:
+    """Build candidate-vs-consensus metrics with a fair v1 baseline."""
+    table = Table(
+        title=f"{dim_name}: agreement with the generation-1 consensus",
+        box=box.ROUNDED,
+    )
+    table.add_column("Model")
+    table.add_column("Exact", justify="right")
+    table.add_column("Kappa", justify="right")
+    table.add_column("n", justify="right", style="dim")
+    for model, values in v2.items():
+        table.add_row(
+            model,
+            fmt(exact_agreement(values, v1_consensus)),
+            fmt(cohen_kappa(values, v1_consensus)),
+            str(_paired_count(values, v1_consensus)),
+        )
+    for model, values in v1.items():
+        target = v1_loo[model]
+        table.add_row(
+            f"[dim]{model} (v1, leave-one-out)[/]",
+            fmt(exact_agreement(values, target)),
+            fmt(cohen_kappa(values, target)),
+            str(_paired_count(values, target)),
+        )
+    return table
+
+
+def pairwise_table(dim_name: str, values: Dict[str, List[Any]]) -> Optional[Table]:
+    """Build within-panel pairwise agreement metrics when a pair exists."""
+    if len(values) < 2:
+        return None
+    table = Table(title=f"{dim_name}: pairwise within candidate panel", box=box.ROUNDED)
+    table.add_column("Pair")
+    table.add_column("Exact", justify="right")
+    table.add_column("Kappa", justify="right")
+    for first, second in combinations(values, 2):
+        table.add_row(
+            f"{first} ↔ {second}",
+            fmt(exact_agreement(values[first], values[second])),
+            fmt(cohen_kappa(values[first], values[second])),
+        )
+    return table
+
+
+def consistency_table(
+    payload: Dict[str, Any],
+    dim_name: str,
+    field: str,
+    repeats: int,
+) -> Optional[Table]:
+    """Build repeat stability metrics when the pilot contains repeats."""
+    if repeats < 2:
+        return None
+    table = Table(
+        title=f"{dim_name}: self-consistency across {repeats} repeats",
+        box=box.ROUNDED,
+    )
+    table.add_column("Model")
+    table.add_column("Identical every run", justify="right")
+    for model, value in self_consistency(payload, field).items():
+        table.add_row(model, fmt(value))
+    return table
+
+
+def show_dimension(payload: Dict[str, Any], dim_name: str, field: str, repeats: int) -> None:
+    """Render all agreement views for one sentiment dimension."""
+    v1, v2, v1_consensus, v1_loo = collect(payload, field)
+    console.print()
+    console.rule(f"[bold]{dim_name}")
+    console.print(consensus_table(dim_name, v1, v2, v1_consensus, v1_loo))
+    for table in (
+        pairwise_table(dim_name, v2),
+        consistency_table(payload, dim_name, field, repeats),
+    ):
+        if table is not None:
+            console.print(table)
+
+
+def show_caveats(manifest: Dict[str, Any], repeats: int) -> None:
+    """Explain missing repeat or provider evidence after the metrics."""
+    console.print()
+    if repeats < 2:
+        console.print(Panel.fit(
+            "[yellow]Self-consistency not measured.[/] The pilot ran with "
+            "--repeats 1, so a low agreement score cannot be separated from "
+            "sampling noise — which matters most for DeepSeek (temperature 1.0) "
+            "and Qwen (0.7).\n"
+            "[dim]Re-run: 02_pilot_new_panel.py --repeats 3 --sample-size 50[/]",
+            border_style="yellow",
+        ))
+    if manifest.get("v2_skipped"):
+        missing = ", ".join(skip["label"] for skip in manifest["v2_skipped"])
+        console.print(Panel.fit(
+            f"[yellow]Incomplete panel:[/] {missing} did not run.\n"
+            "[dim]Set OPENROUTER_API_KEY in .env and re-run the pilot to include them.[/]",
+            border_style="yellow",
+        ))
+
+
+def main() -> int:
+    args = build_argument_parser().parse_args()
+    path = resolve_pilot_path(args.pilot_file)
+
+    if path is None or not path.exists():
+        location = path if path is not None else PILOT_DIR
+        console.print(f"[red]✗[/] No pilot file found at {location}")
         return 2
 
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -207,80 +341,12 @@ def main() -> int:
         border_style="cyan",
     ))
 
-    models_table = Table(title="Models", box=box.ROUNDED)
-    models_table.add_column("Generation", style="dim")
-    models_table.add_column("Prefix")
-    models_table.add_column("Model id", style="green")
-    for prefix, model_id in manifest["v1_models"].items():
-        models_table.add_row("v1 (Jan–Feb 2026)", prefix, model_id)
-    for prefix, info in manifest["v2_models"].items():
-        models_table.add_row("v2 (candidate)", prefix, info["model_id"])
-    for skip in manifest.get("v2_skipped", []):
-        models_table.add_row("v2 (skipped)", skip["prefix"], f"[yellow]{skip['reason']}[/]")
-    console.print(models_table)
+    show_models(manifest)
 
     for dim_name, field, _order in DIMENSIONS:
-        v1, v2, v1_consensus, v1_loo = collect(payload, field)
-        console.print()
-        console.rule(f"[bold]{dim_name}")
+        show_dimension(payload, dim_name, field, repeats)
 
-        # 1. candidate vs the v1 consensus, with a leave-one-out v1 baseline
-        t1 = Table(title=f"{dim_name}: agreement with the generation-1 consensus", box=box.ROUNDED)
-        t1.add_column("Model")
-        t1.add_column("Exact", justify="right")
-        t1.add_column("Kappa", justify="right")
-        t1.add_column("n", justify="right", style="dim")
-        for m, values in v2.items():
-            n = sum(1 for x, y in zip(values, v1_consensus, strict=True) if x is not None and y is not None)
-            t1.add_row(m, fmt(exact_agreement(values, v1_consensus)),
-                       fmt(cohen_kappa(values, v1_consensus)), str(n))
-        # v1 members scored leave-one-out: against the majority of the OTHER
-        # two, so they face the same outsider's task as a candidate.
-        for m, values in v1.items():
-            target = v1_loo[m]
-            n = sum(1 for x, y in zip(values, target, strict=True) if x is not None and y is not None)
-            t1.add_row(f"[dim]{m} (v1, leave-one-out)[/]", fmt(exact_agreement(values, target)),
-                       fmt(cohen_kappa(values, target)), str(n))
-        console.print(t1)
-
-        # 2. pairwise within the candidate panel
-        if len(v2) > 1:
-            t2 = Table(title=f"{dim_name}: pairwise within candidate panel", box=box.ROUNDED)
-            t2.add_column("Pair")
-            t2.add_column("Exact", justify="right")
-            t2.add_column("Kappa", justify="right")
-            for m1, m2 in combinations(v2, 2):
-                t2.add_row(f"{m1} ↔ {m2}", fmt(exact_agreement(v2[m1], v2[m2])),
-                           fmt(cohen_kappa(v2[m1], v2[m2])))
-            console.print(t2)
-
-        # 3. self-consistency
-        if repeats > 1:
-            sc = self_consistency(payload, field)
-            t3 = Table(title=f"{dim_name}: self-consistency across {repeats} repeats", box=box.ROUNDED)
-            t3.add_column("Model")
-            t3.add_column("Identical every run", justify="right")
-            for m, value in sc.items():
-                t3.add_row(m, fmt(value))
-            console.print(t3)
-
-    console.print()
-    if repeats < 2:
-        console.print(Panel.fit(
-            "[yellow]Self-consistency not measured.[/] The pilot ran with "
-            "--repeats 1, so a low agreement score cannot be separated from "
-            "sampling noise — which matters most for DeepSeek (temperature 1.0) "
-            "and Qwen (0.7).\n"
-            "[dim]Re-run: 02_pilot_new_panel.py --repeats 3 --sample-size 50[/]",
-            border_style="yellow",
-        ))
-    if manifest.get("v2_skipped"):
-        missing = ", ".join(s["label"] for s in manifest["v2_skipped"])
-        console.print(Panel.fit(
-            f"[yellow]Incomplete panel:[/] {missing} did not run.\n"
-            "[dim]Set OPENROUTER_API_KEY in .env and re-run the pilot to include them.[/]",
-            border_style="yellow",
-        ))
+    show_caveats(manifest, repeats)
     return 0
 
 

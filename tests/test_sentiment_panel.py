@@ -32,6 +32,7 @@ from sentiment_core import (
     SENTIMENT_MODEL_ANNOTATION_TERM,
     SUBJECTIVITE_ITEM_IDS,
     V1_PANEL,
+    request_timeout_for_budget,
 )
 
 # Imported from the script under its real name; `01_...` is not an identifier.
@@ -50,6 +51,7 @@ def _load(name, path):
 
 sentiment_run = _load("sentiment_run", "01_sentiment_analysis.py")
 pilot = _load("sentiment_pilot", "02_pilot_new_panel.py")
+pilot_report = _load("sentiment_pilot_report", "03_pilot_report.py")
 
 ANNOTATION_PID = 337
 BASE_URL = "https://example.org/api"
@@ -132,6 +134,67 @@ def test_every_member_has_a_declared_effective_reasoning_depth():
     # the run rather than merely simplify it.
     assert PANEL_REASONING_EFFECTIVE["mistral_small_2603"].startswith("high")
     assert PANEL_REASONING_EFFECTIVE["deepseek_v4_flash_0731"].startswith("high")
+
+
+def test_retry_attempts_fit_inside_model_timeout():
+    per_attempt = request_timeout_for_budget(120)
+    assert per_attempt == pytest.approx(112 / 3)
+    assert per_attempt * 3 + 1 + 2 + 5 == pytest.approx(120)
+
+
+def test_pilot_model_subset_validation():
+    assert pilot.selected_models("deepseek_v4_flash_0731, gemini_3_5_flash_lite") == [
+        "deepseek_v4_flash_0731",
+        "gemini_3_5_flash_lite",
+    ]
+    with pytest.raises(ValueError, match="Unknown model"):
+        pilot.selected_models("not_a_model")
+    with pytest.raises(ValueError, match="No models"):
+        pilot.selected_models(",")
+
+
+def test_pilot_payload_records_exact_deepseek_model_and_prompt():
+    models = pilot.PilotModels(
+        clients={"deepseek_v4_flash_0731": object()},
+        labels={"deepseek_v4_flash_0731": "DeepSeek V4 Flash 0731"},
+        model_ids={
+            "deepseek_v4_flash_0731": "deepseek/deepseek-v4-flash-0731",
+        },
+        skipped=[],
+    )
+
+    payload = pilot.build_payload(
+        timestamp="20260801T000000Z",
+        articles=[{"o:id": 1}],
+        results={"1": {"v2_runs": []}},
+        models=models,
+        seed=42,
+        repeats=1,
+        system_prompt="prompt text",
+        prompt_id="abc123",
+        prompt_examples=True,
+    )
+
+    manifest = payload["manifest"]
+    assert manifest["v2_models"]["deepseek_v4_flash_0731"]["model_id"] \
+        == "deepseek/deepseek-v4-flash-0731"
+    assert manifest["prompt_fingerprint"] == "abc123"
+
+
+def test_pilot_report_selects_newest_timestamped_file(tmp_path, monkeypatch):
+    older = tmp_path / "pilot_20260701.json"
+    newer = tmp_path / "pilot_20260801.json"
+    older.write_text("{}", encoding="utf-8")
+    newer.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(pilot_report, "PILOT_DIR", tmp_path)
+
+    assert pilot_report.resolve_pilot_path(None) == newer
+
+
+def test_pilot_report_majority_requires_more_than_half():
+    assert pilot_report.majority(["positive", "positive", "negative"]) == "positive"
+    assert pilot_report.majority(["positive", "negative"]) is None
+    assert pilot_report.majority(["positive", None]) is None
 
 
 # ---------------------------------------------------------------------------

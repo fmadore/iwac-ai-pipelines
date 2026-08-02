@@ -7,11 +7,9 @@ Scans Magazine_Extractions/ for *_final_index.json files produced by
 (`iwac:summaryModel` value annotation).
 
 SAFETY — preserves existing metadata:
-    For each item we GET the full representation, modify ONLY the
-    dcterms:tableOfContents property in place, then PATCH the whole object back.
-    Every other property is therefore sent back unchanged. A defensive guard
-    aborts the write for any item where a top-level property key would disappear.
-    (Same pattern as AI_ocr_extraction/03_omeka_content_updater.py.)
+    Uses the shared Omeka text updater, which GETs the full representation,
+    modifies ONLY dcterms:tableOfContents in place, and skips an unchanged
+    value. Every other property is therefore sent back unchanged.
 
 Usage:
     python 03_update_omeka_toc.py            # prompts, then updates live
@@ -28,9 +26,6 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich import box
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -45,7 +40,11 @@ from common.iwac_config import (  # noqa: E402
     model_annotation_value,
 )
 from common.llm_provider import DEFAULT_TEXT_MODEL_KEY  # noqa: E402
-from common.console_utils import standard_progress  # noqa: E402
+from common.omeka_text_updater import (  # noqa: E402
+    PropertyTarget,
+    TextUpdate,
+    run_text_updates,
+)
 
 console = Console()
 
@@ -87,39 +86,7 @@ def load_from_extractions(extractions_dir: Path) -> list:
     return toc_entries
 
 
-def apply_toc(item_data: dict, toc_text: str, model_value: dict) -> None:
-    """Set dcterms:tableOfContents on a fetched item *in place*.
-
-    Replaces the first existing literal TOC value (so re-runs are idempotent) or
-    appends a new one, and attaches the model as an iwac:summaryModel value
-    annotation. No other property of `item_data` is touched.
-    """
-    key = "dcterms:tableOfContents"
-    new_value = {
-        "type": "literal",
-        "property_id": DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID,
-        "property_label": "Table Of Contents",
-        "is_public": True,
-        "@value": toc_text,
-        "@annotation": {"iwac:summaryModel": [dict(model_value)]},
-    }
-    values = item_data.get(key)
-    if isinstance(values, list) and values:
-        for i, v in enumerate(values):
-            if isinstance(v, dict) and v.get("type") == "literal":
-                values[i] = new_value
-                return
-        values.append(new_value)
-    else:
-        item_data[key] = [new_value]
-
-
-def count_properties(keys) -> int:
-    """Number of vocabulary-property keys (e.g. dcterms:*, bibo:*) on an item."""
-    return sum(1 for k in keys if ":" in k and not k.startswith(("o:", "@")))
-
-
-def main():
+def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Update Omeka S items with the AI table of contents (preserves existing metadata)."
     )
@@ -131,98 +98,53 @@ def main():
         "--dry-run", action="store_true",
         help="Fetch each item and report what would change, but write nothing.",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_argument_parser().parse_args()
 
     extractions_dir = Path(SCRIPT_DIR) / "Magazine_Extractions"
     toc_entries = load_from_extractions(extractions_dir)
     if not toc_entries:
         console.print("[yellow]No entries found in Magazine_Extractions/.[/]")
-        sys.exit(0)
+        return 0
 
     try:
         client = OmekaClient.from_env()
     except ValueError as e:
         console.print(f"[red]✗[/] {e}")
-        return
+        return 1
 
     selected_key = args.model
-    selected_model = AI_MODEL_ITEMS[selected_key]
     model_value = model_annotation_value(
         client.base_url, selected_key, IWAC_SUMMARY_MODEL_PROPERTY_ID, "AI Model - Summary"
     )
-
-    # Confirm before touching live data
-    console.print(Panel(
-        f"Items to update:  {len(toc_entries)}\n"
-        f"Omeka:            {client.base_url}\n"
-        f"Annotation model: {selected_model['display_title']} (item {selected_model['item_id']})\n"
-        f"Property written: dcterms:tableOfContents (id {DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID})\n"
-        f"Mode:             {'DRY RUN — no writes' if args.dry_run else 'LIVE update'}",
-        title="About to update Omeka",
-        border_style="cyan" if args.dry_run else "yellow",
-    ))
-    if not args.dry_run:
-        confirm = console.input("\n[bold]Proceed with updating these items? [y/N]:[/] ").strip().lower()
-        if confirm not in ("y", "yes"):
-            console.print("[yellow]Aborted — no changes made.[/]")
-            return
-
-    stats = {"updated": 0, "would_update": 0, "not_found": 0, "failed": 0}
-    results = []
-
-    with standard_progress(console) as progress:
-        task = progress.add_task("[cyan]Processing items...", total=len(toc_entries))
-        for entry in toc_entries:
-            item_id = entry["item_id"]
-            item_data = client.get_item(item_id)
-            if item_data is None:
-                stats["not_found"] += 1
-                results.append((item_id, "[yellow]not found / fetch failed[/]"))
-                progress.update(task, advance=1)
-                continue
-
-            before = set(item_data.keys())
-            had_toc = bool(item_data.get("dcterms:tableOfContents"))
-            apply_toc(item_data, entry["table_of_contents"], model_value)
-
-            # Defensive guard: never PATCH if an existing top-level key vanished.
-            lost = before - set(item_data.keys())
-            if lost:
-                stats["failed"] += 1
-                results.append((item_id, f"[red]ABORTED — would drop {sorted(lost)}[/]"))
-                progress.update(task, advance=1)
-                continue
-
-            kept = count_properties(before)
-            verb, verb_past = ("replace", "replaced") if had_toc else ("add", "added")
-            if args.dry_run:
-                stats["would_update"] += 1
-                results.append((item_id, f"would {verb} TOC — {kept} existing properties kept"))
-            elif client.update_item(item_id, item_data):
-                stats["updated"] += 1
-                results.append((item_id, f"[green]{verb_past} TOC[/] — {kept} properties kept"))
-            else:
-                stats["failed"] += 1
-                results.append((item_id, "[red]FAILED (see log)[/]"))
-            progress.update(task, advance=1)
-
-    # Results
-    table = Table(title="Result", box=box.ROUNDED)
-    table.add_column("o:id", style="cyan", justify="right")
-    table.add_column("Status")
-    for item_id, status in results:
-        table.add_row(str(item_id), status)
-    console.print(table)
-
-    headline = (
-        f"Would update: {stats['would_update']}" if args.dry_run else f"Updated: {stats['updated']}"
+    target = PropertyTarget(
+        term="dcterms:tableOfContents",
+        property_id=DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID,
+        property_label="Table Of Contents",
+        annotation_term="iwac:summaryModel",
+        annotation_value=model_value,
     )
-    console.print(Panel(
-        f"{headline}   Not found: {stats['not_found']}   Failed/aborted: {stats['failed']}",
-        title="Dry run complete" if args.dry_run else "Done",
-        border_style="green",
-    ))
+    updates = [
+        TextUpdate(
+            label=f"item {entry['item_id']}",
+            item_id=entry["item_id"],
+            text=entry["table_of_contents"],
+        )
+        for entry in toc_entries
+    ]
+    run_text_updates(
+        client,
+        updates,
+        target,
+        console=console,
+        dry_run=args.dry_run,
+        description="Updating tables of contents...",
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

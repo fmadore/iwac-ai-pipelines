@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from common.llm_provider import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_TEXT_MODEL_KEY,
     GeminiGenerateContentClient,
     LLMConfig,
@@ -93,6 +94,31 @@ def test_merged_over_honors_store_false():
     assert merged.store is False
 
 
+def test_default_transport_timeout_is_finite(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    constructor = MagicMock()
+    monkeypatch.setattr("common.llm_provider.OpenAI", constructor)
+
+    OpenAIResponsesClient(MODEL_REGISTRY["gpt-5.6-luna"])
+
+    assert constructor.call_args.kwargs["timeout"] == DEFAULT_REQUEST_TIMEOUT_SECONDS
+    assert 0 < DEFAULT_REQUEST_TIMEOUT_SECONDS < 600
+
+
+def test_pipeline_can_own_sdk_retry_budget(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    constructor = MagicMock()
+    monkeypatch.setattr("common.llm_provider.OpenAI", constructor)
+
+    OpenRouterClient(
+        MODEL_REGISTRY["deepseek-v4-flash-0731"],
+        LLMConfig(request_timeout_seconds=30.0, sdk_max_retries=0),
+    )
+
+    assert constructor.call_args.kwargs["timeout"] == 30.0
+    assert constructor.call_args.kwargs["max_retries"] == 0
+
+
 def test_registry_and_aliases_are_consistent():
     from common.llm_provider import MODEL_ALIASES
 
@@ -100,6 +126,14 @@ def test_registry_and_aliases_are_consistent():
         assert target in MODEL_REGISTRY, f"alias {alias!r} points to unknown key {target!r}"
     for key, option in MODEL_REGISTRY.items():
         assert option.key == key
+
+
+def test_provider_facade_reexports_the_dependency_free_registry():
+    from common import llm_provider, llm_registry
+
+    assert llm_provider.MODEL_REGISTRY is llm_registry.MODEL_REGISTRY
+    assert llm_provider.LLMConfig is llm_registry.LLMConfig
+    assert llm_provider.get_model_option is llm_registry.get_model_option
 
 
 # ---------------------------------------------------------------------------

@@ -88,6 +88,7 @@ import argparse
 import concurrent.futures as futures
 import logging
 import threading
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
@@ -110,6 +111,8 @@ from common.rate_limiter import QuotaExhaustedError
 from sentiment_core import (  # noqa: E402
     ANALYSABLE_LANGUAGES,
     CENTRALITE_ITEM_IDS,
+    MODEL_MAX_ATTEMPTS,
+    MODEL_RETRY_DELAYS,
     PROMPT_FILENAME,
     PANEL,
     PANEL_REASONING_EFFECTIVE,
@@ -126,6 +129,7 @@ from sentiment_core import (  # noqa: E402
     load_system_prompt,
     prompt_fingerprint,
     panel_reasoning,
+    request_timeout_for_budget,
 )
 from sentiment_cache import SentimentCache  # noqa: E402
 
@@ -168,6 +172,8 @@ SECONDS_PER_ITEM_SERIAL = 6
 #: panel at concurrency 6 puts 30 requests in flight. Running one member at a
 #: time — the normal mode now — makes the two numbers the same.
 DEFAULT_CONCURRENCY = 6
+DEFAULT_MODEL_TIMEOUT_SECONDS = 120.0
+MIN_MODEL_TIMEOUT_SECONDS = MODEL_MAX_ATTEMPTS + sum(MODEL_RETRY_DELAYS) + 5
 
 
 def configure_logging(verbose: bool = False) -> logging.Logger:
@@ -356,7 +362,7 @@ def update_item_sentiment(
 
 def build_clients(
     selected: List[str],
-    logger: logging.Logger,
+    model_timeout: float = DEFAULT_MODEL_TIMEOUT_SECONDS,
 ) -> Tuple[Dict[str, BaseLLMClient], Dict[str, str], Dict[str, str], List[Tuple[str, str]]]:
     """One client per selected panel member; report the ones we cannot reach.
 
@@ -369,13 +375,20 @@ def build_clients(
     labels: Dict[str, str] = {}
     model_ids: Dict[str, str] = {}
     skipped: List[Tuple[str, str]] = []
+    request_timeout = request_timeout_for_budget(model_timeout)
 
     for key in selected:
         member = PANEL[key]
         try:
             option = get_model_option(member.registry_key)
             clients[key] = build_llm_client(
-                option, config=LLMConfig(**panel_reasoning(key))
+                option,
+                config=LLMConfig(
+                    **panel_reasoning(key),
+                    request_timeout_seconds=request_timeout,
+                    # ``analyze_with_model`` owns the three-attempt budget.
+                    sdk_max_retries=0,
+                ),
             )
             labels[key] = member.label
             model_ids[key] = option.model
@@ -421,417 +434,238 @@ def format_duration(seconds: float) -> str:
     return f"~{hours}h {minutes}m" if hours else f"~{minutes}m"
 
 
-# ============================================================================
-# MAIN
-# ============================================================================
-
-def main() -> int:
-    console.print(Panel.fit(
-        "[bold cyan]AI Sentiment Analysis Pipeline[/bold cyan]\n"
-        f"[dim]{len(PANEL)}-model panel with model-keyed properties[/dim]",
-        border_style="cyan",
-    ))
-
-    parser = argparse.ArgumentParser(
-        description="Run the generation-2 sentiment panel on Omeka S items."
-    )
-    source = parser.add_argument_group("what to annotate")
-    source.add_argument("--item-set-id", type=str,
-                        help="Item set ID(s), comma-separated")
-    source.add_argument("--resource-class-id", type=int, nargs="?",
-                        const=ARTICLE_CLASS_ID,
-                        help=f"Annotate a whole resource class "
-                             f"(default {ARTICLE_CLASS_ID}, newspaper articles)")
-    source.add_argument("--limit", type=int, default=None,
-                        help="Stop after N items needing work (for a trial run)")
-    source.add_argument("--models", type=str, default=None,
-                        help="Comma-separated subset of the panel to run "
-                             f"(default: all). Choices: {', '.join(PANEL)}")
-
-    behaviour = parser.add_argument_group("behaviour")
-    behaviour.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
-                           help=f"Items annotated in parallel "
-                                f"(default {DEFAULT_CONCURRENCY}; 1 = the old "
-                                f"serial behaviour)")
-    behaviour.add_argument("--dry-run", action="store_true",
-                           help="Analyse and cache, but PATCH nothing")
-    behaviour.add_argument("--skip-update", action="store_true",
-                           help="Analyse and cache only; do not touch Omeka at all")
-    behaviour.add_argument("--force-reanalyze", action="store_true",
-                           help="Ignore the cache AND the already-annotated guard")
-    behaviour.add_argument("--rewrite", action="store_true",
-                           help="Re-PATCH items that already carry values, "
-                                "reusing answers whose cached provenance still matches. "
-                                "For replaying the corpus after the stored "
-                                "value shape changes.")
-    behaviour.add_argument("--yes", action="store_true",
-                           help="Skip the confirmation prompt")
-    behaviour.add_argument("--verbose", action="store_true",
-                           help="Log per-model failures as they happen")
-    args = parser.parse_args()
-
-    logger = configure_logging(args.verbose)
-
-    if args.concurrency < 1:
-        console.print("[red]✗[/] --concurrency must be at least 1")
-        return 2
-
-    if not args.item_set_id and args.resource_class_id is None:
-        console.print("[red]✗[/] Give --item-set-id or --resource-class-id")
-        return 2
-
-    item_set_ids: List[int] = []
-    if args.item_set_id:
-        try:
-            item_set_ids = [int(x.strip()) for x in args.item_set_id.split(",")]
-        except ValueError:
-            console.print("[red]✗[/] Invalid item set ID format")
-            return 2
-
-    try:
-        client = OmekaClient.from_env()
-    except ValueError as exc:
-        console.print(f"[red]✗[/] {exc}")
-        return 2
-
-    # --- models -------------------------------------------------------
-    # Running the panel one model at a time is a first-class mode, not a
-    # degraded one: each member is written to its own six properties, so a
-    # later run adds to an item rather than replacing what is already there.
-    selected = list(PANEL)
-    if args.models:
-        selected = [m.strip() for m in args.models.split(",") if m.strip()]
-        unknown = [m for m in selected if m not in PANEL]
-        if unknown:
-            console.print(f"[red]✗[/] Unknown model(s): {', '.join(unknown)}")
-            console.print(f"[dim]Available: {', '.join(PANEL)}[/]")
-            return 2
-
-    clients, labels, model_ids, skipped = build_clients(selected, logger)
-    if skipped:
-        console.print()
-        for label, reason in skipped:
-            console.print(f"[yellow]![/] Skipping [bold]{label}[/] — {reason}")
-        console.print("[dim]  Qwen and DeepSeek both need OPENROUTER_API_KEY.[/]")
-
-    if not clients:
-        console.print("\n[red]✗[/] No models available — nothing to run.")
-        return 1
-
-    members = [PANEL[key] for key in clients]
-
-    # --- properties ---------------------------------------------------
-    # Resolved, not hardcoded: Omeka assigns these when the vocabulary is
-    # updated, and a stale id would write sentiment into the wrong property.
-    property_ids: Dict[str, int] = {}
-    if not args.skip_update:
-        wanted_terms: List[str] = []
-        for member in members:
-            wanted_terms.extend(member.terms)
-        try:
-            property_ids = resolve_property_ids(client, wanted_terms)
-        except KeyError as exc:
-            console.print(Panel(str(exc.args[0]), title="Vocabulary not ready",
-                                border_style="red"))
-            return 2
-
-    system_prompt = load_system_prompt()
-    prompt_id = prompt_fingerprint(system_prompt)
-    expected_provenance = {
-        key: {
-            "model_id": model_ids[key],
-            "reasoning": PANEL_REASONING_EFFECTIVE[key],
-            "prompt": prompt_id,
-        }
-        for key in clients
+def _initial_stats() -> Dict[str, int]:
+    return {
+        "seen": 0,
+        "no_content": 0,
+        "language_skipped": 0,
+        "language_unknown": 0,
+        "already_done": 0,
+        "analyzed": 0,
+        "from_cache": 0,
+        "model_errors": 0,
+        "updated": 0,
+        "would_update": 0,
+        "unchanged": 0,
+        "not_found": 0,
+        "failed": 0,
     }
 
-    # --- what to annotate ---------------------------------------------
-    sources: List[Dict[str, Any]] = (
-        [_list_params(item_set_id=i) for i in item_set_ids]
-        if item_set_ids else
-        [_list_params(resource_class_id=args.resource_class_id)]
-    )
-    total_items = sum(count_items(client, params) for params in sources)
 
-    # --- report -------------------------------------------------------
-    config_table = Table(title="Configuration", box=box.ROUNDED)
-    config_table.add_column("Setting", style="dim")
-    config_table.add_column("Value", style="green")
-    config_table.add_row("Omeka", client.base_url)
-    config_table.add_row(
-        "Target",
-        f"item sets {', '.join(map(str, item_set_ids))}" if item_set_ids
-        else f"resource class {args.resource_class_id}",
-    )
-    config_table.add_row("Items in scope", f"{total_items:,}")
-    config_table.add_row("Languages", ", ".join(sorted(ANALYSABLE_LANGUAGES))
-                         + " [dim](others skipped)[/]")
-    config_table.add_row(
-        "Panel",
-        "\n".join(f"{labels[k]}  [dim]{model_ids[k]}  →  "
-                  f"iwac:{PANEL[k].property_prefix}*[/]" for k in clients),
-    )
-    config_table.add_row("Reasoning", ", ".join(
-        f"{labels[k]}={PANEL_REASONING_EFFECTIVE[k].split(' ')[0]}" for k in clients))
-    config_table.add_row("Prompt", f"{PROMPT_FILENAME} [dim]#{prompt_id}[/]")
-    config_table.add_row(
-        "Writes to Omeka",
-        "[bold]no — analysis only[/]" if args.skip_update
-        else "[bold]no — dry run[/]" if args.dry_run
-        else "[bold yellow]YES[/]",
-    )
-    config_table.add_row(
-        "Concurrency",
-        f"{args.concurrency} items in parallel"
-        + (f" [dim](x{len(clients)} models = {args.concurrency * len(clients)} "
-           f"requests in flight)[/]" if len(clients) > 1 else ""),
-    )
-    if args.limit:
-        config_table.add_row("Limit", str(args.limit))
-    if args.force_reanalyze:
-        config_table.add_row("Force re-analyze", "[yellow]YES — ignores cache & guard[/]")
-    console.print(config_table)
+@dataclass
+class SentimentRunner:
+    """Stateful, thread-safe execution of one configured sentiment run."""
 
-    # --- cache --------------------------------------------------------
-    cache_path = Path(__file__).resolve().parent / CACHE_DIR_NAME / CACHE_FILE_NAME
-    cache = SentimentCache(path=cache_path, logger=logger)
-    report = cache.load()
-    if report.records:
-        matching = cache.count_matching(expected_provenance)
-        console.print(f"\n[green]✓[/] Cache: [bold]{report.records:,}[/] results "
-                      f"across [bold]{report.items:,}[/] items; "
-                      f"[bold]{matching:,}[/] match this run's model, reasoning, "
-                      f"and prompt and can be reused")
-    if report.skipped_malformed:
-        console.print(f"[yellow]![/] {report.skipped_malformed} unreadable cache "
-                      f"line(s) skipped (expected after an interrupted run)")
+    args: argparse.Namespace
+    listing_client: OmekaClient
+    clients: Dict[str, BaseLLMClient]
+    labels: Dict[str, str]
+    model_ids: Dict[str, str]
+    members: List[PanelMember]
+    property_ids: Dict[str, int]
+    system_prompt: str
+    prompt_id: str
+    expected_provenance: Dict[str, Dict[str, str]]
+    sources: List[Dict[str, Any]]
+    cache: SentimentCache
+    logger: logging.Logger
+    stats: Dict[str, int] = dataclass_field(default_factory=_initial_stats)
+    skipped_languages: Dict[str, int] = dataclass_field(default_factory=dict)
+    halted: Dict[str, str] = dataclass_field(default_factory=dict)
+    stop: threading.Event = dataclass_field(default_factory=threading.Event)
+    _stats_lock: threading.Lock = dataclass_field(default_factory=threading.Lock)
+    _thread_local: threading.local = dataclass_field(default_factory=threading.local)
 
-    # --- confirm ------------------------------------------------------
-    if not (args.skip_update or args.dry_run or args.yes):
-        console.print(Panel(
-            f"About to PATCH up to [bold]{total_items:,}[/] items on "
-            f"[cyan]{client.base_url}[/].\n\n"
-            f"Writes {len(members) * 6} properties per item, all under "
-            f"iwac:<model>* — generation-1 values are not read or modified.\n"
-            f"Estimated runtime: [bold]"
-            f"{format_duration(total_items * SECONDS_PER_ITEM_SERIAL / args.concurrency)}[/] "
-            f"at concurrency {args.concurrency} "
-            f"(interrupt and re-run the same command to resume).",
-            title="Confirm", border_style="yellow",
-        ))
-        if console.input("\n[bold]Proceed? [y/N]:[/] ").strip().lower() not in ("y", "yes"):
-            console.print("[yellow]Aborted — no changes made.[/]")
-            return 1
+    def bump(self, key: str, by: int = 1) -> None:
+        with self._stats_lock:
+            self.stats[key] = self.stats.get(key, 0) + by
 
-    # --- run ----------------------------------------------------------
-    stats = {"seen": 0, "no_content": 0, "language_skipped": 0,
-             "language_unknown": 0, "already_done": 0, "analyzed": 0,
-             "from_cache": 0, "model_errors": 0, "updated": 0, "would_update": 0,
-             "unchanged": 0, "not_found": 0, "failed": 0}
-    skipped_languages: Dict[str, int] = {}
-    stats_lock = threading.Lock()
-
-    def bump(key: str, by: int = 1) -> None:
-        with stats_lock:
-            stats[key] = stats.get(key, 0) + by
-
-    # One OmekaClient per worker thread. ``requests.Session`` is not documented
-    # as thread-safe, and the failure it produces under load is not a clean
-    # exception but a response body read against the wrong connection — which
-    # here would mean PATCHing article A with article B's metadata. A client is
-    # cheap; correctness under concurrency is not negotiable.
-    thread_local = threading.local()
-
-    def worker_client() -> OmekaClient:
-        existing = getattr(thread_local, "omeka", None)
+    def worker_client(self) -> OmekaClient:
+        """Return one Omeka client per worker; requests.Session is not thread-safe."""
+        existing = getattr(self._thread_local, "omeka", None)
         if existing is None:
             existing = OmekaClient.from_env()
-            thread_local.omeka = existing
+            self._thread_local.omeka = existing
         return existing
 
-    #: Set when a provider reports a dead account or exhausted daily quota.
-    #: The producer stops handing out work and in-flight items finish, so the
-    #: run ends in seconds rather than walking the remaining corpus collecting
-    #: identical failures.
-    halted: Dict[str, str] = {}
-    stop = threading.Event()
-
-    def jobs() -> Iterator[Tuple[Dict[str, Any], str, List[str]]]:
-        """Items that need work, with the models each still needs.
-
-        Every filter here is free — it reads the item the listing already
-        returned — so it belongs in front of the pool rather than inside it: an
-        Ewé article should not occupy a worker slot to be discarded.
-        """
+    def jobs(self) -> Iterator[Tuple[Any, str, List[str]]]:
+        """Yield eligible item text and the panel members it still needs."""
         produced = 0
-        for params in sources:
-            for item in iter_items(client, params):
-                if stop.is_set():
-                    return
-                if args.limit and produced >= args.limit:
+        for params in self.sources:
+            for item in iter_items(self.listing_client, params):
+                if self.stop.is_set() or (
+                    self.args.limit and produced >= self.args.limit
+                ):
                     return
 
-                bump("seen")
+                self.bump("seen")
                 item_id = item.get("o:id")
-
-                # Language gate before anything costs an API call. A
-                # French-prompted model returns confident-looking scores for an
-                # Ewé article, and once stored those are indistinguishable from
-                # real annotations.
                 language = get_item_language(item)
                 if language is None:
-                    bump("language_unknown")
+                    self.bump("language_unknown")
                     continue
                 if language not in ANALYSABLE_LANGUAGES:
-                    bump("language_skipped")
-                    with stats_lock:
-                        skipped_languages[language] = skipped_languages.get(language, 0) + 1
+                    self.bump("language_skipped")
+                    with self._stats_lock:
+                        self.skipped_languages[language] = (
+                            self.skipped_languages.get(language, 0) + 1
+                        )
                     continue
 
                 content = get_item_content(item)
                 if not content.strip():
-                    bump("no_content")
+                    self.bump("no_content")
                     continue
 
-                # --rewrite drops the already-annotated guard but NOT the cache,
-                # so a replay re-PATCHes every item using the answers already on
-                # disk and makes no model calls for them. That is the difference
-                # from --force-reanalyze, which re-asks the models and would cost
-                # a second full corpus pass to change nothing but the payload.
                 written = (
-                    [] if (args.force_reanalyze or args.rewrite)
-                    else models_already_written(item, members)
+                    []
+                    if (self.args.force_reanalyze or self.args.rewrite)
+                    else models_already_written(item, self.members)
                 )
-                if len(written) == len(members):
-                    bump("already_done")
+                if len(written) == len(self.members):
+                    self.bump("already_done")
                     continue
 
-                # Ask each model only for what is not already answered, by
-                # either route: already on the item in Omeka, or already in the
-                # cache. Checking Omeka too matters when the panel is run one
-                # model at a time — without it, a machine with a cold cache
-                # would re-request every model already annotated by an earlier
-                # run.
                 pending = (
-                    list(clients) if args.force_reanalyze
-                    else [key for key in clients
-                          if key not in written and not cache.has(
-                              item_id, key, **expected_provenance[key]
-                          )]
+                    list(self.clients)
+                    if self.args.force_reanalyze
+                    else [
+                        key
+                        for key in self.clients
+                        if key not in written
+                        and not self.cache.has(
+                            item_id,
+                            key,
+                            **self.expected_provenance[key],
+                        )
+                    ]
                 )
                 yield item_id, content, pending
                 produced += 1
 
-    def annotate(job: Tuple[Dict[str, Any], str, List[str]]) -> None:
+    def annotate(self, job: Tuple[Any, str, List[str]]) -> None:
+        """Analyze and optionally write one eligible Omeka item."""
         item_id, content, pending = job
-        if stop.is_set():
+        if self.stop.is_set():
             return
 
         if pending:
             try:
                 fresh = analyze_with_all_models(
-                    content, {k: clients[k] for k in pending},
-                    system_prompt, logger, labels,
+                    content,
+                    {key: self.clients[key] for key in pending},
+                    self.system_prompt,
+                    self.logger,
+                    self.labels,
+                    timeout=self.args.model_timeout,
                 )
             except QuotaExhaustedError as exc:
-                # Terminal: out of credits or past a daily cap. Everything
-                # already answered is on disk (the cache flushes per record),
-                # so stopping here loses nothing and re-running resumes.
-                halted.setdefault("reason", str(exc))
-                stop.set()
+                self.halted.setdefault("reason", str(exc))
+                self.stop.set()
                 return
             for key, result in fresh.items():
                 if is_valid_result(result):
-                    # Only successes are cached, so a resume retries the
-                    # failures instead of inheriting them.
-                    cache.put(item_id, key, result,
-                              model_id=model_ids[key],
-                              reasoning=PANEL_REASONING_EFFECTIVE[key],
-                              prompt=prompt_id)
+                    self.cache.put(
+                        item_id,
+                        key,
+                        result,
+                        model_id=self.model_ids[key],
+                        reasoning=PANEL_REASONING_EFFECTIVE[key],
+                        prompt=self.prompt_id,
+                    )
                 else:
-                    bump("model_errors")
-                    if args.verbose:
+                    self.bump("model_errors")
+                    if self.args.verbose:
                         console.print(
-                            f"  [red]✗[/] {labels[key]} on item {item_id}: "
-                            f"{result.get('analysis_error')}")
-            bump("analyzed")
+                            f"  [red]✗[/] {self.labels[key]} on item {item_id}: "
+                            f"{result.get('analysis_error')}"
+                        )
+            self.bump("analyzed")
         else:
-            bump("from_cache")
+            self.bump("from_cache")
 
-        if not args.skip_update:
-            # Scoped to the selected models: `--models qwen…` reads Qwen,
-            # writes Qwen, and leaves every other model's values on the item
-            # exactly as they are — including ones this cache happens to hold
-            # from an earlier run.
-            results = {
-                key: result
-                for key, result in cache.results_for(
-                    item_id, expected=expected_provenance
-                ).items()
-                if key in clients
-            }
-            if results:
-                status = update_item_sentiment(
-                    worker_client(), item_id, results, property_ids,
-                    dry_run=args.dry_run,
-                )
-                bump(status)
-                if status == "failed":
-                    console.print(f"  [red]✗[/] PATCH failed for item "
-                                  f"{item_id} (see log)")
+        if self.args.skip_update:
+            return
 
-    console.rule("[bold cyan]Processing")
-    with cache, standard_progress(console, show_eta=True) as progress:
-        task = progress.add_task("[cyan]Annotating...", total=args.limit or total_items)
-        with futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-            # Twice the worker count: enough queued that no worker ever waits on
-            # the listing request, few enough that the producer stays lazy.
-            for future in bounded_completions(pool, annotate, jobs(),
-                                              args.concurrency * 2):
-                # Re-raise rather than swallow. A worker dying silently would
-                # leave the progress bar advancing over items that were never
-                # annotated, and the run would report success.
-                future.result()
-                progress.update(task, advance=1)
+        results = {
+            key: result
+            for key, result in self.cache.results_for(
+                item_id, expected=self.expected_provenance
+            ).items()
+            if key in self.clients
+        }
+        if not results:
+            return
+        status = update_item_sentiment(
+            self.worker_client(),
+            item_id,
+            results,
+            self.property_ids,
+            dry_run=self.args.dry_run,
+        )
+        self.bump(status)
+        if status == "failed":
+            console.print(f"  [red]✗[/] PATCH failed for item {item_id} (see log)")
 
-    # --- summary ------------------------------------------------------
+    def run(self, progress_total: int) -> None:
+        """Consume the lazy job stream with a bounded worker queue."""
+        console.rule("[bold cyan]Processing")
+        with self.cache, standard_progress(console, show_eta=True) as progress:
+            task = progress.add_task("[cyan]Annotating...", total=progress_total)
+            with futures.ThreadPoolExecutor(max_workers=self.args.concurrency) as pool:
+                for future in bounded_completions(
+                    pool,
+                    self.annotate,
+                    self.jobs(),
+                    self.args.concurrency * 2,
+                ):
+                    future.result()
+                    progress.update(task, advance=1)
+
+
+def report_run(runner: SentimentRunner, cache_path: Path) -> int:
+    """Render the final run summary and return the process exit code."""
+    stats = runner.stats
+    args = runner.args
     summary = Table(title="Summary", box=box.ROUNDED)
     summary.add_column("Metric", style="dim")
     summary.add_column("Count", justify="right")
     summary.add_row("Items listed", f"{stats['seen']:,}")
     summary.add_row("Skipped — already annotated", f"[dim]{stats['already_done']:,}[/]")
     summary.add_row("Skipped — no content", f"[dim]{stats['no_content']:,}[/]")
+    language_detail = (
+        f" ({', '.join(f'{key} {value}' for key, value in sorted(runner.skipped_languages.items()))})"
+        if runner.skipped_languages else ""
+    )
     summary.add_row(
         "Skipped — other language",
-        f"[dim]{stats['language_skipped']:,}"
-        + (f" ({', '.join(f'{k} {v}' for k, v in sorted(skipped_languages.items()))})"
-           if skipped_languages else "")
-        + "[/]",
+        f"[dim]{stats['language_skipped']:,}{language_detail}[/]",
     )
     summary.add_row("Skipped — language untagged", f"[dim]{stats['language_unknown']:,}[/]")
     summary.add_row("Newly analysed", f"[cyan]{stats['analyzed']:,}[/]")
     summary.add_row("Served from cache", f"[dim]{stats['from_cache']:,}[/]")
-    summary.add_row("Model call failures",
-                    f"[red]{stats['model_errors']:,}[/]" if stats["model_errors"]
-                    else "[dim]0[/]")
+    summary.add_row(
+        "Model call failures",
+        f"[red]{stats['model_errors']:,}[/]" if stats["model_errors"] else "[dim]0[/]",
+    )
     if not args.skip_update:
-        if args.dry_run:
-            summary.add_row("Would update", f"[green]{stats['would_update']:,}[/]")
-        else:
-            summary.add_row("Updated in Omeka", f"[green]{stats['updated']:,}[/]")
+        label = "Would update" if args.dry_run else "Updated in Omeka"
+        key = "would_update" if args.dry_run else "updated"
+        summary.add_row(label, f"[green]{stats[key]:,}[/]")
         summary.add_row("Already up to date", f"[dim]{stats['unchanged']:,}[/]")
         summary.add_row("Not found", f"[dim]{stats['not_found']:,}[/]")
-        summary.add_row("PATCH failures",
-                        f"[red]{stats['failed']:,}[/]" if stats["failed"] else "[dim]0[/]")
+        summary.add_row(
+            "PATCH failures",
+            f"[red]{stats['failed']:,}[/]" if stats["failed"] else "[dim]0[/]",
+        )
     console.print()
     console.print(summary)
 
-    if halted:
+    if runner.halted:
         console.print()
         console.print(Panel(
             f"[bold red]Stopped: the provider account is out of quota or "
-            f"credit.[/bold red]\n\n{halted['reason']}\n\n"
+            f"credit.[/bold red]\n\n{runner.halted['reason']}\n\n"
             f"This is not a model failure and retrying will not help — top up "
             f"the account, then re-run the same command. Everything already "
             f"answered is in the cache and will not be requested again:\n"
@@ -840,7 +674,7 @@ def main() -> int:
         ))
         return 2
 
-    incomplete = stats["model_errors"] or stats["failed"]
+    incomplete = stats["model_errors"] + stats["failed"]
     console.print()
     console.print(Panel.fit(
         (f"[bold yellow]Finished with {incomplete:,} failure(s)[/bold yellow]\n\n"
@@ -852,6 +686,309 @@ def main() -> int:
         title="Done", border_style="yellow" if incomplete else "green",
     ))
     return 1 if incomplete else 0
+
+
+@dataclass(frozen=True)
+class PreparedSentimentRun:
+    runner: SentimentRunner
+    cache_path: Path
+    total_items: int
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run the generation-2 sentiment panel on Omeka S items."
+    )
+    source = parser.add_argument_group("what to annotate")
+    source.add_argument("--item-set-id", type=str, help="Item set ID(s), comma-separated")
+    source.add_argument(
+        "--resource-class-id",
+        type=int,
+        nargs="?",
+        const=ARTICLE_CLASS_ID,
+        help=f"Annotate a whole resource class (default {ARTICLE_CLASS_ID}, newspaper articles)",
+    )
+    source.add_argument(
+        "--limit", type=int, default=None,
+        help="Stop after N items needing work (for a trial run)",
+    )
+    source.add_argument(
+        "--models", type=str, default=None,
+        help="Comma-separated subset of the panel to run "
+             f"(default: all). Choices: {', '.join(PANEL)}",
+    )
+
+    behaviour = parser.add_argument_group("behaviour")
+    behaviour.add_argument(
+        "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
+        help=f"Items annotated in parallel (default {DEFAULT_CONCURRENCY}; "
+             "1 = serial behaviour)",
+    )
+    behaviour.add_argument(
+        "--model-timeout", type=float, default=DEFAULT_MODEL_TIMEOUT_SECONDS,
+        help="Maximum seconds for one model across all retry attempts "
+             f"(default {DEFAULT_MODEL_TIMEOUT_SECONDS:g})",
+    )
+    behaviour.add_argument("--dry-run", action="store_true", help="Analyse and cache, but PATCH nothing")
+    behaviour.add_argument(
+        "--skip-update", action="store_true",
+        help="Analyse and cache only; do not touch Omeka at all",
+    )
+    behaviour.add_argument(
+        "--force-reanalyze", action="store_true",
+        help="Ignore the cache AND the already-annotated guard",
+    )
+    behaviour.add_argument(
+        "--rewrite", action="store_true",
+        help="Re-PATCH items that already carry values, reusing answers whose "
+             "cached provenance still matches",
+    )
+    behaviour.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
+    behaviour.add_argument(
+        "--verbose", action="store_true", help="Log per-model failures as they happen"
+    )
+    return parser
+
+
+def validate_arguments(args: argparse.Namespace) -> List[int]:
+    """Validate CLI invariants and return normalized item-set IDs."""
+    if args.concurrency < 1:
+        raise ValueError("--concurrency must be at least 1")
+    if args.model_timeout < MIN_MODEL_TIMEOUT_SECONDS:
+        raise ValueError(
+            f"--model-timeout must be at least {MIN_MODEL_TIMEOUT_SECONDS:g} seconds"
+        )
+    if args.limit is not None and args.limit < 1:
+        raise ValueError("--limit must be at least 1")
+    if not args.item_set_id and args.resource_class_id is None:
+        raise ValueError("Give --item-set-id or --resource-class-id")
+    try:
+        return (
+            [int(value.strip()) for value in args.item_set_id.split(",")]
+            if args.item_set_id else []
+        )
+    except ValueError as exc:
+        raise ValueError("Invalid item set ID format") from exc
+
+
+def selected_model_keys(raw_models: Optional[str]) -> List[str]:
+    selected = (
+        [value.strip() for value in raw_models.split(",") if value.strip()]
+        if raw_models else list(PANEL)
+    )
+    unknown = [key for key in selected if key not in PANEL]
+    if unknown:
+        raise ValueError(
+            f"Unknown model(s): {', '.join(unknown)}. Available: {', '.join(PANEL)}"
+        )
+    return selected
+
+
+def available_clients(
+    selected: List[str], model_timeout: float
+) -> Tuple[Dict[str, BaseLLMClient], Dict[str, str], Dict[str, str]]:
+    clients, labels, model_ids, skipped = build_clients(selected, model_timeout)
+    if skipped:
+        console.print()
+        for label, reason in skipped:
+            console.print(f"[yellow]![/] Skipping [bold]{label}[/] — {reason}")
+        console.print("[dim]  Qwen and DeepSeek both need OPENROUTER_API_KEY.[/]")
+    if not clients:
+        raise RuntimeError("No models available — nothing to run")
+    return clients, labels, model_ids
+
+
+def panel_property_ids(
+    client: OmekaClient,
+    members: List[PanelMember],
+    *,
+    skip_update: bool,
+) -> Dict[str, int]:
+    if skip_update:
+        return {}
+    wanted_terms = [term for member in members for term in member.terms]
+    try:
+        return resolve_property_ids(client, wanted_terms)
+    except KeyError as exc:
+        raise RuntimeError(f"Vocabulary not ready: {exc.args[0]}") from exc
+
+
+def show_configuration(
+    args: argparse.Namespace,
+    client: OmekaClient,
+    item_set_ids: List[int],
+    clients: Dict[str, BaseLLMClient],
+    labels: Dict[str, str],
+    model_ids: Dict[str, str],
+    prompt_id: str,
+    total_items: int,
+) -> None:
+    table = Table(title="Configuration", box=box.ROUNDED)
+    table.add_column("Setting", style="dim")
+    table.add_column("Value", style="green")
+    table.add_row("Omeka", client.base_url)
+    table.add_row(
+        "Target",
+        f"item sets {', '.join(map(str, item_set_ids))}" if item_set_ids
+        else f"resource class {args.resource_class_id}",
+    )
+    table.add_row("Items in scope", f"{total_items:,}")
+    table.add_row(
+        "Languages", ", ".join(sorted(ANALYSABLE_LANGUAGES)) + " [dim](others skipped)[/]"
+    )
+    table.add_row(
+        "Panel",
+        "\n".join(
+            f"{labels[key]}  [dim]{model_ids[key]}  →  "
+            f"iwac:{PANEL[key].property_prefix}*[/]"
+            for key in clients
+        ),
+    )
+    table.add_row(
+        "Reasoning",
+        ", ".join(
+            f"{labels[key]}={PANEL_REASONING_EFFECTIVE[key].split(' ')[0]}"
+            for key in clients
+        ),
+    )
+    table.add_row(
+        "Model timeout",
+        f"{args.model_timeout:g}s total / "
+        f"{request_timeout_for_budget(args.model_timeout):.1f}s per attempt",
+    )
+    table.add_row("Prompt", f"{PROMPT_FILENAME} [dim]#{prompt_id}[/]")
+    table.add_row(
+        "Writes to Omeka",
+        "[bold]no — analysis only[/]" if args.skip_update
+        else "[bold]no — dry run[/]" if args.dry_run
+        else "[bold yellow]YES[/]",
+    )
+    concurrency = f"{args.concurrency} items in parallel"
+    if len(clients) > 1:
+        concurrency += (
+            f" [dim](x{len(clients)} models = "
+            f"{args.concurrency * len(clients)} requests in flight)[/]"
+        )
+    table.add_row("Concurrency", concurrency)
+    if args.limit:
+        table.add_row("Limit", str(args.limit))
+    if args.force_reanalyze:
+        table.add_row("Force re-analyze", "[yellow]YES — ignores cache & guard[/]")
+    console.print(table)
+
+
+def load_run_cache(
+    expected_provenance: Dict[str, Dict[str, str]], logger: logging.Logger
+) -> Tuple[SentimentCache, Path]:
+    cache_path = Path(__file__).resolve().parent / CACHE_DIR_NAME / CACHE_FILE_NAME
+    cache = SentimentCache(path=cache_path, logger=logger)
+    report = cache.load()
+    if report.records:
+        matching = cache.count_matching(expected_provenance)
+        console.print(
+            f"\n[green]✓[/] Cache: [bold]{report.records:,}[/] results across "
+            f"[bold]{report.items:,}[/] items; [bold]{matching:,}[/] match this "
+            "run's model, reasoning, and prompt and can be reused"
+        )
+    if report.skipped_malformed:
+        console.print(
+            f"[yellow]![/] {report.skipped_malformed} unreadable cache line(s) "
+            "skipped (expected after an interrupted run)"
+        )
+    return cache, cache_path
+
+
+def prepare_run(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    item_set_ids: List[int],
+) -> PreparedSentimentRun:
+    client = OmekaClient.from_env()
+    clients, labels, model_ids = available_clients(
+        selected_model_keys(args.models), args.model_timeout
+    )
+    members = [PANEL[key] for key in clients]
+    property_ids = panel_property_ids(client, members, skip_update=args.skip_update)
+    system_prompt = load_system_prompt()
+    prompt_id = prompt_fingerprint(system_prompt)
+    expected_provenance = {
+        key: {
+            "model_id": model_ids[key],
+            "reasoning": PANEL_REASONING_EFFECTIVE[key],
+            "prompt": prompt_id,
+        }
+        for key in clients
+    }
+    sources = (
+        [_list_params(item_set_id=item_set_id) for item_set_id in item_set_ids]
+        if item_set_ids else [_list_params(resource_class_id=args.resource_class_id)]
+    )
+    total_items = sum(count_items(client, params) for params in sources)
+    show_configuration(
+        args, client, item_set_ids, clients, labels, model_ids, prompt_id, total_items
+    )
+    cache, cache_path = load_run_cache(expected_provenance, logger)
+    runner = SentimentRunner(
+        args=args,
+        listing_client=client,
+        clients=clients,
+        labels=labels,
+        model_ids=model_ids,
+        members=members,
+        property_ids=property_ids,
+        system_prompt=system_prompt,
+        prompt_id=prompt_id,
+        expected_provenance=expected_provenance,
+        sources=sources,
+        cache=cache,
+        logger=logger,
+    )
+    return PreparedSentimentRun(runner=runner, cache_path=cache_path, total_items=total_items)
+
+
+def confirm_run(prepared: PreparedSentimentRun) -> bool:
+    args = prepared.runner.args
+    if args.skip_update or args.dry_run or args.yes:
+        return True
+    console.print(Panel(
+        f"About to PATCH up to [bold]{prepared.total_items:,}[/] items on "
+        f"[cyan]{prepared.runner.listing_client.base_url}[/].\n\n"
+        f"Writes {len(prepared.runner.members) * 6} properties per item, all "
+        f"under iwac:<model>* — generation-1 values are not read or modified.\n"
+        f"Estimated runtime: [bold]"
+        f"{format_duration(prepared.total_items * SECONDS_PER_ITEM_SERIAL / args.concurrency)}[/] "
+        f"at concurrency {args.concurrency} (interrupt and re-run to resume).",
+        title="Confirm", border_style="yellow",
+    ))
+    return console.input("\n[bold]Proceed? [y/N]:[/] ").strip().lower() in ("y", "yes")
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main() -> int:
+    console.print(Panel.fit(
+        "[bold cyan]AI Sentiment Analysis Pipeline[/bold cyan]\n"
+        f"[dim]{len(PANEL)}-model panel with model-keyed properties[/dim]",
+        border_style="cyan",
+    ))
+
+    args = build_argument_parser().parse_args()
+    logger = configure_logging(args.verbose)
+    try:
+        item_set_ids = validate_arguments(args)
+        prepared = prepare_run(args, logger, item_set_ids)
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]✗[/] {exc}")
+        return 2
+
+    if not confirm_run(prepared):
+        console.print("[yellow]Aborted — no changes made.[/]")
+        return 1
+
+    prepared.runner.run(args.limit or prepared.total_items)
+    return report_run(prepared.runner, prepared.cache_path)
 
 
 if __name__ == "__main__":

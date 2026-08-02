@@ -24,6 +24,8 @@ import csv
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Mapping, Sequence
 
 from rich.console import Console
 from rich.panel import Panel
@@ -48,6 +50,7 @@ from common.iwac_config import (  # noqa: E402
     item_api_url,
 )
 from common.console_utils import standard_progress  # noqa: E402
+from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -98,6 +101,63 @@ def build_item_payload(term: str, authority_type: str, base_url: str) -> dict:
     }
 
 
+def read_reviewed_rows(input_csv: str) -> list[dict[str, str]]:
+    """Read the reviewed CSV, raising when the reviewer's columns are absent."""
+    with open(input_csv, "r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = reader.fieldnames or []
+        if "Action" not in fieldnames:
+            raise ValueError("CSV missing 'Action' column. Add 'create' or 'skip' per row.")
+        if "Unreconciled Value" not in fieldnames:
+            raise ValueError("CSV missing 'Unreconciled Value' column.")
+        return list(reader)
+
+
+def partition_by_action(rows: Sequence[Mapping[str, str]]) -> tuple[list, list]:
+    """Split reviewed rows into the create and skip buckets."""
+    def action(row: Mapping[str, str]) -> str:
+        return row.get("Action", "").strip().lower()
+
+    return (
+        [row for row in rows if action(row) == "create"],
+        [row for row in rows if action(row) == "skip"],
+    )
+
+
+def create_authority_items(
+    client: OmekaClient,
+    to_create: Sequence[Mapping[str, str]],
+    authority_type: str,
+    *,
+    guard: WriteGuard,
+) -> tuple[list[dict[str, str]], int]:
+    """Create one item per reviewed term; return the mapping and error count."""
+    created: list[dict[str, str]] = []
+    errors = 0
+    with standard_progress(console) as progress:
+        task = progress.add_task(
+            "[cyan]Checking authority items...[/]" if guard.dry_run
+            else "[cyan]Creating authority items...[/]",
+            total=len(to_create),
+        )
+        for row in to_create:
+            term = row["Unreconciled Value"].strip()
+            payload = build_item_payload(term, authority_type, client.base_url)
+            if guard.dry_run:
+                console.print(f"  [cyan]would create:[/] {term}")
+            else:
+                result = client.create_item(payload)
+                if result:
+                    new_id = result.get("o:id", "?")
+                    created.append({"term": term, "o:id": str(new_id)})
+                    console.print(f"  [green]{chr(10003)}[/] Created: {term} → ID {new_id}")
+                else:
+                    errors += 1
+                    console.print(f"  [red]{chr(10007)}[/] Failed: {term}")
+            progress.update(task, advance=1)
+    return created, errors
+
+
 def main():
     parser = argparse.ArgumentParser(description="Create new index items from reviewed unreconciled CSV")
     parser.add_argument("--input-csv", required=True, help="Path to reviewed unreconciled CSV with Action column")
@@ -106,7 +166,9 @@ def main():
         choices=list(AUTHORITY_TYPE_CONFIG.keys()),
         help="Authority type (determines item set, resource template, and class)",
     )
+    add_write_guard_args(parser, default_backup_dir=Path(OUTPUT_DIR))
     args = parser.parse_args()
+    guard = WriteGuard.from_args(args, default_backup_dir=Path(OUTPUT_DIR))
 
     type_config = AUTHORITY_TYPE_CONFIG[args.type]
 
@@ -123,19 +185,13 @@ def main():
         console.print(f"[red]✗[/] File not found: {args.input_csv}")
         return
 
-    # Read and validate CSV
-    with open(args.input_csv, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        if "Action" not in (reader.fieldnames or []):
-            console.print("[red]✗[/] CSV missing 'Action' column. Add 'create' or 'skip' per row.")
-            return
-        if "Unreconciled Value" not in (reader.fieldnames or []):
-            console.print("[red]✗[/] CSV missing 'Unreconciled Value' column.")
-            return
-        rows = list(reader)
+    try:
+        rows = read_reviewed_rows(args.input_csv)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]✗[/] {exc}")
+        return
 
-    to_create = [r for r in rows if r.get("Action", "").strip().lower() == "create"]
-    to_skip = [r for r in rows if r.get("Action", "").strip().lower() == "skip"]
+    to_create, to_skip = partition_by_action(rows)
 
     config_table = Table(title="Configuration", box=box.ROUNDED)
     config_table.add_column("Setting", style="dim")
@@ -155,27 +211,17 @@ def main():
         console.print("[yellow]No terms marked 'create'. Nothing to do.[/]")
         return
 
-    # Create items
-    created = []
-    errors = 0
+    if not guard.confirm(
+        console,
+        action=f"Create {args.type} authority items",
+        base_url=client.base_url,
+        item_count=len(to_create),
+        details=[f"Item set:      {type_config['item_set']}"],
+        title="About to create Omeka items",
+    ):
+        return
 
-    with standard_progress(console) as progress:
-        task = progress.add_task("[cyan]Creating authority items...", total=len(to_create))
-
-        for row in to_create:
-            term = row["Unreconciled Value"].strip()
-            payload = build_item_payload(term, args.type, client.base_url)
-            result = client.create_item(payload)
-
-            if result:
-                new_id = result.get("o:id", "?")
-                created.append({"term": term, "o:id": str(new_id)})
-                console.print(f"  [green]✓[/] Created: {term} → ID {new_id}")
-            else:
-                errors += 1
-                console.print(f"  [red]✗[/] Failed: {term}")
-
-            progress.update(task, advance=1)
+    created, errors = create_authority_items(client, to_create, args.type, guard=guard)
 
     # Write output mapping
     if created:
@@ -201,6 +247,15 @@ def main():
     console.print(summary)
 
     console.print()
+    if guard.dry_run:
+        console.print(Panel(
+            f"[cyan]Dry run — nothing was created.[/]\n\n"
+            f"A live run would create [cyan]{len(to_create)}[/] {args.type} "
+            f"authority items in set {type_config['item_set']}",
+            title="Step 4 Dry Run",
+            border_style="cyan",
+        ))
+        return
     console.print(Panel(
         f"[green]✓[/] Created [cyan]{len(created)}[/] new {args.type} authority items in set {type_config['item_set']}",
         title="Step 4 Complete",

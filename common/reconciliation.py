@@ -21,12 +21,13 @@ import os
 import re
 import sys
 import unicodedata
+from dataclasses import dataclass, field
 
 # Increase CSV field size limit to handle large bibo:content fields
 csv.field_size_limit(10 * 1024 * 1024)
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from rich.console import Console
 from rich.table import Table
@@ -106,6 +107,51 @@ def normalize_location_name(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _authority_titles(item: Dict) -> Tuple[Dict, List[str]]:
+    """Extract literal primary/alternative titles from one authority item."""
+    metadata = {'primary_title': '', 'alternatives': []}
+    titles: List[str] = []
+    for title_obj in item.get('dcterms:title', []):
+        title = str(title_obj.get('@value') or '').strip()
+        if title:
+            titles.append(title)
+            if not metadata['primary_title']:
+                metadata['primary_title'] = title
+    for alternative in item.get('dcterms:alternative', []):
+        value = str(alternative.get('@value') or '').strip()
+        if value:
+            titles.append(value)
+            metadata['alternatives'].append(value)
+    return metadata, titles
+
+
+def _authority_variants(title: str) -> set[str]:
+    lower = title.lower()
+    return {
+        variant for variant in (
+            lower,
+            normalize_location_name(title),
+            _strip_diacritics(lower),
+        ) if variant
+    }
+
+
+def _resolve_authority_lookups(
+    potential_lookups: List[tuple],
+) -> Tuple[Dict[str, str], Dict[str, List[str]]]:
+    name_to_ids: Dict[str, set] = defaultdict(set)
+    for name, item_id in potential_lookups:
+        name_to_ids[name].add(item_id)
+    authority: Dict[str, str] = {}
+    ambiguous: Dict[str, List[str]] = {}
+    for name, item_ids in name_to_ids.items():
+        if len(item_ids) == 1:
+            authority[name] = next(iter(item_ids))
+        else:
+            ambiguous[name] = sorted(item_ids)
+    return authority, ambiguous
+
+
 def build_authority_dict(
     client: OmekaClient,
     item_set_ids: List[str],
@@ -136,50 +182,15 @@ def build_authority_dict(
 
             for item in all_items:
                 item_id = str(item['o:id'])
-                metadata = {'primary_title': '', 'alternatives': []}
-                titles_to_process = []
-
-                if 'dcterms:title' in item:
-                    for title_obj in item['dcterms:title']:
-                        # Linked-resource values carry no '@value'; skip them
-                        title = str(title_obj.get('@value') or '').strip()
-                        if title:
-                            titles_to_process.append(title)
-                            if not metadata['primary_title']:
-                                metadata['primary_title'] = title
-
-                if 'dcterms:alternative' in item:
-                    for alt in item['dcterms:alternative']:
-                        alt_value = str(alt.get('@value') or '').strip()
-                        if alt_value:
-                            titles_to_process.append(alt_value)
-                            metadata['alternatives'].append(alt_value)
-
+                metadata, titles_to_process = _authority_titles(item)
                 authority_metadata[item_id] = metadata
-
                 for title_text in titles_to_process:
-                    lower_variant = title_text.lower()
-                    normalized_title = normalize_location_name(title_text)
-                    diacritic_stripped_spaced = _strip_diacritics(lower_variant)
-                    for variant in {lower_variant, normalized_title, diacritic_stripped_spaced}:
-                        if variant:
-                            potential_lookups.append((variant, item_id))
+                    potential_lookups.extend(
+                        (variant, item_id) for variant in _authority_variants(title_text)
+                    )
 
-    # Resolve ambiguities
-    name_to_ids_map: Dict[str, set] = defaultdict(set)
-    for name, item_id_val in potential_lookups:
-        name_to_ids_map[name].add(item_id_val)
-
-    authority_dict_final: Dict[str, str] = {}
-    ambiguous_terms_dict: Dict[str, List[str]] = {}
-
-    for name, ids_set in name_to_ids_map.items():
-        if len(ids_set) == 1:
-            authority_dict_final[name] = list(ids_set)[0]
-        else:
-            ambiguous_terms_dict[name] = sorted(list(ids_set))
-
-    return authority_dict_final, ambiguous_terms_dict, authority_metadata
+    authority, ambiguous = _resolve_authority_lookups(potential_lookups)
+    return authority, ambiguous, authority_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +241,41 @@ def calculate_similarity(s1: str, s2: str) -> float:
     return (max_char_sim * 0.7) + (token_overlap_ratio * 0.3)
 
 
+def _similarity_threshold(value: str, base: float) -> float:
+    threshold = max(base, 0.97) if value in GENERIC_TERMS else base
+    return max(threshold, MULTI_WORD_MIN_SIMILARITY) if len(value.split()) >= 2 else threshold
+
+
+def _candidate_matches(
+    value: str, authority_metadata: Dict[str, Dict], threshold: float
+) -> List[Tuple[str, str, float, str]]:
+    candidates: List[Tuple[str, str, float, str]] = []
+    for item_id, metadata in authority_metadata.items():
+        variants = [(metadata.get('primary_title'), MATCH_TYPE_PRIMARY)]
+        variants.extend(
+            (alternative, MATCH_TYPE_ALTERNATIVE)
+            for alternative in metadata.get('alternatives', [])[:50]
+        )
+        for name, match_type in variants:
+            if not name:
+                continue
+            score = calculate_similarity(value, name)
+            if score >= threshold:
+                candidates.append((item_id, name, score, match_type))
+    return candidates
+
+
+def _best_candidates_by_item(
+    candidates: List[Tuple[str, str, float, str]],
+) -> List[Tuple[str, str, float, str]]:
+    best: Dict[str, Tuple[str, str, float, str]] = {}
+    for candidate in candidates:
+        item_id = candidate[0]
+        if item_id not in best or candidate[2] > best[item_id][2]:
+            best[item_id] = candidate
+    return sorted(best.values(), key=lambda candidate: candidate[2], reverse=True)
+
+
 def find_potential_matches(
     unreconciled_value: str,
     authority_metadata: Dict[str, Dict],
@@ -240,33 +286,11 @@ def find_potential_matches(
 
     Returns list of (item_id, matched_name, score, match_type).
     """
-    candidates = []
     value_clean = unreconciled_value.lower().strip()
-
-    if value_clean in GENERIC_TERMS:
-        min_similarity = max(min_similarity, 0.97)
-    if len(value_clean.split()) >= 2:
-        min_similarity = max(min_similarity, MULTI_WORD_MIN_SIMILARITY)
-
-    for item_id, metadata in authority_metadata.items():
-        primary = metadata.get('primary_title')
-        if primary:
-            sim = calculate_similarity(unreconciled_value, primary)
-            if sim >= min_similarity:
-                candidates.append((item_id, primary, sim, MATCH_TYPE_PRIMARY))
-        for alt in metadata.get('alternatives', [])[:50]:
-            sim = calculate_similarity(unreconciled_value, alt)
-            if sim >= min_similarity:
-                candidates.append((item_id, alt, sim, MATCH_TYPE_ALTERNATIVE))
-
-    # De-duplicate by item_id keeping best variant
-    best_by_item: Dict[str, tuple] = {}
-    for item_id, name, score, kind in candidates:
-        current = best_by_item.get(item_id)
-        if current is None or score > current[2]:
-            best_by_item[item_id] = (item_id, name, score, kind)
-
-    deduped = sorted(best_by_item.values(), key=lambda x: x[2], reverse=True)
+    threshold = _similarity_threshold(value_clean, min_similarity)
+    deduped = _best_candidates_by_item(
+        _candidate_matches(unreconciled_value, authority_metadata, threshold)
+    )
 
     if value_clean in GENERIC_TERMS and all(c[2] < STRONG_MATCH_THRESHOLD for c in deduped):
         return []
@@ -274,7 +298,7 @@ def find_potential_matches(
     if deduped:
         top_score = deduped[0][2]
         band = 0.02 if top_score >= STRONG_MATCH_THRESHOLD else 0.03
-        deduped = [c for c in deduped if (top_score - c[2]) <= band]
+        deduped = [candidate for candidate in deduped if top_score - candidate[2] <= band]
 
     return deduped[:max_candidates]
 
@@ -353,6 +377,82 @@ def create_potential_reconciliation_csv(
         raise
 
 
+@dataclass
+class ReconciliationState:
+    matched_count: int = 0
+    total_values: int = 0
+    unreconciled_counts: Counter = field(default_factory=Counter)
+    ambiguous_terms: set[str] = field(default_factory=set)
+
+
+def _value_variants(value: str) -> Tuple[str, str, str]:
+    lower = value.lower()
+    return lower, normalize_location_name(value), _strip_diacritics(lower)
+
+
+def _reconcile_value(
+    value: str,
+    authority_dict: Dict[str, str],
+    ambiguous_authority_dict: Dict[str, List[str]],
+    state: ReconciliationState,
+) -> Optional[str]:
+    variants = _value_variants(value)
+    if any(variant in ambiguous_authority_dict for variant in variants):
+        state.ambiguous_terms.add(value)
+        state.unreconciled_counts[f"{value} {AMBIGUOUS_MARKER}"] += 1
+        return None
+    for variant in variants:
+        if variant in authority_dict:
+            state.matched_count += 1
+            return authority_dict[variant]
+    state.unreconciled_counts[value] += 1
+    return None
+
+
+def _reconcile_row(
+    row: Dict[str, str],
+    source_column_name: str,
+    target_column_name: str,
+    authority_dict: Dict[str, str],
+    ambiguous_authority_dict: Dict[str, List[str]],
+    state: ReconciliationState,
+) -> Dict[str, str]:
+    processed = row.copy()
+    source = processed.get(source_column_name)
+    if not source:
+        processed.setdefault(target_column_name, "")
+        return processed
+    values = source.split('|')
+    state.total_values += len(values)
+    reconciled = [
+        item_id
+        for raw_value in values
+        if (value := raw_value.strip())
+        if (item_id := _reconcile_value(
+            value, authority_dict, ambiguous_authority_dict, state
+        )) is not None
+    ]
+    processed[target_column_name] = '|'.join(reconciled)
+    return processed
+
+
+def _read_csv_rows(path: str) -> Tuple[List[str], List[Dict[str, str]]]:
+    with open(path, 'r', encoding='utf-8') as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            raise ValueError(f"CSV file is empty or header is missing: {path}")
+        return list(reader.fieldnames), list(reader)
+
+
+def _write_unreconciled(path: str, counts: Counter) -> None:
+    if not counts:
+        return
+    with open(path, 'w', newline='', encoding='utf-8') as handle:
+        writer = csv.writer(handle)
+        writer.writerow(['Unreconciled Value', 'Count'])
+        writer.writerows(sorted(counts.items(), key=lambda item: item[1], reverse=True))
+
+
 def reconcile_column_values(
     input_csv_path: str,
     output_reconciled_csv_path: str,
@@ -363,115 +463,69 @@ def reconcile_column_values(
     output_file_tag: str,
     ambiguous_authority_dict: Dict[str, List[str]],
 ) -> Tuple[str, int, int, int]:
-    """Reconcile pipe-separated values in *source_column_name* against
-    *authority_dict*, writing reconciled IDs to *target_column_name*.
-
-    Returns (output_path, matched_count, total_values, unreconciled_count).
-    """
-    unreconciled_path = f"{initial_csv_base_for_unreconciled}_unreconciled_{output_file_tag}.csv"
-
-    rows_processed = []
-    unreconciled_counts: Counter = Counter()
-    matched_count = 0
-    total_values = 0
-    ambiguous_warnings = []
-
+    """Reconcile pipe-separated values and write IDs plus an exception report."""
+    unreconciled_path = (
+        f"{initial_csv_base_for_unreconciled}_unreconciled_{output_file_tag}.csv"
+    )
     try:
-        with open(input_csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            if not reader.fieldnames:
-                console.print(f"[red]✗[/] CSV file is empty or header is missing: {input_csv_path}")
-                return output_reconciled_csv_path, 0, 0, 0
-            # Count CSV records, not raw lines: quoted fields may span lines
-            row_count = sum(1 for _ in reader)
-
-        with open(input_csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            original_fieldnames = list(reader.fieldnames)
-            output_fieldnames = list(original_fieldnames)
-            if target_column_name not in output_fieldnames:
-                output_fieldnames.append(target_column_name)
-
-            if source_column_name not in original_fieldnames:
-                console.print(f"[yellow]⚠[/] Source column '{source_column_name}' not found. Skipping reconciliation.")
-                for row in reader:
-                    processed = row.copy()
-                    if target_column_name not in processed:
-                        processed[target_column_name] = ""
-                    rows_processed.append(processed)
-            else:
-                with standard_progress(console) as progress:
-                    task = progress.add_task(f"[cyan]Reconciling {source_column_name}...", total=row_count)
-
-                    for row in reader:
-                        processed = row.copy()
-                        reconciled_str = processed.get(target_column_name, "")
-                        source_value = processed.get(source_column_name)
-
-                        if source_value:
-                            individual = source_value.split('|')
-                            total_values += len(individual)
-                            reconciled_ids = []
-
-                            for value in individual:
-                                v = value.strip()
-                                if not v:
-                                    continue
-                                v_lower = v.lower()
-                                v_norm = normalize_location_name(v)
-                                v_diacfree = _strip_diacritics(v_lower)
-
-                                if (v_lower in ambiguous_authority_dict
-                                        or v_norm in ambiguous_authority_dict
-                                        or v_diacfree in ambiguous_authority_dict):
-                                    ambiguous_warnings.append(v)
-                                    unreconciled_counts[f"{v} {AMBIGUOUS_MARKER}"] += 1
-                                    continue
-
-                                found = False
-                                for variant in (v_lower, v_norm, v_diacfree):
-                                    if variant in authority_dict:
-                                        reconciled_ids.append(authority_dict[variant])
-                                        matched_count += 1
-                                        found = True
-                                        break
-                                if not found:
-                                    unreconciled_counts[v] += 1
-
-                            reconciled_str = '|'.join(reconciled_ids)
-
-                        processed[target_column_name] = reconciled_str
-                        rows_processed.append(processed)
-                        progress.update(task, advance=1)
-
+        original_fieldnames, rows = _read_csv_rows(input_csv_path)
     except FileNotFoundError:
         console.print(f"[red]✗[/] Input CSV file not found: {input_csv_path}")
         return output_reconciled_csv_path, 0, 0, 0
-    except Exception as e:
-        console.print(f"[red]✗[/] Error reading CSV: {e}")
-        raise
+    except ValueError as exc:
+        console.print(f"[red]✗[/] {exc}")
+        return output_reconciled_csv_path, 0, 0, 0
 
-    # Write reconciled CSV
-    with open(output_reconciled_csv_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=output_fieldnames)
+    output_fieldnames = list(original_fieldnames)
+    if target_column_name not in output_fieldnames:
+        output_fieldnames.append(target_column_name)
+
+    state = ReconciliationState()
+    if source_column_name not in original_fieldnames:
+        console.print(
+            f"[yellow]⚠[/] Source column '{source_column_name}' not found. "
+            "Skipping reconciliation."
+        )
+        processed_rows = [
+            {**row, target_column_name: row.get(target_column_name, "")} for row in rows
+        ]
+    else:
+        processed_rows = []
+        with standard_progress(console) as progress:
+            task = progress.add_task(
+                f"[cyan]Reconciling {source_column_name}...", total=len(rows)
+            )
+            for row in rows:
+                processed_rows.append(_reconcile_row(
+                    row,
+                    source_column_name,
+                    target_column_name,
+                    authority_dict,
+                    ambiguous_authority_dict,
+                    state,
+                ))
+                progress.update(task, advance=1)
+
+    with open(output_reconciled_csv_path, 'w', newline='', encoding='utf-8') as handle:
+        writer = csv.DictWriter(handle, fieldnames=output_fieldnames)
         writer.writeheader()
-        writer.writerows(rows_processed)
+        writer.writerows(processed_rows)
+    _write_unreconciled(unreconciled_path, state.unreconciled_counts)
 
-    # Write unreconciled values
-    if unreconciled_counts:
-        with open(unreconciled_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Unreconciled Value', 'Count'])
-            for value, count in sorted(unreconciled_counts.items(), key=lambda x: x[1], reverse=True):
-                writer.writerow([value, count])
-
-    if ambiguous_warnings:
-        unique = set(ambiguous_warnings)
-        console.print(f"[yellow]⚠[/] {len(unique)} ambiguous terms skipped (see unreconciled file)")
-
-    return output_reconciled_csv_path, matched_count, total_values, len(unreconciled_counts)
+    if state.ambiguous_terms:
+        console.print(
+            f"[yellow]⚠[/] {len(state.ambiguous_terms)} ambiguous terms skipped "
+            "(see unreconciled file)"
+        )
+    return (
+        output_reconciled_csv_path,
+        state.matched_count,
+        state.total_values,
+        len(state.unreconciled_counts),
+    )
 
 
+ # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Ambiguous terms output
 # ---------------------------------------------------------------------------

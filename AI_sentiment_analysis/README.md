@@ -152,7 +152,7 @@ Three details that are easy to miss and matter for reproducing a value:
 
 ## Adding a model to the panel
 
-1. Add it to `MODEL_REGISTRY` in `common/llm_provider.py`.
+1. Add it to `MODEL_REGISTRY` in `common/llm_registry.py`.
 2. Create its authority item in Omeka (class 244, template 3, item set 267,
    `dcterms:type` → "Notice d'autorité") and add it to `AI_MODEL_ITEMS` in
    `common/iwac_config.py`.
@@ -245,6 +245,11 @@ the panel's reasoning setting, 5 concurrent requests, zero rejections:
 | Mistral Small 4 | **5.8 s** | 2.1 s at `none` |
 | DeepSeek V4 Flash 0731 | *not benchmarked yet* | New official release; 8 OpenRouter endpoints at adoption |
 | Qwen3.5 122B-A10B | **104 s** | 4 usable endpoints — see below |
+
+Every provider transport now has a finite deadline. `--model-timeout` is the
+total budget across the pipeline's three attempts (120 seconds by default);
+the runner subtracts retry backoff and assigns the remainder to the individual
+SDK calls, so a timed-out future cannot leave an unbounded HTTP thread behind.
 
 **The three first-party models finish the corpus in a couple of hours** at the
 default concurrency. Nothing about the prompt or the reasoning level was ever

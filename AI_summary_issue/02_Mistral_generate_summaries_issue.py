@@ -97,6 +97,7 @@ RETRY_DELAY = 2  # seconds (exponential backoff via common.retry)
 
 # Mistral multimodal extraction model
 MISTRAL_OCR = "mistral-ocr-latest"  # For OCR API endpoint
+MISTRAL_OCR_TIMEOUT_MS = 600_000
 
 # ------------------------------------------------------------------
 # Error Helpers
@@ -243,6 +244,77 @@ def generate_page_extraction_mistral(client: Mistral, signed_url: str, page_num:
 # ------------------------------------------------------------------
 # Main Pipeline
 # ------------------------------------------------------------------
+def _validate_pdf(pdf_path: Path) -> None:
+    """Reject missing or non-PDF inputs before creating provider state."""
+    if not pdf_path.is_file():
+        raise ValueError(f"PDF file not found: {pdf_path}")
+    if pdf_path.suffix.lower() != ".pdf":
+        raise ValueError(f"Input must be a PDF file, got: {pdf_path}")
+
+
+def _mistral_client_from_env() -> Mistral:
+    """Build the OCR client with a finite request deadline."""
+    api_key = os.getenv("MISTRAL_API_KEY")
+    if not api_key:
+        raise RuntimeError("MISTRAL_API_KEY not found in environment variables")
+    return Mistral(api_key=api_key, timeout_ms=MISTRAL_OCR_TIMEOUT_MS)
+
+
+def _delete_mistral_upload(client: Mistral, file_id: Optional[str]) -> None:
+    """Best-effort cleanup of a temporary Mistral cloud upload."""
+    if file_id is None:
+        return
+    try:
+        client.files.delete(file_id=file_id)
+        console.print("[dim]🗑 Uploaded file deleted from Mistral cloud[/]")
+        logging.info(f"Deleted file {file_id} from Mistral cloud")
+    except Exception as exc:
+        logging.warning(f"Failed to delete file {file_id}: {exc}")
+
+
+def _run_uploaded_magazine(
+    client: Mistral,
+    signed_url: str,
+    pdf_path: Path,
+    output_dir: Path,
+    magazine_id: str,
+    extraction_prompt: str,
+    model_step2: ModelOption,
+    rate_limiter: RateLimiter,
+) -> Path:
+    """Run both extraction stages after the PDF upload is ready."""
+    with console.status("[cyan]Reading PDF structure...", spinner="dots"):
+        total_pages = get_pdf_page_count(pdf_path)
+    console.print(f"[green]✓[/] PDF has [bold]{total_pages}[/] pages")
+    console.print("[dim]📄 Will process each page with Mistral Document AI[/]")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def extract_page(page_num: int) -> Optional[PageExtraction]:
+        try:
+            return generate_page_extraction_mistral(
+                client, signed_url, page_num, extraction_prompt, rate_limiter
+            )
+        except QuotaExhaustedError:
+            raise
+        except Exception as exc:
+            _raise_if_persistent_429(exc)
+            raise
+
+    final_file = run_extraction_pipeline(
+        extract_page=extract_page,
+        consolidate=build_text_consolidator(model_step2),
+        total_pages=total_pages,
+        output_dir=output_dir,
+        magazine_id=magazine_id,
+        step1_model_label="Mistral OCR",
+        step2_model_label=model_step2.label,
+        schema_note="Pydantic schema",
+    )
+    logging.info(f"Pipeline complete for magazine {magazine_id}")
+    logging.info(f"Final index: {final_file}")
+    return final_file
+
+
 def process_magazine(model_step2: ModelOption, pdf_path: Path, output_dir: Path, magazine_id: str = None,
                      rate_limiter: Optional[RateLimiter] = None):
     """
@@ -254,95 +326,37 @@ def process_magazine(model_step2: ModelOption, pdf_path: Path, output_dir: Path,
         magazine_id: Magazine identifier (optional)
         rate_limiter: Shared RateLimiter (None = no throttling)
     """
-    # Determine magazine identifier
-    if magazine_id is None:
-        magazine_id = pdf_path.stem
-    if rate_limiter is None:
-        rate_limiter = RateLimiter(requests_per_minute=None)
+    magazine_id = magazine_id or pdf_path.stem
+    rate_limiter = rate_limiter or RateLimiter(requests_per_minute=None)
 
     logging.info(f"Processing magazine: {magazine_id}")
     logging.info(f"Input: {pdf_path}")
     logging.info(f"Output: {output_dir}")
 
-    # Verify PDF exists
-    if not pdf_path.exists() or not pdf_path.is_file():
-        raise ValueError(f"PDF file not found: {pdf_path}")
-
-    if pdf_path.suffix.lower() != '.pdf':
-        raise ValueError(f"Input must be a PDF file, got: {pdf_path}")
-
-    # Get API key
-    api_key = os.getenv("MISTRAL_API_KEY")
-    if not api_key:
-        raise RuntimeError("MISTRAL_API_KEY not found in environment variables")
-
-    # Initialize Mistral client
-    client = Mistral(api_key=api_key)
-
-    # Load the extraction prompt
+    _validate_pdf(pdf_path)
+    client = _mistral_client_from_env()
     extraction_prompt = load_extraction_prompt()
 
     file_id = None
     try:
-        # Upload PDF to Mistral and get signed URL
         file_id, signed_url = upload_pdf_to_mistral(client, pdf_path)
-
-        # Get page count
-        with console.status("[cyan]Reading PDF structure...", spinner="dots"):
-            total_pages = get_pdf_page_count(pdf_path)
-        console.print(f"[green]✓[/] PDF has [bold]{total_pages}[/] pages")
-        console.print("[dim]📄 Will process each page with Mistral Document AI[/]")
-
-        # Create output directory
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        def extract_page(page_num: int) -> Optional[PageExtraction]:
-            """Provider callable for the shared step-1 loop."""
-            try:
-                return generate_page_extraction_mistral(
-                    client, signed_url, page_num, extraction_prompt, rate_limiter
-                )
-            except QuotaExhaustedError:
-                raise
-            except Exception as e:
-                _raise_if_persistent_429(e)
-                raise
-
-        consolidate = build_text_consolidator(model_step2)
-
-        # Step 1 (page loop) + step 2 (consolidation) via the shared skeleton.
-        # The page_*.json cache is deleted only after step 2 succeeds.
-        final_file = run_extraction_pipeline(
-            extract_page=extract_page,
-            consolidate=consolidate,
-            total_pages=total_pages,
-            output_dir=output_dir,
-            magazine_id=magazine_id,
-            step1_model_label="Mistral OCR",
-            step2_model_label=model_step2.label,
-            schema_note="Pydantic schema",
+        return _run_uploaded_magazine(
+            client,
+            signed_url,
+            pdf_path,
+            output_dir,
+            magazine_id,
+            extraction_prompt,
+            model_step2,
+            rate_limiter,
         )
-
-        logging.info(f"Pipeline complete for magazine {magazine_id}")
-        logging.info(f"Final index: {final_file}")
-
-        return final_file
-
     except QuotaExhaustedError:
         raise  # let main() stop the whole batch
     except Exception as e:
         logging.error(f"Error processing PDF {pdf_path}: {e}")
         raise
     finally:
-        # Always delete the uploaded file from the Mistral cloud, even when
-        # extraction or consolidation failed.
-        if file_id is not None:
-            try:
-                client.files.delete(file_id=file_id)
-                console.print("[dim]🗑 Uploaded file deleted from Mistral cloud[/]")
-                logging.info(f"Deleted file {file_id} from Mistral cloud")
-            except Exception as e:
-                logging.warning(f"Failed to delete file {file_id}: {e}")
+        _delete_mistral_upload(client, file_id)
 
 # ------------------------------------------------------------------
 # Main Entry Point

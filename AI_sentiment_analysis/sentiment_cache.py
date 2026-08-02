@@ -167,12 +167,13 @@ class SentimentCache:
         reasoning: Optional[str] = None,
         prompt: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        record = self._entries.get(str(item_id), {}).get(model_key)
-        if not record or not self._matches(
-            record, model_id=model_id, reasoning=reasoning, prompt=prompt
-        ):
-            return None
-        return record["result"]
+        with self._lock:
+            record = self._entries.get(str(item_id), {}).get(model_key)
+            if not record or not self._matches(
+                record, model_id=model_id, reasoning=reasoning, prompt=prompt
+            ):
+                return None
+            return dict(record["result"])
 
     def has(
         self,
@@ -195,22 +196,24 @@ class SentimentCache:
     ) -> Dict[str, Dict[str, Any]]:
         """Cached model results for one item, optionally filtered by provenance."""
         results: Dict[str, Dict[str, Any]] = {}
-        for model_key, record in self._entries.get(str(item_id), {}).items():
-            provenance = (expected or {}).get(model_key, {})
-            if expected is not None and model_key not in expected:
-                continue
-            if self._matches(record, **provenance):
-                results[model_key] = record["result"]
+        with self._lock:
+            for model_key, record in self._entries.get(str(item_id), {}).items():
+                provenance = (expected or {}).get(model_key, {})
+                if expected is not None and model_key not in expected:
+                    continue
+                if self._matches(record, **provenance):
+                    results[model_key] = dict(record["result"])
         return results
 
     def count_matching(self, expected: Dict[str, Dict[str, str]]) -> int:
         """Count loaded records reusable under the current run configuration."""
-        return sum(
-            1
-            for records in self._entries.values()
-            for model_key, record in records.items()
-            if model_key in expected and self._matches(record, **expected[model_key])
-        )
+        with self._lock:
+            return sum(
+                1
+                for records in self._entries.values()
+                for model_key, record in records.items()
+                if model_key in expected and self._matches(record, **expected[model_key])
+            )
 
     def missing_models(
         self,

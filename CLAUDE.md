@@ -43,6 +43,9 @@ Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provide
 | `gemini_utils.py` | Gemini plumbing for multimodal scripts: generation config, Files API upload, text extraction that skips `thought` parts |
 | `gemini_page_processor.py` | The page-by-page Gemini PDF loop shared by OCR and HTR: inline→Files-API fallback, retry policy, `finish_reason` handling, page markers, batch driver |
 | `omeka_text_updater.py` | The `03` write step shared by summary/OCR/correction/transcription: change detection, `@annotation` re-attachment, `--dry-run`, confirmation gate |
+| `omeka_link_updater.py` | The same idempotent write for *resource-link* properties (`dcterms:subject`, `dcterms:spatial`): dedup against existing links, whole-item PATCH, `dry_run`, pre-write snapshot |
+| `write_guard.py` | The gate in front of every bulk write: `--dry-run`, `--yes`, pre-write payload dump, confirmation panel |
+| `checkpoint.py` | Atomic JSON checkpoints for resumable runs: a stored fingerprint of model, prompt and input decides resume vs. regenerate |
 | `console_utils.py` | `standard_progress()`, `key_value_table()`, `count_table()` — one definition of the rich furniture every pipeline prints |
 | `downloader.py` | `stream_download()` — streaming download via a `.part` temp file, used by the PDF and media downloaders |
 | `prompt_loader.py` | Discovery and interactive selection for pipelines holding several `prompts/*.md` |
@@ -58,13 +61,13 @@ Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provide
 
 **Text-only pipelines route every LLM call through `common/llm_provider.py`.**
 Never instantiate `openai.OpenAI()`, `google.genai.Client()`, or
-`mistralai.Mistral()` in a text script. Models and their config defaults live in
-`MODEL_REGISTRY` / `MODEL_ALIASES` — read them there rather than from a table in a
-doc, and add new models there first so every pipeline picks them up.
+`mistralai.Mistral()` in a text script. SDK adapters live in that module; the
+dependency-free model catalog and config defaults live in
+`common/llm_registry.py`. Add models there first so every pipeline picks them up.
 
 **Pipelines pick a model *tier*, not a list of keys.** `TEXT_ECONOMY_MODELS`,
 `TEXT_EXTENDED_MODELS`, `TEXT_FULL_MODELS`, `TEXT_OPEN_MODELS` and
-`GEMINI_DOCUMENT_MODELS` live in `llm_provider`; a pipeline's `ALLOWED_MODELS`
+`GEMINI_DOCUMENT_MODELS` live in `llm_registry`; a pipeline's `ALLOWED_MODELS`
 should be one of them. Retiring a model is then a one-line change instead of a
 grep across five pipelines.
 
@@ -86,12 +89,13 @@ system-prompt rules and `generate_structured()` instead.
 pinned to `data_collection: "deny"` and `require_parameters` via
 `OPENROUTER_PROVIDER_PREFS` — the first because these pipelines send whole
 archival documents to third-party backends, the second because `json_schema`
-support varies by backend. Add models by extending `MODEL_REGISTRY`, never by
+support varies by backend. Add models in `common/llm_registry.py`, never by
 letting a pipeline pass an arbitrary `vendor/model` slug through.
 
 **Multimodal pipelines are the exception** and call provider SDKs directly, because
 they need capabilities the shared provider does not expose. They must still use
-`common/rate_limiter.py`: call `wait()` before each request, and translate provider
+`common/gemini_utils.build_gemini_client()` so transport calls have a finite
+deadline, plus `common/rate_limiter.py`: call `wait()` before each request, and translate provider
 errors with `is_quota_exhausted()` so daily-quota exhaustion raises
 `QuotaExhaustedError` (save partial results, stop) instead of being retried like a
 transient 429.
@@ -111,6 +115,14 @@ from the code.
 property missing from the payload is deleted. `isPartial=1` does not protect them.
 Fetch with `get_item()`, mutate, send the full object back. Never trim fields to
 reduce payload size — a timeout is the better problem to have.
+
+**A write script must parse `argv`.** On 2026-08-02 `AI_NER/03_Omeka_update.py` had
+no argument parser, so `--help` was not recognised as a request for help: the script
+ran its real update and PATCHed 630 live items before it was killed. A script that
+ignores arguments treats a typo as consent. Every entry point that PATCHes or POSTs
+now goes through `common/write_guard.py` — argument parsing, `--dry-run`, a pre-write
+payload dump, and a confirmation gate — and `tests/test_write_guard.py` fails if a new
+write script skips it. Never run one of these scripts to "see what it does".
 
 **`upsert_property_value()` drops `@annotation`.** It rebuilds the value object from
 five keys when appending to a property that has no literal yet, so value annotations
