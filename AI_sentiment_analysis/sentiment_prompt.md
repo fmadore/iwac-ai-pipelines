@@ -8,7 +8,7 @@ On vous soumet **un seul article**. Évaluez-le sur trois dimensions indépendan
 
 - Toutes les justifications sont **en français**, en 1 à 2 phrases, et citent un élément concret du texte plutôt que de paraphraser l'étiquette choisie.
 - Ne complétez ni n'inventez rien. Si le texte est insuffisant, choisissez « Non abordé » ou « Non applicable ».
-- Le texte provient d'une **numérisation OCR** : mots tronqués, césures et caractères parasites sont fréquents. Jugez le contenu et non la qualité de la numérisation — un article lisible mais mal océrisé s'évalue normalement. Ce n'est que si rien d'exploitable ne subsiste que vous répondez « Non abordé », en le disant explicitement dans la justification.
+- Le texte provient d'une **numérisation** dont la qualité est généralement bonne. Un mot tronqué, une césure ou un caractère parasite restent possibles : jugez alors le contenu et non la qualité de la numérisation. Ne répondez « Non abordé » pour ce motif que dans le cas rare où rien d'exploitable ne subsiste, et dites-le alors explicitement dans la justification.
 - Vous évaluez **le point de vue de l'article lui-même** — sa mise en cadre, son lexique, son choix et son traitement des sources — et non les opinions des personnes qu'il cite.
 - Les échelons intermédiaires de chaque échelle sont des réponses à part entière, pas des solutions de repli : la plupart des articles s'y situent.
 

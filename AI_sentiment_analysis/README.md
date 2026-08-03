@@ -371,8 +371,13 @@ What changed and why:
   Libye 383 articles, "saoudite" 1,559, Koweït 368, OCI 247, Iran 212, ISESCO 48,
   so this is several percent of the corpus, not an edge case. Such cooperation
   is at least **Marginal** even when the surface topic is a loan or a hospital.
-- **Added an OCR-noise instruction.** The input is digitised newspaper text of
-  varying quality and nothing previously told the model how to behave on it.
+- **Added an OCR-noise instruction.** Nothing previously told the model how to
+  behave on a garbled article. Corrected on 2026-08-03: the first version said
+  truncated words and stray characters were *frequent*, which is not true of
+  this corpus — extraction is mostly vision-model based and the text is
+  generally clean. Overstating the noise hands the model a reason to reach for
+  the illegibility escape hatch, so the instruction now covers the rare case
+  without claiming it is common.
 
 Every cache record and pilot manifest carries a **prompt fingerprint**
 (`sentiment_core.prompt_fingerprint`, a short sha256 of the text actually sent).
