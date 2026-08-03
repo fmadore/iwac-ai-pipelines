@@ -103,6 +103,7 @@ from common.omeka_client import OmekaClient
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
 from common.console_utils import standard_progress
 from common.iwac_config import resolve_property_ids
+from common.log_redaction import install_credential_redaction
 
 # Schema, prompt, panel and analysis calls are shared with the pilot so the two
 # runs stay comparable (see sentiment_core's module docstring).
@@ -184,6 +185,9 @@ def configure_logging(verbose: bool = False) -> logging.Logger:
         datefmt="[%X]",
         handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
+    # Omeka credentials ride in the query string, and urllib3's retry warnings
+    # render the whole URL. Scrub before any handler formats a record.
+    install_credential_redaction()
     return logging.getLogger(__name__)
 
 
