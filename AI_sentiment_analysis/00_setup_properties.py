@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
     PANEL,
     RESULT_FIELD_SUFFIXES,
+    RETIRED_PANEL,
     SENTIMENT_MODEL_ANNOTATION_TERM,
     PanelMember,
 )
@@ -217,7 +218,14 @@ def _ttl_block(definition: PropertyDef) -> str:
 
 
 def emit_ttl() -> str:
-    """The Turtle to append to ``iwac-vocabulary.ttl``."""
+    """The Turtle to append to ``iwac-vocabulary.ttl``.
+
+    Emits the active panel **and** :data:`RETIRED_PANEL`. The retired members
+    are not optional decoration: Omeka deletes any installed property the
+    uploaded file omits, along with every value stored under it, so a generator
+    that emitted only ``PANEL`` would quietly turn each panel revision into a
+    proposal to destroy the previous member's annotations.
+    """
     out: List[str] = [
         "# ============================================",
         "# SENTIMENT PROPERTIES — GENERATION 2 (2026-07)",
@@ -234,7 +242,9 @@ def emit_ttl() -> str:
         "# which does not match how the pipeline has always written them.",
         "#",
         "# The panel is defined once in AI_sentiment_analysis/sentiment_core.py",
-        "# (PANEL); this file is generated from it by 00_setup_properties.py.",
+        "# (PANEL, plus RETIRED_PANEL for members whose values must outlive their",
+        "# turn in the panel); this file is generated from it by",
+        "# 00_setup_properties.py.",
         "",
         _ttl_block(SENTIMENT_MODEL_DEF),
     ]
@@ -242,6 +252,15 @@ def emit_ttl() -> str:
         out.append("")
         out.append(f"# --- {member.label} ({model_id_for(member)}) "
                    f"-> HF prefix {member.key}_ ---")
+        out.append("")
+        out.extend(_ttl_block(d) + "\n" for d in definitions_for(member))
+
+    for member in RETIRED_PANEL.values():
+        out.append("")
+        out.append(f"# --- RETIRED: {member.label} ({model_id_for(member)}) "
+                   f"-> HF prefix {member.key}_ ---")
+        out.append("#     No longer in the panel. Declared so an upload does not")
+        out.append("#     delete the values it already holds; never repointed.")
         out.append("")
         out.extend(_ttl_block(d) + "\n" for d in definitions_for(member))
     return "\n".join(out).rstrip() + "\n"
