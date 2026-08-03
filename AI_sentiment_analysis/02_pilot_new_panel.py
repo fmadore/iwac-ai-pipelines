@@ -326,11 +326,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help=f"Comma-separated subset of: {','.join(V2_PANEL)}")
     parser.add_argument("--output", type=str, default=None,
                         help="Output JSON path (default: cache/pilot/pilot_<timestamp>.json)")
-    parser.add_argument("--without-examples", action="store_true",
-                        help="Drop the prompt's worked examples, keeping the "
-                             "definitions and boundary rules. The second arm of "
-                             "the examples A/B: run both on the same --seed and "
-                             "compare with 03_pilot_report.py")
     return parser
 
 
@@ -382,9 +377,8 @@ def show_configuration(
             for prefix in models.clients
         ),
     )
-    example_status = "with examples" if not args.without_examples else "[yellow]examples stripped[/]"
     config_table.add_row(
-        "Prompt", f"#{prompt_id} · {len(system_prompt):,} chars · {example_status}",
+        "Prompt", f"#{prompt_id} · {len(system_prompt):,} chars",
     )
     config_table.add_row("Writes to Omeka", "[bold green]none[/]")
     console.print(config_table)
@@ -458,7 +452,6 @@ def build_payload(
     repeats: int,
     system_prompt: str,
     prompt_id: str,
-    prompt_examples: bool,
 ) -> Dict[str, Any]:
     """Build a self-describing pilot artifact for later comparison."""
     return {
@@ -497,7 +490,6 @@ def build_payload(
             },
             "prompt_chars": len(system_prompt),
             "prompt_fingerprint": prompt_id,
-            "prompt_examples": prompt_examples,
         },
         "articles": results,
     }
@@ -567,7 +559,7 @@ def main() -> int:
         console.print("\n[red]✗[/] No models available — nothing to pilot.")
         return 1
 
-    system_prompt = load_system_prompt(include_examples=not args.without_examples)
+    system_prompt = load_system_prompt()
     prompt_id = prompt_fingerprint(system_prompt)
 
     show_configuration(args, client, models, system_prompt, prompt_id)
@@ -613,7 +605,6 @@ def main() -> int:
         repeats=args.repeats,
         system_prompt=system_prompt,
         prompt_id=prompt_id,
-        prompt_examples=not args.without_examples,
     )
     atomic_write_text(out_path, json.dumps(payload, indent=2, ensure_ascii=False))
     # Scaffolding, removed only once the real output is safely on disk.

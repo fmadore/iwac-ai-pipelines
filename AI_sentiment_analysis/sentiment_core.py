@@ -307,36 +307,14 @@ V1_PANEL: Dict[str, str] = {
 PROMPT_FILENAME = "sentiment_prompt.md"
 
 
-#: Heading that opens the worked examples, used to strip them for the A/B.
-EXAMPLES_HEADING = "## Exemples"
-
-
-def load_system_prompt(include_examples: bool = True) -> str:
+def load_system_prompt() -> str:
     """Load the sentiment analysis prompt from the markdown file.
 
     Raises rather than returning "" — a silent empty prompt would produce
     plausible-looking but unanchored annotations.
-
-    Args:
-        include_examples: when False, drop everything from ``## Exemples``
-            onwards, leaving the definitions and boundary rules. This is the
-            second arm of the examples A/B, generated from the same file rather
-            than kept as a second prompt so the two arms cannot differ in
-            anything except the examples. Whichever arm ran is recorded by
-            :func:`prompt_fingerprint`.
     """
     prompt_path = Path(__file__).resolve().parent / PROMPT_FILENAME
-    text = prompt_path.read_text(encoding="utf-8")
-    if include_examples:
-        return text
-
-    head, marker, _tail = text.partition(EXAMPLES_HEADING)
-    if not marker:
-        raise ValueError(
-            f"{PROMPT_FILENAME} has no {EXAMPLES_HEADING!r} section to strip; "
-            "the no-examples arm would silently be identical to the other."
-        )
-    return head.rstrip() + "\n"
+    return prompt_path.read_text(encoding="utf-8")
 
 
 def prompt_fingerprint(prompt: Optional[str] = None) -> str:

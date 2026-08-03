@@ -359,8 +359,8 @@ What changed and why:
   runs with reasoning enabled — explicit chain-of-thought is
   [counterproductive on reasoning models](https://karozieminski.substack.com/p/ai-prompting-techniques-reasoning-models-2026).
 - **Subjectivité became a label** (see above).
-- **Added worked examples.** The old header promised "Barème d'évaluation avec
-  exemples" and contained none.
+- **Added worked examples** — since removed on 2026-08-03 after the A/B below
+  measured them anchoring the label distribution.
 - **Disambiguated polarité.** It measures *the article's* stance, not a quoted
   source's: reporting a hostile statement with attribution and contrepoint is
   Neutre; endorsing or amplifying it is Négatif. Also that factual reporting of
@@ -382,21 +382,49 @@ prompt is unknown cannot be compared with one whose prompt is known. A hash
 rather than a hand-maintained version string, because the latter is exactly what
 gets forgotten in the edit that mattered.
 
-### Are the examples earning their place?
+### The worked examples were measured, then removed (2026-08-03)
 
-Open question, being measured rather than argued. `02 --without-examples` strips
-the `## Exemples` section at load time — same file, so the two arms cannot differ
-in anything else — and the fingerprint records which arm ran:
+They lasted three days. The A/B ran both arms of the same file — 50 articles,
+seed 99, 3 repeats, GPT-5.6 Luna and Mistral Small 4, 300 annotations per arm,
+zero errors — and the examples lost on every comparison that matters:
 
-```bash
-python AI_sentiment_analysis/02_pilot_new_panel.py --models qwen3_5_122b_a10b --sample-size 50 --repeats 3 --seed 99 --without-examples
-```
+| | with examples | stripped |
+|---|---|---|
+| pairwise κ, centralité | 0.466 | **0.662** |
+| pairwise κ, subjectivité | 0.162 | **0.286** |
+| pairwise κ, polarité | 0.103 | **0.128** |
 
-Run both arms on the same seed and compare self-consistency and agreement. The
-case for examples is that this is a measurement instrument standing in for human
-coders, and inter-coder reliability comes from an anchored codebook; the case
-against is that examples anchor the output distribution, which is a real risk
-while the worked set still has no Mixte and no Négatif.
+The mechanism was visible in the distributions, and it is the reason the result
+should be believed at n=50: both models moved the same way on all three
+dimensions, away from the labels the worked set over-represented and toward the
+middle of each scale. Mistral's *Plutôt objectif* went 19.3% → 32.7%, its *Très
+objectif* 54.0% → 43.3%. **Négatif — the one polarité label with no worked
+example — did not occur once in 300 annotations while the examples were present**,
+and appeared as soon as they were removed.
+
+Not significant individually: one κ per dimension at n=50 has a standard error
+around 0.1. The consistency of direction across two models × three dimensions is
+the evidence, not any single number.
+
+What replaced them is prose boundary rules, which is what the ones that earned
+their keep already were — the worked cases for a Muslim minister and for Libyan
+bilateral aid restated rules stated verbatim a few lines above.
+
+Two findings from the same pilot that the examples did **not** cause, and that
+removing them did not fix:
+
+- ***Mixte* has collapsed.** Generation 1 used it on 6–16% of articles; the
+  generation-2 panel uses it on 0.7% with examples and 1.3% without. The likely
+  cause is the integer→label change: picking "3" on a 1–5 scale is a natural
+  midpoint, choosing the word "Mixte" reads as a hedge. A category has effectively
+  been deleted from the middle of the weakest dimension.
+- **Polarité skews positive** — Luna 71% *Positif*, Mistral 46% — but generation 1
+  skewed the same way on the same articles (60%, 68%, 44%), so this is inherited
+  from the construct or the corpus, not introduced by this panel.
+
+The `--without-examples` flag and `load_system_prompt(include_examples=…)` were
+removed with the section; keeping a flag whose only arm no longer exists would
+fail at load time rather than mean anything.
 
 ## The generation-2 panel
 

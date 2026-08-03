@@ -10,6 +10,7 @@ On vous soumet **un seul article**. Évaluez-le sur trois dimensions indépendan
 - Ne complétez ni n'inventez rien. Si le texte est insuffisant, choisissez « Non abordé » ou « Non applicable ».
 - Le texte provient d'une **numérisation OCR** : mots tronqués, césures et caractères parasites sont fréquents. Jugez le contenu et non la qualité de la numérisation — un article lisible mais mal océrisé s'évalue normalement. Ce n'est que si rien d'exploitable ne subsiste que vous répondez « Non abordé », en le disant explicitement dans la justification.
 - Vous évaluez **le point de vue de l'article lui-même** — sa mise en cadre, son lexique, son choix et son traitement des sources — et non les opinions des personnes qu'il cite.
+- Les échelons intermédiaires de chaque échelle sont des réponses à part entière, pas des solutions de repli : la plupart des articles s'y situent.
 
 ## Centralité
 
@@ -30,7 +31,15 @@ Importance accordée aux thèmes liés à l'islam et aux musulmans.
 - Accord économique, prêt, visite d'ambassadeur, projet d'infrastructure : la dimension religieuse n'est présente qu'à travers l'identité des acteurs ou le nom des institutions, sans que l'article la développe → **Marginal**.
 - L'article traite du financement de mosquées ou de medersas, de bourses d'études islamiques, du hadj, de la solidarité entre pays musulmans, ou de l'influence religieuse de l'aide → **Secondaire** à **Très central** selon la place qu'il y consacre.
 
-Cela ne vaut que pour les acteurs explicitement islamiques ou les États à majorité musulmane engagés comme tels. La nationalité d'une entreprise privée ou d'un expert ne suffit pas.
+Cette règle ne vaut que pour des acteurs explicitement islamiques, ou pour des États à majorité musulmane agissant en cette qualité. La nationalité d'une entreprise privée, d'un expert ou d'un bailleur ne suffit pas : un marché passé avec une société égyptienne n'est pas une mention de l'islam.
+
+**Violence armée et sécurité.** Un groupe armé qui se réclame de l'islam engage directement la façon dont la presse représente l'islam : sa couverture n'est pas un sujet sécuritaire dont la religion serait absente. Ce n'est pas un acteur séculier qui se trouve être musulman.
+
+- L'article porte sur le groupe lui-même — son idéologie, ses revendications religieuses, son recrutement, son rapport aux communautés musulmanes ou aux autorités religieuses → **Très central**.
+- L'article rend compte d'une attaque, d'une opération militaire ou de leurs conséquences, la revendication islamique du groupe faisant partie du cadrage → **Central**.
+- Le groupe n'est qu'une mention incidente dans un article portant sur autre chose — conjoncture économique, élections, déplacements de population → **Secondaire** ou **Marginal**.
+
+Une centralité élevée ne présume rien de la polarité : le compte rendu factuel d'un attentat reste **Neutre** (voir Polarité).
 
 ## Subjectivité
 
@@ -42,7 +51,7 @@ Degré d'engagement énonciatif de l'article **sur le thème de l'islam et des m
 - **Plutôt subjectif** : opinions, sentiments ou jugements explicites sur ce thème, même étayés par des faits.
 - **Très subjectif** : parti pris marqué, émotions ou jugements intenses, peu de matière factuelle ; éditorial, tribune ou billet d'humeur.
 
-Les opinions **citées et attribuées** à un tiers ne rendent pas l'article subjectif. C'est la prise en charge par l'article — absence de distance, adhésion, accumulation de citations à charge — qui l'est.
+Les opinions **citées et attribuées** à un tiers ne rendent pas l'article subjectif : les rapporter relève du travail d'information. Ce qui rend l'article subjectif, c'est qu'il les prenne à son compte — absence de distance, adhésion explicite, ou sélection de citations allant toutes dans le même sens.
 
 ## Polarité
 
@@ -54,6 +63,8 @@ Sentiment que **l'article** exprime envers l'islam ou les musulmans.
 - **Négatif** : portrait défavorable, critique, pessimiste.
 - **Très négatif** : portrait extrêmement défavorable, alarmiste, hostile.
 - **Non applicable** : l'article ne traite pas de l'islam ou des musulmans.
+
+Le compte rendu neutre est le cas ordinaire de la presse d'information : un article qui rapporte des faits sans les commenter est **Neutre**, même quand ces faits sont favorables ou défavorables en eux-mêmes. Réservez **Positif** et **Négatif** aux articles dont l'écriture oriente — lexique valorisant ou dépréciateur, angle choisi, mise en avant sélective.
 
 **Propos rapportés.** Un article qui rapporte des déclarations hostiles envers les musulmans, avec attribution, distance et contrepoint, est **Neutre** : il documente une hostilité sans l'endosser. Il devient **Négatif** ou **Très négatif** s'il reprend ce cadrage à son compte, ne donne la parole qu'à charge, ou choisit un lexique dépréciatif hors citation.
 
@@ -67,53 +78,3 @@ Si centralité = « Non abordé », alors nécessairement :
 - `subjectivite_justification` = « Non applicable car le sujet n'est pas abordé. »
 - `polarite` = « Non applicable »
 - `polarite_justification` = « Non applicable car le sujet n'est pas abordé. »
-
-## Exemples
-
-**1 — Compte rendu d'une fête religieuse**
-> *Le président de la République a pris part hier à la prière de la Tabaski à la grande mosquée de Bamako, aux côtés du Haut Conseil islamique. L'imam a appelé les fidèles à la cohésion nationale. La cérémonie s'est déroulée en présence de plusieurs membres du gouvernement.*
-
-centralité **Très central** · subjectivité **Très objectif** · polarité **Neutre**
-→ L'événement religieux est le sujet ; le compte rendu est purement factuel, sans appréciation.
-
-**2 — Éditorial engagé**
-> *Il faut saluer le travail remarquable des associations islamiques qui, sans bruit et sans moyens, scolarisent des milliers d'enfants que l'État a abandonnés. Leur dévouement force l'admiration et mérite enfin d'être reconnu.*
-
-centralité **Très central** · subjectivité **Très subjectif** · polarité **Très positif**
-→ « remarquable », « force l'admiration » : l'article prend explicitement position en faveur.
-
-**3 — Fait divers avec propos rapportés**
-> *À l'issue du conseil municipal, un élu a déclaré que « ces gens-là » — visant la communauté musulmane du quartier — « ne respectent pas les règles de la République ». Le maire s'est désolidarisé de ces propos. Le représentant de l'association des résidents a dénoncé une stigmatisation.*
-
-centralité **Central** · subjectivité **Plutôt objectif** · polarité **Neutre**
-→ L'hostilité est citée et attribuée, non endossée ; l'article rapporte plusieurs positions et garde ses distances.
-
-**4 — Mention incidente**
-> *Le nouveau ministre des Finances, El Hadj Ousmane Diallo, a présenté hier un budget en hausse de 4 %. Ancien cadre bancaire, il devra convaincre les bailleurs de fonds.*
-
-centralité **Non abordé** · subjectivité **null** · polarité **Non applicable**
-→ « El Hadj » est un élément d'état civil ; ni l'islam ni la confession de l'intéressé ne sont thématisés.
-
-**5 — Traitement sécuritaire**
-> *Une attaque attribuée à un groupe jihadiste a fait sept morts dans le nord du pays. L'armée a annoncé le déploiement de renforts. Les autorités religieuses musulmanes de la région ont condamné l'attaque.*
-
-centralité **Secondaire** · subjectivité **Très objectif** · polarité **Neutre**
-→ Le sujet est sécuritaire ; l'islam apparaît par le groupe armé et la condamnation des autorités religieuses. Rien n'étend la responsabilité aux musulmans en général.
-
-**6 — Coopération bilatérale**
-> *Le chef de l'État a reçu hier l'ambassadeur de Libye. Les deux parties ont évoqué le financement par Tripoli d'un complexe hospitalier à Ouagadougou et d'une unité hôtelière. Un accord de coopération économique sera signé le mois prochain.*
-
-centralité **Marginal** · subjectivité **Très objectif** · polarité **Neutre**
-→ Le sujet apparent est économique et l'article ne développe rien de religieux, mais la coopération avec un État musulman engagé comme tel n'est pas rien : elle relève du Marginal, pas du Non abordé. Elle deviendrait Secondaire ou davantage si Tripoli finançait des mosquées ou des medersas, ou si l'article discutait l'influence religieuse de cette aide.
-
-**7 — Sommet islamique**
-> *La conférence de l'OCI s'est achevée à Dakar sur l'annonce d'un fonds de solidarité pour les medersas du Sahel. Les délégations ont insisté sur la nécessité d'une éducation islamique de qualité, seule à même selon elles de contrer les lectures extrémistes.*
-
-centralité **Très central** · subjectivité **Plutôt objectif** · polarité **Positif**
-→ À la différence de l'exemple 6, la dimension religieuse est le sujet : enseignement islamique, medersas, solidarité entre pays musulmans. Le compte rendu est factuel mais l'angle retenu valorise l'action.
-
-**8 — Cadrage à charge**
-> *Encore une fois, ces prédicateurs venus d'ailleurs imposent leurs mœurs à nos villages. Sous couvert de charité, ils achètent les consciences et minent le vivre-ensemble que nos aînés avaient patiemment bâti.*
-
-centralité **Très central** · subjectivité **Très subjectif** · polarité **Très négatif**
-→ L'hostilité n'est pas citée mais assumée par l'article : « imposent », « sous couvert de », « achètent les consciences ». C'est le contraste avec l'exemple 3, où l'hostilité était rapportée et mise à distance.

@@ -172,7 +172,6 @@ def test_pilot_payload_records_exact_deepseek_model_and_prompt():
         repeats=1,
         system_prompt="prompt text",
         prompt_id="abc123",
-        prompt_examples=True,
     )
 
     manifest = payload["manifest"]
@@ -563,23 +562,23 @@ def test_schema_rejects_a_numeric_subjectivite():
         SentimentAnalysisOutput(subjectivite_score=3, **base)
 
 
-def test_examples_arm_differs_only_in_the_examples():
-    """Both A/B arms come from one file so they cannot differ in anything else."""
-    from sentiment_core import EXAMPLES_HEADING, load_system_prompt, prompt_fingerprint
+def test_prompt_carries_its_load_bearing_sections():
+    """The prompt is the instrument; a silent truncation would not be visible.
 
-    full = load_system_prompt()
-    stripped = load_system_prompt(include_examples=False)
+    Worked examples were removed on 2026-08-03 after the A/B pilot measured them
+    anchoring the label distribution onto the labels they demonstrated. What is
+    left is definitions plus boundary rules, and every one of these headings is
+    depended on by a field of ``SentimentAnalysisOutput``.
+    """
+    from sentiment_core import load_system_prompt, prompt_fingerprint
 
-    assert EXAMPLES_HEADING in full
-    assert EXAMPLES_HEADING not in stripped
-    assert full.startswith(stripped.rstrip())
-    assert len(stripped) < len(full)
-    # The definitions and boundary rules must survive the strip — they do most
-    # of the work and are not part of what is being tested.
+    prompt = load_system_prompt()
+
     for rule in ("## Centralité", "## Subjectivité", "## Polarité",
                  "Coopération avec les pays arabes", "## Cohérence"):
-        assert rule in stripped, rule
-    assert prompt_fingerprint(full) != prompt_fingerprint(stripped)
+        assert rule in prompt, rule
+    assert prompt_fingerprint(prompt) == prompt_fingerprint()
+    assert prompt_fingerprint(prompt) != prompt_fingerprint(prompt + "\n")
 
 
 def test_pilot_resumes_from_its_partial_file(tmp_path):
