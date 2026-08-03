@@ -93,11 +93,15 @@ from common.llm_provider import (  # noqa: E402
     PROVIDER_MISTRAL,
     PROVIDER_OPENROUTER,
 )
+from common.log_redaction import install_credential_redaction
 
 # ---------------------------------------------------------------------------
 # Logging & Environment
 # ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 logger = logging.getLogger(__name__)
 load_dotenv()
 

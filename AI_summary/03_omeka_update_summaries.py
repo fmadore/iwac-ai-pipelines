@@ -49,6 +49,11 @@ from common.iwac_config import (
     select_model_key,
 )
 from common.llm_provider import DEFAULT_TEXT_MODEL_KEY
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 # The Omeka property that carries the AI summary for articles and documents.
 # Exported to Hugging Face as ``descriptionAI``.

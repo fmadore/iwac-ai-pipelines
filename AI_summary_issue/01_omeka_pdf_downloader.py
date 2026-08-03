@@ -30,6 +30,7 @@ console = Console()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.pdf_downloader import download_pdfs_from_item_set
+from common.log_redaction import install_credential_redaction
 
 # Only download PDFs from items whose resource class is bibo:Issue (verified id).
 BIBO_ISSUE_CLASS_ID = 60  # bibo:Issue
@@ -53,6 +54,9 @@ def setup_logging(script_dir: Path) -> None:
         filemode='a',  # Append to existing log file
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
+    # Credentials ride in Omeka query strings and provider headers; keep them
+    # out of anything urllib3 or an SDK decides to log.
+    install_credential_redaction()
 
 
 if __name__ == "__main__":

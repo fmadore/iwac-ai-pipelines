@@ -56,6 +56,7 @@ from common.omeka_client import OmekaClient
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
 from common.checkpoint import atomic_write_text
 from common.console_utils import standard_progress
+from common.log_redaction import install_credential_redaction
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
@@ -105,6 +106,9 @@ def configure_logging() -> logging.Logger:
         datefmt="[%X]",
         handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
+    # Credentials ride in Omeka query strings and provider headers; keep them
+    # out of anything urllib3 or an SDK decides to log.
+    install_credential_redaction()
     return logging.getLogger(__name__)
 
 

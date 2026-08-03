@@ -48,6 +48,11 @@ from common.reconciliation import (  # noqa: E402
     MULTI_WORD_MIN_SIMILARITY,
     DEFAULT_MAX_CANDIDATES,
 )
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 # Column names
 SPATIAL_COLUMN = "Spatial AI"

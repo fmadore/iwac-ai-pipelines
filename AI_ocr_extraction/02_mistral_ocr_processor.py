@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted
 from common.retry import retry_with_backoff
 from common.console_utils import standard_progress
+from common.log_redaction import install_credential_redaction
 
 try:
     from mistralai.client import Mistral
@@ -72,6 +73,9 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     filename=log_file,
 )
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 # `-latest` resolves to the newest OCR model server-side (OCR 4 as of 2026-06).
 MISTRAL_OCR_MODEL = "mistral-ocr-latest"

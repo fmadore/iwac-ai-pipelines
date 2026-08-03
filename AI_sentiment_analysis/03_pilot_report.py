@@ -41,11 +41,16 @@ from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.log_redaction import install_credential_redaction
 from sentiment_core import (  # noqa: E402
     CENTRALITE_ORDER,
     POLARITE_ORDER,
     SUBJECTIVITE_ORDER,
 )
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 console = Console()
 

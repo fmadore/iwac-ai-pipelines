@@ -136,15 +136,71 @@ class CredentialRedactingFilter(logging.Filter):
         return True
 
 
+def _redact_record_in_place(record: logging.LogRecord) -> None:
+    """Scrub a record's message and string args without formatting them.
+
+    Deliberately does not call ``getMessage()``: this runs for every record the
+    process creates, including ones no handler will ever emit, so it must not
+    force interpolation or call ``__str__`` on arbitrary argument objects. It
+    scrubs ``msg`` and any ``str`` argument, which is where a URL actually
+    arrives — urllib3 passes the retry target as a plain ``%s`` argument.
+    """
+    if isinstance(record.msg, str):
+        record.msg = redact(record.msg)
+    args = record.args
+    if isinstance(args, tuple):
+        record.args = tuple(
+            redact(a) if isinstance(a, str) else a for a in args
+        )
+    elif isinstance(args, dict):
+        record.args = {
+            k: (redact(v) if isinstance(v, str) else v) for k, v in args.items()
+        }
+
+
+def _install_record_factory() -> None:
+    """Scrub at record creation, which is the only handler-independent point.
+
+    Needed because most entry points in this repo never call ``basicConfig``.
+    With no handler on the root logger, a warning goes out through
+    ``logging.lastResort`` — a module-level handler that no ``addFilter`` call
+    of ours can reach. ``AI_NER/03_Omeka_update.py`` and the other write
+    scripts are in exactly that state, so a handler-only install would leave
+    the scripts that hold credentials uncovered while appearing to be wired up.
+
+    The factory is process-global and installed at most once.
+    """
+    current = logging.getLogRecordFactory()
+    if getattr(current, "_redacts_credentials", False):
+        return
+
+    def factory(*args, **kwargs):
+        record = current(*args, **kwargs)
+        _redact_record_in_place(record)
+        return record
+
+    factory._redacts_credentials = True  # type: ignore[attr-defined]
+    logging.setLogRecordFactory(factory)
+
+
 def install_credential_redaction(
     logger_names: Optional[Iterable[str]] = None,
 ) -> CredentialRedactingFilter:
-    """Attach the redacting filter to the root logger and its handlers.
+    """Scrub credentials from every log record this process creates.
 
-    Returns the filter so a caller can attach it elsewhere. Safe to call more
-    than once: an existing instance is reused rather than stacked, so repeated
-    calls do not scrub the same record N times.
+    Two layers, because neither covers everything on its own. A record factory
+    catches records regardless of how — or whether — logging was configured;
+    a filter on the root handlers catches anything only visible once the
+    message has been interpolated.
+
+    Call it anywhere during startup. Unlike the handler filter alone, it no
+    longer has to follow ``basicConfig``: the factory is independent of handler
+    setup, and any handler added later is still covered by it. Safe to call
+    more than once — the factory installs once and an existing filter instance
+    is reused rather than stacked.
     """
+    _install_record_factory()
+
     root = logging.getLogger()
     existing = next(
         (f for f in root.filters if isinstance(f, CredentialRedactingFilter)), None

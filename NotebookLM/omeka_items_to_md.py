@@ -93,6 +93,11 @@ console = Console()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.checkpoint import atomic_write_text
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 # Lightweight aliases to make intent clearer when reading types
 JSONObj = Dict[str, Any]

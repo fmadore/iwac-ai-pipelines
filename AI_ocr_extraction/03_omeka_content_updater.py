@@ -43,6 +43,11 @@ from common.iwac_config import (
     model_annotation_value,
     select_model_key,
 )
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 CONTENT_TERM = "bibo:content"
 OCR_MODEL_TERM = "iwac:ocrModel"

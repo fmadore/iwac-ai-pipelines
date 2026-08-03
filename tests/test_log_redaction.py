@@ -6,6 +6,7 @@ API keys into a log file via three ``urllib3.connectionpool`` retry warnings.
 
 import io
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -138,3 +139,51 @@ def test_scrub_removes_orphaned_fragment_of_a_partial_scrub():
 def test_scrub_ignores_short_values_that_would_eat_prose():
     text = "the run used model gpt-5.6-luna at concurrency 6"
     assert scrub_known_secrets(text, ["6", "at", "run"]) == text
+
+
+# ---------------------------------------------------------------------------
+# No entry point may skip the install
+# ---------------------------------------------------------------------------
+
+def _entry_points():
+    repo_root = Path(__file__).resolve().parent.parent
+    candidates = sorted(repo_root.glob("AI_*/*.py")) + sorted(
+        repo_root.glob("NotebookLM/*.py")
+    )
+    for script in candidates:
+        source = script.read_text(encoding="utf-8")
+        if re.search(r'if __name__ == ["\']__main__["\']', source):
+            yield script.relative_to(repo_root).as_posix(), source
+
+
+def test_every_entry_point_installs_redaction():
+    """Every runnable script must install the filter.
+
+    Not only the ones that configure logging: with no handler on the root
+    logger a warning still reaches stderr through ``logging.lastResort``, so a
+    script that never calls ``basicConfig`` leaks just as readily. Most entry
+    points in this repo are in exactly that state.
+    """
+    offenders = [
+        name for name, source in _entry_points()
+        if "install_credential_redaction()" not in source
+    ]
+    assert offenders == [], f"entry points not installing redaction: {offenders}"
+
+
+def test_redaction_call_never_precedes_its_import():
+    """A call above its import is a NameError on startup, not a lint nit."""
+    offenders = []
+    for name, source in _entry_points():
+        lines = source.splitlines()
+        imported = next(
+            (i for i, ln in enumerate(lines)
+             if "from common.log_redaction import" in ln), None
+        )
+        called = next(
+            (i for i, ln in enumerate(lines)
+             if re.match(r"\s*install_credential_redaction\(\)", ln)), None
+        )
+        if imported is None or called is None or called < imported:
+            offenders.append(name)
+    assert offenders == [], f"install called before it is imported: {offenders}"

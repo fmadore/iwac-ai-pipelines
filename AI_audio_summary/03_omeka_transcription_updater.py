@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.iwac_config import BIBO_CONTENT_PROPERTY_ID, DCTERMS_IDENTIFIER_PROPERTY_ID
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
+from common.log_redaction import install_credential_redaction
 
 CONTENT_TARGET = PropertyTarget(
     term='bibo:content',
@@ -179,6 +180,9 @@ def setup_logging(log_folder: Path) -> None:
             logging.StreamHandler()
         ]
     )
+    # Credentials ride in Omeka query strings and provider headers; keep them
+    # out of anything urllib3 or an SDK decides to log.
+    install_credential_redaction()
 
 
 def resolve_updates(

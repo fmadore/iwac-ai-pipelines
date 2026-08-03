@@ -48,6 +48,11 @@ from common.llm_provider import (
     summary_from_option,
 )
 from common.console_utils import standard_progress
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 # Load environment variables
 load_dotenv()

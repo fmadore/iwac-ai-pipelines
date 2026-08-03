@@ -30,6 +30,11 @@ from common.gemini_utils import (
 from common.prompt_loader import select_prompt_interactive
 from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
 from common.ffmpeg_utils import get_mime_type
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 from rich.panel import Panel
 from rich.table import Table

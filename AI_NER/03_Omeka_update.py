@@ -26,6 +26,11 @@ from common.omeka_link_updater import (
     update_item_resource_links,
 )
 from common.write_guard import WriteGuard, add_write_guard_args
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"

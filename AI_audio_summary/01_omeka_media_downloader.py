@@ -43,6 +43,7 @@ from common.omeka_client import OmekaClient
 from common.downloader import stream_download
 from common.ffmpeg_utils import AUDIO_FORMATS, VIDEO_FORMATS
 from common.console_utils import standard_progress
+from common.log_redaction import install_credential_redaction
 
 # Supported media formats — derived from common/ffmpeg_utils so the
 # downloader never fetches a format the transcription step cannot handle
@@ -279,6 +280,9 @@ def setup_logging(script_dir: Path) -> None:
             logging.StreamHandler()
         ]
     )
+    # Credentials ride in Omeka query strings and provider headers; keep them
+    # out of anything urllib3 or an SDK decides to log.
+    install_credential_redaction()
 
 
 def download_media_from_item_set(item_set_id: str, media_folder: Path,

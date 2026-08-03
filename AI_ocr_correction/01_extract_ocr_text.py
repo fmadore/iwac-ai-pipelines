@@ -21,6 +21,7 @@ console = Console()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.console_utils import standard_progress
+from common.log_redaction import install_credential_redaction
 
 # Output directory is set relative to the script's location for portability
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TXT")
@@ -28,6 +29,9 @@ MAX_WORKERS = 5  # Maximum number of concurrent threads for processing
 
 # Configure logging to track script execution and errors
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 
 def extract_and_save_content(item, output_dir):

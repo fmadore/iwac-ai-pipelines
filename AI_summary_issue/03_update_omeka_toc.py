@@ -45,6 +45,11 @@ from common.omeka_text_updater import (  # noqa: E402
     TextUpdate,
     run_text_updates,
 )
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 console = Console()
 

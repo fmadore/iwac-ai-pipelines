@@ -30,6 +30,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.iwac_config import BIBO_CONTENT_PROPERTY_ID
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, run_text_updates, updates_from_directory
+from common.log_redaction import install_credential_redaction
+
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 
 # Directory containing the corrected text files (relative to script location)
 DEFAULT_TXT_DIRECTORY = Path(__file__).resolve().parent / 'Corrected_TXT'

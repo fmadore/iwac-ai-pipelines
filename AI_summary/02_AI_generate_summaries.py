@@ -37,11 +37,15 @@ from common.checkpoint import (  # noqa: E402
     atomic_write_text,
     sha256_text,
 )
+from common.log_redaction import install_credential_redaction
 
 # ------------------------------------------------------------------
 # Setup
 # ------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Credentials ride in Omeka query strings and provider headers; keep them
+# out of anything urllib3 or an SDK decides to log.
+install_credential_redaction()
 load_dotenv()
 console = Console()
 
