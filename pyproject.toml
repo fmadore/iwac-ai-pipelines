@@ -10,6 +10,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Frédérick Madore" }]
+# Last verified green on 2026-08-03 against: google-genai 2.16.0, openai 2.52.0,
+# mistralai 2.8.0, pydantic 2.13.4, pypdf 6.14.2, requests 2.34.2,
+# python-dotenv 1.2.2, tqdm 4.70.0, rich 15.0.0, pytest 9.1.1, ruff 0.16.1.
+# Upgrade with `pip install --upgrade <names>`, not `--upgrade-strategy eager`:
+# eager drags in a cryptography build that has no wheel on Windows ARM64.
 dependencies = [
     # AI provider SDKs — pinned to a major version: these break routinely
     # 2.x broke only the Interactions API; generate_content is unchanged.
