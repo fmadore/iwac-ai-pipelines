@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from common.iwac_config import AI_MODEL_ITEMS
 from common.llm_provider import BaseLLMClient
@@ -129,6 +129,47 @@ class SentimentAnalysisOutput(BaseModel):
         "Très positif", "Positif", "Neutre", "Négatif", "Très négatif", "Non applicable"
     ] = Field(description="Sentiment général exprimé dans l'article envers l'islam et/ou les musulmans")
     polarite_justification: str = Field(description="Justification en 1-2 phrases pour la polarité")
+
+    @model_validator(mode="after")
+    def _subjectivite_required_unless_unaddressed(self) -> "SentimentAnalysisOutput":
+        """Reject a null subjectivité on an article that does discuss Islam.
+
+        ``subjectivite_score`` is nullable so that ``Non abordé`` articles have
+        somewhere to go, and ``strict`` JSON-schema validation therefore accepts
+        a null on *any* article — the schema cannot express "null only when
+        centralité is Non abordé". A model may be perfectly schema-compliant and
+        still answer nothing.
+
+        DeepSeek V4 Flash 0731 did exactly that on its first full pass, 2026-08:
+        1,937 of 12,305 articles came back with no subjectivité, and only 452 of
+        those were ``Non abordé``. The other 1,485 were articles it had itself
+        marked as discussing Islam — and the omission was not random, rising from
+        11% on ``Très central`` to 22% on ``Marginal``. GPT-5.6 Luna returned a
+        label on 100% of the same corpus, so this is a model behaviour, not a
+        property of the articles.
+
+        Nothing caught it: ``build_property_values`` drops a field whose value is
+        missing, so the item was written with four properties instead of six and
+        the run reported success. Raising here instead routes the answer into
+        ``analyze_with_model``'s retry loop, and a still-null third attempt
+        becomes a *recorded failure* the ordinary re-run path picks up. A silent
+        gap becomes a loud one.
+
+        The retry is only a resample — provider-side ``strict`` validation has
+        already passed, so the model is never told why its answer was rejected.
+        That is enough in practice because these models run at their vendor
+        temperature (1.0 for DeepSeek V4), so attempts differ.
+        """
+        if (
+            self.subjectivite_score is None
+            and self.centralite_islam_musulmans != "Non abordé"
+        ):
+            raise ValueError(
+                "subjectivite_score is null but centralité is "
+                f"{self.centralite_islam_musulmans!r}; a null subjectivité is "
+                "only valid when centralité is 'Non abordé'"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------

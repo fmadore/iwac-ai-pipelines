@@ -223,6 +223,53 @@ def count_items(client: OmekaClient, params: Dict[str, Any]) -> int:
     return int(response.headers.get("Omeka-S-Total-Results", 0))
 
 
+def iter_explicit_items(
+    client: OmekaClient, item_ids: List[int], logger: logging.Logger
+) -> Iterator[Dict[str, Any]]:
+    """Yield exactly the given items, fetched one by one.
+
+    The listing endpoint cannot express "these 1,485 ids", and paging the whole
+    class to reach a scattered subset costs a full corpus walk for a handful of
+    items. Fetching directly is one request each and skips the walk entirely.
+
+    Exists for repair runs. When a model answers badly on a knowable subset —
+    DeepSeek 0731's 1,485 missing subjectivité values, 2026-08 — the choice was
+    otherwise ``--force-reanalyze`` over all 12,305 items to fix 12% of one
+    field. Pair it with ``--force-reanalyze`` so the already-annotated guard
+    does not skip the very items being repaired.
+    """
+    for item_id in item_ids:
+        item = client.get_item(item_id)
+        if item is None:
+            logger.warning("item %s not found; skipping", item_id)
+            continue
+        yield item
+
+
+def parse_item_ids(raw: str) -> List[int]:
+    """Parse ``--item-ids``: comma-separated ids, or ``@path`` to a file of them.
+
+    The file form is not a convenience — a repair set is routinely thousands of
+    ids, which does not fit on a Windows command line.
+    """
+    if raw.startswith("@"):
+        path = Path(raw[1:]).expanduser()
+        if not path.is_file():
+            raise ValueError(f"--item-ids file not found: {path}")
+        tokens = path.read_text(encoding="utf-8").split()
+    else:
+        tokens = [token for token in raw.replace(",", " ").split() if token]
+    if not tokens:
+        raise ValueError("--item-ids is empty")
+    try:
+        ids = [int(token) for token in tokens]
+    except ValueError as exc:
+        raise ValueError(f"--item-ids contains a non-numeric value: {exc}") from exc
+    # Preserve order, drop duplicates: a repeated id would be annotated twice
+    # and the second write would be a no-op PATCH against the first.
+    return list(dict.fromkeys(ids))
+
+
 def iter_items(client: OmekaClient, params: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
     """Yield items a page at a time.
 
@@ -473,6 +520,9 @@ class SentimentRunner:
     sources: List[Dict[str, Any]]
     cache: SentimentCache
     logger: logging.Logger
+    #: Explicit repair set from ``--item-ids``; when set, ``sources`` is unused
+    #: and these items are fetched directly instead of paging the class.
+    item_ids: Optional[List[int]] = None
     stats: Dict[str, int] = dataclass_field(default_factory=_initial_stats)
     skipped_languages: Dict[str, int] = dataclass_field(default_factory=dict)
     halted: Dict[str, str] = dataclass_field(default_factory=dict)
@@ -492,60 +542,69 @@ class SentimentRunner:
             self._thread_local.omeka = existing
         return existing
 
+    def source_items(self) -> Iterator[Dict[str, Any]]:
+        """Every candidate item, from an explicit id list or the class listing."""
+        if self.item_ids is not None:
+            yield from iter_explicit_items(
+                self.listing_client, self.item_ids, self.logger
+            )
+            return
+        for params in self.sources:
+            yield from iter_items(self.listing_client, params)
+
     def jobs(self) -> Iterator[Tuple[Any, str, List[str]]]:
         """Yield eligible item text and the panel members it still needs."""
         produced = 0
-        for params in self.sources:
-            for item in iter_items(self.listing_client, params):
-                if self.stop.is_set() or (
-                    self.args.limit and produced >= self.args.limit
-                ):
-                    return
+        for item in self.source_items():
+            if self.stop.is_set() or (
+                self.args.limit and produced >= self.args.limit
+            ):
+                return
 
-                self.bump("seen")
-                item_id = item.get("o:id")
-                language = get_item_language(item)
-                if language is None:
-                    self.bump("language_unknown")
-                    continue
-                if language not in ANALYSABLE_LANGUAGES:
-                    self.bump("language_skipped")
-                    with self._stats_lock:
-                        self.skipped_languages[language] = (
-                            self.skipped_languages.get(language, 0) + 1
-                        )
-                    continue
+            self.bump("seen")
+            item_id = item.get("o:id")
+            language = get_item_language(item)
+            if language is None:
+                self.bump("language_unknown")
+                continue
+            if language not in ANALYSABLE_LANGUAGES:
+                self.bump("language_skipped")
+                with self._stats_lock:
+                    self.skipped_languages[language] = (
+                        self.skipped_languages.get(language, 0) + 1
+                    )
+                continue
 
-                content = get_item_content(item)
-                if not content.strip():
-                    self.bump("no_content")
-                    continue
+            content = get_item_content(item)
+            if not content.strip():
+                self.bump("no_content")
+                continue
 
-                written = (
-                    []
-                    if (self.args.force_reanalyze or self.args.rewrite)
-                    else models_already_written(item, self.members)
-                )
-                if len(written) == len(self.members):
-                    self.bump("already_done")
-                    continue
+            written = (
+                []
+                if (self.args.force_reanalyze or self.args.rewrite)
+                else models_already_written(item, self.members)
+            )
+            if len(written) == len(self.members):
+                self.bump("already_done")
+                continue
 
-                pending = (
-                    list(self.clients)
-                    if self.args.force_reanalyze
-                    else [
-                        key
-                        for key in self.clients
-                        if key not in written
-                        and not self.cache.has(
-                            item_id,
-                            key,
-                            **self.expected_provenance[key],
-                        )
-                    ]
-                )
-                yield item_id, content, pending
-                produced += 1
+            pending = (
+                list(self.clients)
+                if self.args.force_reanalyze
+                else [
+                    key
+                    for key in self.clients
+                    if key not in written
+                    and not self.cache.has(
+                        item_id,
+                        key,
+                        **self.expected_provenance[key],
+                    )
+                ]
+            )
+            yield item_id, content, pending
+            produced += 1
 
     def annotate(self, job: Tuple[Any, str, List[str]]) -> None:
         """Analyze and optionally write one eligible Omeka item."""
@@ -713,6 +772,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"Annotate a whole resource class (default {ARTICLE_CLASS_ID}, newspaper articles)",
     )
     source.add_argument(
+        "--item-ids", type=str, default=None,
+        help="Annotate exactly these item IDs (comma-separated, or @file). "
+             "For repair runs; pair with --force-reanalyze to override the "
+             "already-annotated guard",
+    )
+    source.add_argument(
         "--limit", type=int, default=None,
         help="Stop after N items needing work (for a trial run)",
     )
@@ -764,8 +829,17 @@ def validate_arguments(args: argparse.Namespace) -> List[int]:
         )
     if args.limit is not None and args.limit < 1:
         raise ValueError("--limit must be at least 1")
+    if args.item_ids:
+        if args.item_set_id or args.resource_class_id is not None:
+            raise ValueError(
+                "--item-ids replaces the listing; do not combine it with "
+                "--item-set-id or --resource-class-id"
+            )
+        return []
     if not args.item_set_id and args.resource_class_id is None:
-        raise ValueError("Give --item-set-id or --resource-class-id")
+        raise ValueError(
+            "Give --item-set-id, --resource-class-id, or --item-ids"
+        )
     try:
         return (
             [int(value.strip()) for value in args.item_set_id.split(",")]
@@ -833,7 +907,8 @@ def show_configuration(
     table.add_row("Omeka", client.base_url)
     table.add_row(
         "Target",
-        f"item sets {', '.join(map(str, item_set_ids))}" if item_set_ids
+        "[yellow]explicit item id list[/] (repair run)" if args.item_ids
+        else f"item sets {', '.join(map(str, item_set_ids))}" if item_set_ids
         else f"resource class {args.resource_class_id}",
     )
     table.add_row("Items in scope", f"{total_items:,}")
@@ -923,11 +998,17 @@ def prepare_run(
         }
         for key in clients
     }
-    sources = (
-        [_list_params(item_set_id=item_set_id) for item_set_id in item_set_ids]
-        if item_set_ids else [_list_params(resource_class_id=args.resource_class_id)]
-    )
-    total_items = sum(count_items(client, params) for params in sources)
+    explicit_ids = parse_item_ids(args.item_ids) if args.item_ids else None
+    if explicit_ids is not None:
+        sources: List[Dict[str, Any]] = []
+        total_items = len(explicit_ids)
+    else:
+        sources = (
+            [_list_params(item_set_id=item_set_id) for item_set_id in item_set_ids]
+            if item_set_ids
+            else [_list_params(resource_class_id=args.resource_class_id)]
+        )
+        total_items = sum(count_items(client, params) for params in sources)
     show_configuration(
         args, client, item_set_ids, clients, labels, model_ids, prompt_id, total_items
     )
@@ -946,6 +1027,7 @@ def prepare_run(
         sources=sources,
         cache=cache,
         logger=logger,
+        item_ids=explicit_ids,
     )
     return PreparedSentimentRun(runner=runner, cache_path=cache_path, total_items=total_items)
 

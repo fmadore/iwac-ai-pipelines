@@ -547,19 +547,108 @@ def test_subjectivite_is_a_label_not_a_number():
         assert SUBJECTIVITE_ITEM_IDS.get(legacy_int) is None
 
 
+def _sentiment_base(centralite="Central"):
+    return dict(
+        centralite_islam_musulmans=centralite, centralite_justification="x",
+        polarite="Neutre", polarite_justification="x",
+        subjectivite_justification="x",
+    )
+
+
 def test_schema_rejects_a_numeric_subjectivite():
     from pydantic import ValidationError
     from sentiment_core import SentimentAnalysisOutput
 
-    base = dict(
-        centralite_islam_musulmans="Central", centralite_justification="x",
-        polarite="Neutre", polarite_justification="x",
-        subjectivite_justification="x",
-    )
+    base = _sentiment_base()
     assert SentimentAnalysisOutput(subjectivite_score="Mixte", **base)
-    assert SentimentAnalysisOutput(subjectivite_score=None, **base)
     with pytest.raises(ValidationError):
         SentimentAnalysisOutput(subjectivite_score=3, **base)
+
+
+def test_null_subjectivite_allowed_only_when_islam_is_not_addressed():
+    """A schema-compliant non-answer is still a non-answer.
+
+    ``subjectivite_score`` is nullable so ``Non abordé`` articles have somewhere
+    to go, which means provider-side ``strict`` validation accepts a null on any
+    article. DeepSeek V4 Flash 0731 returned one on 1,485 articles it had itself
+    marked as discussing Islam (2026-08), and because
+    ``build_property_values`` omits missing fields, those items were written with
+    four properties instead of six and the run reported success.
+    """
+    from pydantic import ValidationError
+    from sentiment_core import SentimentAnalysisOutput
+
+    # The one case a null is a real answer.
+    assert SentimentAnalysisOutput(
+        subjectivite_score=None, **_sentiment_base("Non abordé")
+    )
+
+    for centralite in ("Très central", "Central", "Secondaire", "Marginal"):
+        with pytest.raises(ValidationError):
+            SentimentAnalysisOutput(
+                subjectivite_score=None, **_sentiment_base(centralite)
+            )
+
+    # A real label is always fine, including on Non abordé.
+    for centralite in ("Non abordé", "Marginal", "Très central"):
+        assert SentimentAnalysisOutput(
+            subjectivite_score="Plutôt objectif", **_sentiment_base(centralite)
+        )
+
+
+def test_parse_item_ids_accepts_a_list_or_a_file(tmp_path):
+    """A repair set is thousands of ids, which does not fit on a command line."""
+    parse = sentiment_run.parse_item_ids
+
+    assert parse("2233,2234") == [2233, 2234]
+    assert parse(" 2233 , 2234 ") == [2233, 2234]
+
+    listing = tmp_path / "ids.txt"
+    listing.write_text("2233\n2234\n2235\n", encoding="utf-8")
+    assert parse(f"@{listing}") == [2233, 2234, 2235]
+
+
+def test_parse_item_ids_rejects_what_would_silently_misfire():
+    parse = sentiment_run.parse_item_ids
+
+    # A duplicate would be annotated twice, the second write a no-op PATCH.
+    assert parse("2233,2233,2234") == [2233, 2234]
+
+    with pytest.raises(ValueError):
+        parse("")
+    with pytest.raises(ValueError):
+        parse("2233,not-an-id")
+    with pytest.raises(ValueError):
+        parse("@/no/such/file/anywhere.txt")
+
+
+def test_item_ids_may_not_be_combined_with_a_listing():
+    """--item-ids replaces the listing rather than filtering it.
+
+    Accepting both would silently ignore one of them, and the mistake is only
+    visible after a full corpus walk.
+    """
+    parser = sentiment_run.build_argument_parser()
+    args = parser.parse_args(["--item-ids", "2233", "--resource-class-id", "36"])
+    with pytest.raises(ValueError):
+        sentiment_run.validate_arguments(args)
+
+    ok = parser.parse_args(["--item-ids", "2233"])
+    assert sentiment_run.validate_arguments(ok) == []
+
+
+def test_validator_does_not_change_the_wire_schema():
+    """The provider contract and the prompt fingerprint must be untouched.
+
+    A cross-field rule lives in Python, not in JSON Schema, so the body sent to
+    the model is byte-identical — the 12,305 values already stored under
+    fingerprint d14ace9ac192 stay comparable with anything produced after it.
+    """
+    from sentiment_core import SentimentAnalysisOutput
+
+    schema = SentimentAnalysisOutput.model_json_schema()
+    subjectivite = json.dumps(schema["properties"]["subjectivite_score"])
+    assert "null" in subjectivite, "field must stay nullable on the wire"
 
 
 def test_prompt_carries_its_load_bearing_sections():
