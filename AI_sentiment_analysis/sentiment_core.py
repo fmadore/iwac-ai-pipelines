@@ -243,19 +243,32 @@ class PanelMember:
 #: for the model, never for its vendor: reusing a vendor slot is what made
 #: generation 1 impossible to attribute without a git archaeology session.
 #:
-#: Three of the five are open-weights releases (Mistral Small 4 and Qwen3.5
-#: under Apache-2.0, DeepSeek V4 Flash under MIT), so those annotations can be
-#: regenerated from weights that are archivable alongside them. Their active
-#: parameter counts — 6.5B, 10B, 13B — sit inside a factor of two.
+#: Two of the four are open-weights releases (Mistral Small 4 under Apache-2.0,
+#: DeepSeek V4 Flash under MIT), so those annotations can be regenerated from
+#: weights that are archivable alongside them. Their active parameter counts —
+#: 6.5B and 13B — sit inside a factor of three.
 #:
 #: Every member is its vendor's high-volume tier. That is the property that
 #: makes this a panel rather than a quality ladder, and it is why the Gemini
 #: slot moved off ``gemini-3.6-flash`` on 2026-07-31: at $1.50/$7.50 per 1M it
-#: cost five to seventeen times the other four, so any disagreement it had with
+#: cost five to seventeen times the others, so any disagreement it had with
 #: them could be read as "the expensive model knows better" rather than as two
 #: readings of the construct. Flash-Lite is Google's actual counterpart to
 #: GPT-5.6 Luna and Mistral Small. Nothing was ever written to
 #: ``iwac:gemini36Flash*``.
+#:
+#: **Qwen3.5 122B-A10B was dropped on 2026-08-05, before it annotated
+#: anything.** It was never a model-quality decision — it was a serving one.
+#: OpenRouter lists five endpoints for it against DeepSeek's 22, and one of
+#: those does not support structured outputs, so ``require_parameters`` leaves
+#: four. That queueing put its median call at 104 s where the rest of the panel
+#: sat at 4–6 s, i.e. a corpus pass measured in days rather than hours, and the
+#: bottleneck was never the prompt or the reasoning level (it is marginally
+#: *faster* at ``medium`` than at ``low``). ``iwac:qwen35A10b*`` holds zero
+#: values, so unlike ``iwac:deepseekV4Flash*`` it needs no RETIRED_PANEL entry
+#: to keep — it follows ``qwen35A3b`` and ``gemini36Flash`` out of the emitted
+#: ontology, which ``00_setup_properties.py --verify`` confirms is empty before
+#: any upload.
 PANEL: Dict[str, PanelMember] = {
     m.key: m
     for m in (
@@ -265,13 +278,6 @@ PANEL: Dict[str, PanelMember] = {
                     "gpt56Luna"),
         PanelMember("mistral_small_2603", "mistral-small", "Mistral Small 4",
                     "mistralSmall2603"),
-        # 10B active, chosen to sit level with DeepSeek V4 Flash's 13B. The
-        # slot previously held qwen3.5-35b-a3b, whose 3B active was about a
-        # quarter of the panel's other open-weights member — a size gap that
-        # would have been indistinguishable from a model-quality difference in
-        # any agreement figure. Nothing was ever written to iwac:qwen35A3b*.
-        PanelMember("qwen3_5_122b_a10b", "qwen3.5-moe", "Qwen3.5 122B-A10B",
-                    "qwen35A10b"),
         PanelMember("deepseek_v4_flash_0731", "deepseek-v4-flash-0731",
                     "DeepSeek V4 Flash 0731", "deepseekV4Flash0731"),
     )
@@ -281,19 +287,20 @@ PANEL: Dict[str, PanelMember] = {
 #:
 #: The two knobs are sent together because the vendors split on naming: Gemini
 #: takes ``thinking_level``, everyone else ``reasoning_effort``. Each client
-#: reads only its own, so setting both is how one config reaches all five.
+#: reads only its own, so setting both is how one config reaches all four.
 #:
 #: Verified against the live APIs, 2026-07-29/31:
 #:   Gemini 3.5 Flash-Lite  thinking_level MINIMAL/LOW/MEDIUM/HIGH -> MEDIUM
 #:   GPT-5.6 Luna           effort none/low/medium/high/xhigh/max  -> medium
-#:   Qwen3.5 122B-A10B      effort normalised by OpenRouter (~50%) -> medium
 #:   DeepSeek V4 Flash 0731 accepts only low/high/max             -> high
 #:   Mistral Small 4        effort ONLY none|high — low/medium 400 -> high
 #:
-#: Three of five sit at a genuine middle setting. DeepSeek 0731 and Mistral
+#: Two of four sit at a genuine middle setting. DeepSeek 0731 and Mistral
 #: Small have no middle level, so their adapters round up to ``high`` rather
 #: than dropping into a lighter/non-reasoning mode. This is a real limit on
-#: comparability and belongs in any write-up of the panel results.
+#: comparability and belongs in any write-up of the panel results — and it is
+#: sharper now that Qwen's departure leaves the panel evenly split between
+#: models at a middle setting and models rounded up to ``high``.
 PANEL_REASONING = {"reasoning_effort": "medium", "thinking_level": "MEDIUM"}
 
 #: Per-member deviations from the shared middle setting. DeepSeek 0731 has no

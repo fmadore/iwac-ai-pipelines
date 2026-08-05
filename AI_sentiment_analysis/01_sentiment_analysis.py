@@ -75,13 +75,15 @@ Usage
     python AI_sentiment_analysis/01_sentiment_analysis.py --item-set-id 123 --dry-run
     python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 --limit 50
     python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 \
-        --models qwen3_5_122b_a10b --concurrency 24
+        --models deepseek_v4_flash_0731 --model-timeout 300
+    python AI_sentiment_analysis/01_sentiment_analysis.py \
+        --item-ids @repair_ids.txt --models deepseek_v4_flash_0731 --force-reanalyze
 
 Environment Variables
 ---------------------
 OMEKA_BASE_URL / OMEKA_KEY_IDENTITY / OMEKA_KEY_CREDENTIAL   Omeka S API
 GEMINI_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY              first-party models
-OPENROUTER_API_KEY                                           Qwen + DeepSeek
+OPENROUTER_API_KEY                                           DeepSeek
 """
 import sys
 import argparse

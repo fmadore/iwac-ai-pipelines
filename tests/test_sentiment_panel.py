@@ -267,7 +267,7 @@ def test_unmappable_and_blank_fields_are_omitted(property_ids):
 
 def test_write_path_preserves_unrelated_properties(monkeypatch, property_ids, good_result):
     """PATCH sends the whole item; anything dropped is deleted by Omeka."""
-    member = PANEL["qwen3_5_122b_a10b"]
+    member = PANEL["deepseek_v4_flash_0731"]
     item = {
         "o:id": 42,
         "dcterms:title": [{"@value": "Un titre", "property_id": 1}],
@@ -369,7 +369,7 @@ def test_cache_is_granular_to_the_model(tmp_path, good_result):
     reloaded = SentimentCache(path=path)
     reloaded.load()
     assert reloaded.missing_models(1, PANEL) == [
-        "mistral_small_2603", "qwen3_5_122b_a10b", "deepseek_v4_flash_0731",
+        "mistral_small_2603", "deepseek_v4_flash_0731",
     ]
 
 
@@ -381,7 +381,7 @@ def test_cache_survives_a_torn_final_line(tmp_path, good_result):
         cache.put(2, "gpt_5_6_luna", good_result)
 
     with open(path, "a", encoding="utf-8") as handle:
-        handle.write('{"v": 2, "item_id": "3", "model": "qwen3_5_122b_a10b", "resu')
+        handle.write('{"v": 2, "item_id": "3", "model": "deepseek_v4_flash_0731", "resu')
 
     reloaded = SentimentCache(path=path)
     report = reloaded.load()
@@ -492,11 +492,11 @@ def test_already_written_models_are_detected():
 def test_a_scoped_run_leaves_other_members_untouched(property_ids, good_result):
     """Running the panel one model at a time must be additive.
 
-    An item already annotated by Gemini gets Qwen's six properties added and
-    nothing else disturbed — including Qwen's own neighbours in the same
+    An item already annotated by Gemini gets DeepSeek's six properties added and
+    nothing else disturbed — including DeepSeek's own neighbours in the same
     vocabulary.
     """
-    qwen = PANEL["qwen3_5_122b_a10b"]
+    deepseek = PANEL["deepseek_v4_flash_0731"]
     gemini = PANEL["gemini_3_5_flash_lite"]
     existing = sentiment_run.build_property_values(
         gemini, good_result, property_ids
@@ -515,15 +515,15 @@ def test_a_scoped_run_leaves_other_members_untouched(property_ids, good_result):
             return True
 
     status = sentiment_run.update_item_sentiment(
-        FakeClient(), 5, {qwen.key: good_result}, property_ids,
+        FakeClient(), 5, {deepseek.key: good_result}, property_ids,
     )
 
     assert status == "updated"
     for term in gemini.terms:
         assert patched[term] == existing[term], f"scoped run disturbed {term}"
-    for term in qwen.terms:
+    for term in deepseek.terms:
         assert term in patched
-    assert (patched[qwen.probe_term][0]["value_resource_id"]
+    assert (patched[deepseek.probe_term][0]["value_resource_id"]
             == CENTRALITE_ITEM_IDS["Central"])
 
 
@@ -681,9 +681,9 @@ def test_pilot_resumes_from_its_partial_file(tmp_path):
     path = tmp_path / "p.partial.jsonl"
     path.write_text("\n".join([
         json.dumps({"prompt": "abc", "item_id": "1", "run": 0,
-                    "result": {"qwen3_5_122b_a10b": {"polarite": "Neutre"}}}),
+                    "result": {"deepseek_v4_flash_0731": {"polarite": "Neutre"}}}),
         json.dumps({"prompt": "abc", "item_id": "1", "run": 1,
-                    "result": {"qwen3_5_122b_a10b": {"polarite": "Positif"}}}),
+                    "result": {"deepseek_v4_flash_0731": {"polarite": "Positif"}}}),
         json.dumps({"prompt": "DIFFERENT", "item_id": "2", "run": 0, "result": {}}),
         '{"prompt": "abc", "item_id": "3", "ru',  # torn by a kill mid-write
     ]), encoding="utf-8")
@@ -691,7 +691,7 @@ def test_pilot_resumes_from_its_partial_file(tmp_path):
     done = pilot.load_partial(path, "abc", logger)
 
     assert sorted(done["1"]) == [0, 1]
-    assert done["1"][1]["qwen3_5_122b_a10b"]["polarite"] == "Positif"
+    assert done["1"][1]["deepseek_v4_flash_0731"]["polarite"] == "Positif"
     assert "2" not in done, "reused a repeat produced by a different prompt"
     assert "3" not in done, "torn line should be skipped, not fatal"
     assert pilot.load_partial(tmp_path / "absent.jsonl", "abc", logger) == {}
