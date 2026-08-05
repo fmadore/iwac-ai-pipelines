@@ -3,6 +3,8 @@
 Python workflows for processing the [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) (IWAC) using Large Language Models.
 
 [![Islam West Africa Collection](https://img.shields.io/badge/Collection-IWAC-blue)](https://islam.zmo.de/s/westafrica/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21804210.svg)](https://doi.org/10.5281/zenodo.21804210)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Context
 
@@ -132,7 +134,14 @@ The approach assumes you have digitized materials and need to make them searchab
 
 ## Citation
 
-If you use these tools or the IWAC dataset in your research, please cite:
+If you use these tools in your research, please cite the software:
+
+Madore, Frédérick. *IWAC AI Pipelines*. 2026. https://doi.org/10.5281/zenodo.21804210
+
+That DOI resolves to the latest release; each version also has its own. GitHub's
+"Cite this repository" button generates the same reference from `CITATION.cff`.
+
+For the accompanying article:
 
 Madore, Frédérick. "When AI Meets the Archive: Transforming the Islam West Africa Collection with Large Language Models." forthcoming.
 
