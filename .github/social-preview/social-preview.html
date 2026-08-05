@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IWAC AI Pipelines — social preview</title>
+<style>
+  :root {
+    --ink:        #0E141C;
+    --ink-2:      #131C27;
+    --paper:      #F4EFE4;
+    --paper-dim:  #97A3B4;
+    --amber:      #E0A03C;
+    --amber-soft: #C98A2E;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { width: 1280px; height: 640px; }
+
+  body {
+    background: var(--ink);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  .card {
+    position: relative;
+    width: 1280px;
+    height: 640px;
+    padding: 104px 76px 0;
+    background:
+      radial-gradient(1100px 620px at 88% 12%, rgba(224,160,60,0.13), transparent 62%),
+      linear-gradient(150deg, var(--ink-2) 0%, var(--ink) 58%);
+    overflow: hidden;
+  }
+
+  /* Hairline frame, inset — reads as a plate mark on the card */
+  .card::after {
+    content: "";
+    position: absolute;
+    inset: 26px;
+    border: 1px solid rgba(244,239,228,0.09);
+    pointer-events: none;
+  }
+
+  /* ---- Right-hand motif: garbled scan resolving into clean lines ---- */
+  .scan {
+    position: absolute;
+    top: 96px;
+    right: 74px;
+    width: 452px;
+    height: 452px;
+    -webkit-mask-image: linear-gradient(100deg, transparent 0%, #000 34%, #000 100%);
+    mask-image: linear-gradient(100deg, transparent 0%, #000 34%, #000 100%);
+  }
+  .scan .row { position: absolute; height: 11px; }
+  .scan .seg {
+    position: absolute;
+    height: 100%;
+    border-radius: 2px;
+    background: rgba(244,239,228,0.14);
+  }
+  .scan .seg.hot { background: rgba(224,160,60,0.60); }
+  .scan .seg.warm { background: rgba(224,160,60,0.36); }
+
+  /* ---- Type ---- */
+  .eyebrow {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.235em;
+    text-transform: uppercase;
+    color: var(--amber);
+  }
+
+  h1 {
+    margin-top: 26px;
+    font-family: "Sitka Display", Constantia, Cambria, Georgia, serif;
+    font-size: 92px;
+    line-height: 1.0;
+    font-weight: 700;
+    letter-spacing: -0.018em;
+    color: var(--paper);
+  }
+
+  .rule {
+    width: 92px;
+    height: 3px;
+    margin: 30px 0 26px;
+    background: var(--amber);
+  }
+
+  .lede {
+    max-width: 660px;
+    font-size: 24px;
+    line-height: 1.48;
+    font-weight: 400;
+    color: var(--paper-dim);
+  }
+  .lede b { color: var(--paper); font-weight: 600; }
+
+  /* One line, always: a wrapped second row unbalances the whole left column. */
+  .chips {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 9px;
+    margin-top: 32px;
+  }
+  .chip {
+    padding: 7px 14px 8px;
+    border: 1px solid rgba(244,239,228,0.20);
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    white-space: nowrap;
+    text-transform: uppercase;
+    color: rgba(244,239,228,0.80);
+  }
+
+  /* Anchored, not flowed: flex space-between let tall content push it off-canvas. */
+  footer {
+    position: absolute;
+    left: 76px;
+    right: 76px;
+    bottom: 62px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 19px;
+    color: var(--paper-dim);
+  }
+  footer .who { color: var(--paper); font-weight: 600; }
+  footer .org { color: var(--paper-dim); font-weight: 400; }
+  footer .repo {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 17px;
+    color: rgba(244,239,228,0.42);
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="scan" id="scan"></div>
+
+    <div>
+      <div class="eyebrow">Islam West Africa Collection</div>
+      <h1>IWAC AI Pipelines</h1>
+      <div class="rule"></div>
+      <p class="lede">
+        Large language models applied to <b>14,500+ archival items</b>,
+        written back to Omeka&nbsp;S.
+      </p>
+      <div class="chips">
+        <span class="chip">OCR</span>
+        <span class="chip">HTR</span>
+        <span class="chip">NER</span>
+        <span class="chip">Transcription</span>
+        <span class="chip">Summaries</span>
+        <span class="chip">Sentiment</span>
+      </div>
+    </div>
+
+    <footer>
+      <div><span class="who">Frédérick Madore</span> <span class="org">· University of Bayreuth</span></div>
+      <div class="repo">github.com/fmadore/iwac-ai-pipelines</div>
+    </footer>
+  </div>
+
+<script>
+// Deterministic LCG — the motif must be byte-identical on every re-render.
+let s = 20260805;
+const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+
+const scan = document.getElementById('scan');
+const ROWS = 16, GAP = 28, W = 452;
+
+for (let i = 0; i < ROWS; i++) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.style.top = (i * GAP) + 'px';
+
+  // Top rows are shattered into fragments (raw OCR); lower rows resolve into
+  // continuous, amber-tinted lines (corrected text).
+  const t = i / (ROWS - 1);
+  const pieces = Math.max(1, Math.round(6 - t * 5));
+  const width = W * (0.62 + rnd() * 0.38) * (1 - (i === ROWS - 1 ? 0.42 : 0));
+
+  let x = 0;
+  for (let p = 0; p < pieces; p++) {
+    const share = width / pieces;
+    const seg = document.createElement('div');
+    seg.className = 'seg' + (t > 0.72 ? ' hot' : t > 0.46 ? ' warm' : '');
+    const w = share * (0.55 + rnd() * 0.45);
+    seg.style.left = x + 'px';
+    seg.style.width = w + 'px';
+    seg.style.opacity = String(0.35 + t * 0.65);
+    row.appendChild(seg);
+    x += share;
+  }
+  scan.appendChild(row);
+}
+</script>
+</body>
+</html>

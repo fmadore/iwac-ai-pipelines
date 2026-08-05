@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=68"]
+# >=77 for PEP 639: the SPDX `license` string and `license-files` below.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,8 +9,32 @@ version = "1.0.0"
 description = "AI-powered document processing workflows for the Islam West Africa Collection (IWAC)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Frédérick Madore" }]
+keywords = [
+    "digital humanities",
+    "omeka-s",
+    "large language models",
+    "ocr",
+    "named entity recognition",
+    "handwritten text recognition",
+    "digital archives",
+    "african studies",
+]
+# No `License ::` classifier: PEP 639 forbids pairing one with the SPDX field above.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+]
+
 # Last verified green on 2026-08-03 against: google-genai 2.16.0, openai 2.52.0,
 # mistralai 2.8.0, pydantic 2.13.4, pypdf 6.14.2, requests 2.34.2,
 # python-dotenv 1.2.2, tqdm 4.70.0, rich 15.0.0, pytest 9.1.1, ruff 0.16.1.
@@ -33,6 +58,14 @@ dependencies = [
     "pydub>=0.25,<1",
     "audioop-lts; python_version >= '3.13'", # pydub dependency removed from stdlib in 3.13
 ]
+
+# Keep tables below the bare keys above: TOML assigns every following key to the
+# most recent table header, so `[project.urls]` placed earlier would swallow them.
+[project.urls]
+Homepage = "https://islam.zmo.de/s/westafrica/"
+Repository = "https://github.com/fmadore/iwac-ai-pipelines"
+Issues = "https://github.com/fmadore/iwac-ai-pipelines/issues"
+Dataset = "https://huggingface.co/datasets/fmadore/islam-west-africa-collection"
 
 [project.optional-dependencies]
 dev = [
