@@ -24,7 +24,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **Video Processing** | Summarize or transcribe video with visual descriptions |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
-| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a five-model panel |
+| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a four-model panel |
 | **Reference Indexing** | Assign controlled subject and spatial keywords to scholarly references using Claude, with authority reconciliation |
 
 ## Limitations and Caveats

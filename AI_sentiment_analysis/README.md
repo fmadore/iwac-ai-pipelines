@@ -80,12 +80,21 @@ is the only thing that can be, because Omeka does not index value annotations:
 | `iwac:gemini35FlashLite*` | `gemini-3.5-flash-lite` | 79617 | `gemini_3_5_flash_lite_` |
 | `iwac:gpt56Luna*` | `gpt-5.6-luna` | 79610 | `gpt_5_6_luna_` |
 | `iwac:mistralSmall2603*` | `mistral-small-2603` | 79614 | `mistral_small_2603_` |
-| `iwac:qwen35A10b*` | `qwen/qwen3.5-122b-a10b` | 79616 | `qwen3_5_122b_a10b_` |
 | `iwac:deepseekV4Flash0731*` | `deepseek/deepseek-v4-flash-0731` | 83261 | `deepseek_v4_flash_0731_` |
 
 The superseded preview remains under `iwac:deepseekV4Flash*` with authority
 item 79613. Those properties are historical and are never repointed to 0731;
 mixing two checkpoints in one property set would destroy model provenance.
+
+**Qwen3.5 122B-A10B was dropped from the panel on 2026-08-05** without ever
+annotating an article, so `iwac:qwen35A10b*` holds zero values and is not part of
+the ontology `00 --verify` expects. The reason was serving, not quality:
+OpenRouter listed 5 endpoints for it against DeepSeek's 22, one of them without
+structured-output support, so `require_parameters` left four. The resulting
+queueing put its median call at **104 s** against 4–6 s for the rest of the panel
+— a corpus pass in days rather than hours. Do not re-add it without checking
+endpoint availability first; the wall was never the prompt or the reasoning level
+(it was marginally *faster* at `medium` than at `low`).
 
 An `iwac:sentimentModel` value annotation was written alongside until
 2026-07-31 and has been **dropped**. Verified live: a query for
@@ -217,12 +226,12 @@ python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 --l
 ### One model at a time
 
 ```bash
-python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 --models qwen3_5_122b_a10b
+python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 --models deepseek_v4_flash_0731
 ```
 
 A first-class mode, not a degraded one. Each member owns six properties, so
 running them one after another builds exactly the same result as running all
-five together — with a far smaller blast radius per run, and a real read on one
+four together — with a far smaller blast radius per run, and a real read on one
 model's cost and failure rate before committing to the next.
 
 A scoped run **reads and writes only the models named**. Values already on the
@@ -243,33 +252,35 @@ the panel's reasoning setting, 5 concurrent requests, zero rejections:
 | Gemini 3.5 Flash-Lite | **3.8 s** | 1.1 s at `LOW`, 1.4 s at `MINIMAL` |
 | GPT-5.6 Luna | **5.8 s** | 4.3 s at `low` |
 | Mistral Small 4 | **5.8 s** | 2.1 s at `none` |
-| DeepSeek V4 Flash 0731 | *not benchmarked yet* | New official release; 8 OpenRouter endpoints at adoption |
-| Qwen3.5 122B-A10B | **104 s** | 4 usable endpoints — see below |
+| DeepSeek V4 Flash 0731 | **~55 s** | Measured end to end (below), not on the 07-31 bench |
 
 Every provider transport now has a finite deadline. `--model-timeout` is the
 total budget across the pipeline's three attempts (120 seconds by default);
 the runner subtracts retry backoff and assigns the remainder to the individual
 SDK calls, so a timed-out future cannot leave an unbounded HTTP thread behind.
 
-**The three first-party models finish the corpus in a couple of hours** at the
-default concurrency. Nothing about the prompt or the reasoning level was ever
-the bottleneck: Qwen is *faster* at `medium` (104 s) than at `low` (116 s),
-which is not a reasoning cost, it is queueing.
+**Full-corpus throughput, timed from the `ts` on all 12,305 cache records at
+`--concurrency 6`** (2026-08, so these are real runs rather than a latency bench):
 
-**Qwen is the outlier and it is a serving problem, not a model problem.**
-OpenRouter lists only 5 endpoints for it — one of which does not support
-structured outputs, so `require_parameters` leaves four — against 22 for
-DeepSeek. The good news is that the latency is queueing rather than a
-throughput wall, so it divides cleanly by concurrency (verified: 8 concurrent
-calls complete in the time of 1). Give it a much larger pool:
+| Model | Wall clock | Items/hour |
+|---|---|---|
+| GPT-5.6 Luna | **2.7 h** | 4,511 |
+| Mistral Small 4 | **3.7 h** | 3,318 |
+| DeepSeek V4 Flash 0731 | **31.5 h** | 391 |
 
-```bash
-python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 --models qwen3_5_122b_a10b --concurrency 24
-```
+DeepSeek is ~12× slower than Luna, and nothing like the retired preview's 9.7 s
+median: 0731 has no middle reasoning level, so the panel rounds it up to `high`.
+Budget a full day for it and hours for the others.
+
+**Pass `--model-timeout 300` for any 0731 run.** The 120 s default allots 37.3 s
+per attempt while the model takes ~55 s per item, so normal variance crosses a
+line drawn too tight: a corpus pass produced 91 model-call failures of which 88
+succeeded on a plain retry. Only 3 were genuine, and they cleared immediately at
+the larger budget.
 
 `--concurrency` multiplies with the per-item model fan-out. Running one member
 at a time — the normal mode — keeps requests in flight equal to the flag;
-running all five multiplies it by five.
+running all four multiplies it by four.
 
 ### When the money runs out
 
@@ -303,10 +314,10 @@ returns a confident, unusable score that is indistinguishable from a real
 annotation once stored. Same reasoning that got the 2026-07 `ocr_quality` column
 reverted before it shipped.
 
-The run reports an estimated duration before asking to proceed. At roughly 15 s
-per item — five models in parallel, the slowest deciding the item — the full
-12,356-article corpus is on the order of two days. It is built to be
-interrupted; see below.
+The run reports an estimated duration before asking to proceed. With four models
+in parallel the slowest decides the item, and since 0731 joined that is DeepSeek
+at ~55 s, so a whole-panel pass over the 12,356-article corpus runs to a day and
+a half. It is built to be interrupted; see below.
 
 ### Piloting a candidate panel
 
@@ -337,8 +348,8 @@ baseline), pairwise Cohen's kappa within the candidate panel, and — when the
 pilot used `--repeats` > 1 — how often each model reproduces its own answer.
 
 That last one matters because sampling temperature is vendor-owned and varies
-across the panel: DeepSeek V4 runs at 1.0, Qwen3.5 at 0.7, Mistral Small 4 at
-0.3, Gemini unset. Without a self-consistency figure, a low agreement score for
+across the panel: DeepSeek V4 runs at 1.0, Mistral Small 4 at 0.3, Gemini and
+Luna unset. Without a self-consistency figure, a low agreement score for
 a high-temperature model cannot be told apart from noise. The 2026-07-29 pilot
 measured DeepSeek at **0.52** polarité self-consistency against 0.70–0.80 for
 the rest, so this is not a hypothetical concern.
@@ -402,15 +413,13 @@ there.
 | `gemini_3_5_flash_lite` | `gemini-3.5-flash-lite` | `iwac:gemini35FlashLite*` | closed | $0.30 / $2.50 |
 | `gpt_5_6_luna` | `gpt-5.6-luna` | `iwac:gpt56Luna*` | closed | $1.00 / $6.00 |
 | `mistral_small_2603` | `mistral-small-2603` | `iwac:mistralSmall2603*` | **6.5B / 119B** | $0.15 / $0.60 |
-| `qwen3_5_122b_a10b` | `qwen/qwen3.5-122b-a10b` | `iwac:qwen35A10b*` | **10B / 122B** | $0.26 / $2.08 |
 | `deepseek_v4_flash_0731` | `deepseek/deepseek-v4-flash-0731` | `iwac:deepseekV4Flash0731*` | **13B / 284B** | from $0.09 / $0.18 |
 
 Property prefixes are the camelCase fold of the column prefix, so the Omeka→HF
-mapping is mechanical. Qwen is the one exception — the literal fold would be
-`qwen35122bA10b`, so the parameter count is dropped and the `A10B` active-params
-tag kept. Every property records its exact model id in `rdfs:comment` regardless.
+mapping is mechanical. Every property also records its exact model id in
+`rdfs:comment`.
 
-### Why these five
+### Why these four
 
 Every member is its vendor's **high-volume tier**, which is what makes the panel
 a panel rather than a quality ladder. The slot Gemini occupies was
@@ -419,14 +428,13 @@ times the rest, so an inter-model disagreement could always be read as "the
 expensive model knows better" rather than as two readings of the construct.
 Flash-Lite is Google's actual counterpart to Luna and Mistral Small.
 
-**Three of the five are open weights and can be re-run locally** — which for an
+**Two of the four are open weights and can be re-run locally** — which for an
 archive is the difference between an annotation you can cite and one you can
 only have taken on trust:
 
 | Model | Licence | Hugging Face |
 |---|---|---|
 | Mistral Small 4 | Apache-2.0 | [`mistralai/Mistral-Small-4-119B-2603`](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603) |
-| Qwen3.5 122B-A10B | Apache-2.0 | [`Qwen/Qwen3.5-122B-A10B`](https://huggingface.co/Qwen/Qwen3.5-122B-A10B) |
 | DeepSeek V4 Flash 0731 | MIT | [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) |
 
 Mistral Small 4 is the one served by its *vendor's* API rather than OpenRouter,
@@ -436,8 +444,10 @@ API model `mistral-small-2603` and the Apache-2.0 release carry the same
 the same `2603` release code. The card does not state weight-identity in so many
 words, so treat it as the same release rather than as a proof.
 
-Their three active-parameter counts — 6.5B, 10B, 13B — sit inside a factor of
-two, so an agreement figure between them is not quietly measuring model size.
+Their active-parameter counts — 6.5B and 13B — sit inside a factor of two, so an
+agreement figure between them is not quietly measuring model size. That margin
+was tighter before Qwen (10B) left, which makes a size effect marginally harder
+to rule out than it was with three open-weights members.
 
 ### Reasoning depth — comparable, but not identical
 
@@ -449,7 +459,6 @@ Verified against the live APIs on 2026-07-29:
 |---|---|---|---|
 | Gemini 3.5 Flash-Lite | `thinking_level` | MINIMAL / LOW / **MEDIUM** / HIGH | `MEDIUM` |
 | GPT-5.6 Luna | `reasoning.effort` | none / low / **medium** / high / xhigh / max | `medium` |
-| Qwen3.5 122B-A10B | `reasoning.effort` (OpenRouter-normalised, ~50% budget) | minimal…xhigh | `medium` |
 | DeepSeek V4 Flash 0731 | `reasoning.effort` | low / high / max | `high` (no medium level) |
 | **Mistral Small 4** | `reasoning_effort` | **`none` or `high` only** | `high` |
 
@@ -457,8 +466,10 @@ Verified against the live APIs on 2026-07-29:
 rejects `low` and `medium` with a 400; there is no middle setting to ask for.
 `MistralClient` rounds a `medium` request up to `high` so Mistral stays in the
 reasoning regime with the rest of the panel rather than dropping to
-non-reasoning, but it is doing more reasoning than the other four. State this
-in any write-up that compares the panel members.
+non-reasoning, but it is doing more reasoning than Gemini or Luna. DeepSeek 0731
+is rounded up the same way, so the four-model panel now splits evenly: two
+members at a genuine middle setting, two rounded up to `high`. State this in any
+write-up that compares the panel members.
 
 Mistral also changes its response shape once reasoning is on: `message.content`
 becomes a `thinking` + `text` chunk list instead of a string, which the SDK's
@@ -485,7 +496,7 @@ GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key
 MISTRAL_API_KEY=your_mistral_api_key
 
-# Open-weights models via OpenRouter (Qwen, DeepSeek) — optional
+# Open-weights models via OpenRouter (DeepSeek) — required for the panel's 0731 slot
 OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 
@@ -570,8 +581,8 @@ granularities:
    state lives in the archive rather than on disk.
 2. **Results are cached per (item, model)**, in `cache/sentiment_v2.jsonl`. On
    resume each model is asked only for what it has not already answered; with
-   five models, re-running the whole item because one timed out would waste
-   four calls per retry.
+   four models, re-running the whole item because one timed out would waste
+   three calls per retry.
 3. **Only successes are cached.** An errored call is deliberately not written,
    so the next run retries it. A cache that recorded its own failures would
    converge on a corpus of error placeholders.
