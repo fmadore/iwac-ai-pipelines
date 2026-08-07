@@ -132,9 +132,9 @@ This only touches items you actually regenerate — step 03 writes what is in th
 
 ### Downstream: Hugging Face
 
-`descriptionAI` is derived from `bibo:shortDescription`, and the export **pipe-joins multi-values**. Until the [IWAC-Hugging-Face](https://github.com/fmadore/IWAC-Hugging-Face) mapper is taught to split by `@language`, a bilingual item exports as `"résumé français|english summary"` in one column. Splitting it into `descriptionAI` / `descriptionAI_en` is a change in that repo, not this one — do it before the first corpus-wide bilingual run reaches the Hub.
+[IWAC-Hugging-Face](https://github.com/fmadore/IWAC-Hugging-Face) exports the two literals as `descriptionAI` (fr) and `descriptionAI_en`, selecting one value per language rather than pipe-joining them.
 
-**When that split lands, the MCP server needs a matching change**, or it silently loses ground. Today both languages share one column, so an English query token already hits the fast pass. Split them and the new column must be added to `SUBSET_FIELDS.articles` in [`mcpb/src/tools/_shared.ts`](https://github.com/fmadore/iwac-mcp-server/blob/main/mcpb/src/tools/_shared.ts) with `searchable: true` — otherwise the English half drops out of the search surface entirely, and the split makes anglophone discovery *worse* than the pipe-joined version it replaced.
+The one constraint that falls on **this** pipeline: never write two literals of the same language on one item. The export takes the first and drops the rest, so a duplicate does not merge — it makes the exported summary depend on whatever order Omeka returned. That is what `adopt_untagged` on the French target prevents.
 
 ## Limitations
 
@@ -146,14 +146,9 @@ This only touches items you actually regenerate — step 03 writes what is in th
 
 **Fidelity**: the prompt forbids adding any fact, place or date the source does not state — including the obvious ones. This is enforcement against a real failure: on a 338-character stub, GPT-5.6 Luna added the city "à Ouagadougou?", question mark included, inferring the organization's seat and flagging its own doubt inside the summary. Both the invented location and uncertainty markers are now explicitly prohibited. Spot-check short and OCR-degraded documents anyway.
 
-**Written for two readers, not for RAG**: these summaries are never embedded. The [IWAC MCP server](https://github.com/fmadore/iwac-mcp-server)'s semantic tools run on `embedding_OCR` / `embedding_tableOfContents` / `embedding_image`; there is no `embedding_descriptionAI` anywhere in the stack. What `descriptionAI` actually does is:
+**Written for discovery, not for RAG**: these summaries are never embedded — they are read by keyword search and by agents deciding which items are worth opening in full. That is why the prompt no longer says "keyword-rich, not narrative": the corpus shares its vocabulary (*islam*, *musulmans*, *imam*, country names), so a keyword-dense abstract is indistinguishable from forty others and triage collapses. The prompt asks instead for dense, concrete prose carrying the particulars — figures, decisions, named roles — and tells the model **not** to paraphrase the title, subject or spatial fields, which consumers already have beside the summary.
 
-1. **Fast-pass keyword matching.** It sits in the server's `FAST_TEXT_COLS` — accent/case-insensitive substring match over titles, subjects, places and abstracts, tried *before* the full-text scan. The server's own note puts the difference at ~150 ms versus ~3 s. A term missing from the summary is only found if the query falls through to OCR.
-2. **Agent triage.** It is the `triage` view on articles, returned under `with_description`, and read to decide which items are worth a `fetch`.
-
-Those two pull in opposite directions, which is why the prompt no longer says "keyword-rich, not narrative": the corpus shares its vocabulary (*islam*, *musulmans*, *imam*, country names), so a keyword-dense abstract is indistinguishable from forty others and triage collapses. The prompt asks instead for dense, concrete prose carrying the particulars — figures, decisions, named roles — and explicitly tells the model **not** to paraphrase the title, subject or spatial fields, which the server already indexes and already displays beside the summary.
-
-**Length is a context cost.** Live summaries average **501 characters ≈ 125 tokens/row** (measured over 300 articles), which is exactly the server's own budget. Bilingual doubles that: at ~1,070 characters pipe-joined, a 20-row `with_description` list costs ~5,400 tokens instead of ~2,500. The prompt targets 400–600 characters *per version* to keep the doubling at ~2.1× rather than compounding it with longer prose. Once the HF mapper splits the column, the MCP server should serve one language in triage and keep the other for `fetch`.
+**Length is a budget.** Live summaries average **501 characters** (measured over 300 articles). The prompt targets 400–600 characters *per version* so that each language stands on its own within that, rather than the pair costing double wherever a summary is listed.
 
 ## Configuration
 

@@ -224,7 +224,9 @@ def test_french_adopts_the_untagged_legacy_summary(french, english):
     """~12,300 articles carry a French summary written before the tag existed.
 
     Appending a second, ``fr``-tagged French value beside the untagged one would
-    give the item two French summaries and pipe-join them in the HF export.
+    give the item two French summaries. The export keeps one value per language,
+    so the item would then publish whichever one Omeka returned first — the old
+    summary or the new one, with nothing to signal which.
     """
     item = {
         "o:id": 1,

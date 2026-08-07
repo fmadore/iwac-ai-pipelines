@@ -146,8 +146,9 @@ docstring.
 written before then carry no language tag at all, so the French `PropertyTarget` sets
 `adopt_untagged=True` to claim and tag the existing literal instead of appending a
 second French value beside it — never set that flag on more than one target of the
-same property. The HF export pipe-joins multi-values, so `descriptionAI` becomes
-`"résumé|summary"` until the IWAC-Hugging-Face mapper learns to split by language.
+same property. The HF export carries them as `descriptionAI` and `descriptionAI_en`,
+one value per language — so two literals of the *same* language on one item are a
+bug this pipeline must not create: the export keeps one and drops the other.
 
 Instance-specific constants — property IDs, authority item sets, the `AI_MODEL_ITEMS`
 model-provenance registry — belong in `common/iwac_config.py`, not inline in scripts.
