@@ -60,11 +60,13 @@ The updater defaults to the matching `DeepSeek V4 Flash 0731` authority item
 
 The issue-indexing Claude agent reads PDFs directly without LLM API calls and handles the full pipeline (download, extraction, Omeka update). Use it via the `/issue-indexing` skill in Claude Code.
 
+On that path the provenance to record is the Claude model that did the reading, not a registry model — `--model claude-opus-5` for Opus 5. Nothing in this repo can observe which model Claude Code is running, so the operator asserts it; naming last year's release is the easy mistake, which is why the key carries the version.
+
 ## Supported Models
 
 | Provider | Model | Best For |
 |----------|-------|----------|
-| **Claude Agent** (recommended) | Opus 4.6 | Reads PDFs directly, no API costs, best quality |
+| **Claude Agent** (recommended) | Opus 5 | Reads PDFs directly, no API costs, best quality |
 | **Gemini** (standard profile) | Gemini Pro → DeepSeek V4 Flash 0731 | Good extraction quality, accurate article detection |
 | **Gemini** (light profile) | Gemini Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
 | Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |

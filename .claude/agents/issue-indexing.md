@@ -121,7 +121,13 @@ changes only the TOC property, and PATCHes it back).
 .venv/Scripts/python.exe AI_summary_issue/03_update_omeka_toc.py             # then write
 ```
 
-The script prompts for the annotation model (1 = Claude Opus 4.6, 2 = Gemini 3.1 pro, 3 = Gemini 3.5 flash, 4 = Gemini 3.1 flash lite), recorded as the `iwac:summaryModel` value annotation. Recommend running `--dry-run` first, then confirm the live run.
+The script prompts for the annotation model, recorded as the `iwac:summaryModel`
+value annotation. **Read the menu it prints and pick by name, not by number** —
+the list is `AI_MODEL_ITEMS` in `common/iwac_config.py` and its order shifts
+whenever a model is added. Since this agent reads the PDFs itself, the model to
+name is the one *you* are running: `Claude Opus 5.0` for Opus 5, or pass it
+non-interactively with `--model claude-opus-5`. Recommend running `--dry-run`
+first, then confirm the live run.
 
 ### Step 5: Clean up
 

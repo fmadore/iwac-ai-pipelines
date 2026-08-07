@@ -57,7 +57,8 @@ AUTHORITY_RECORD_TYPE_ITEM_ID = 67568
 # resolve (e.g. 78053 "Gemini 3.0 flash", 78630 "Gemini 3.5 flash"); they are
 # dropped from this dict once no longer offered for new writes.
 AI_MODEL_ITEMS: Dict[str, Dict] = {
-    "claude-opus": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
+    "claude-opus-5": {"item_id": 79615, "display_title": "Claude Opus 5.0"},
+    "claude-opus-4.6": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
     "gemini-3.1-pro": {"item_id": 78536, "display_title": "Gemini 3.1 pro"},
     "gemini-3.6-flash": {"item_id": 79611, "display_title": "Gemini 3.6 flash"},
     "gemini-3.5-flash-lite": {"item_id": 79617, "display_title": "Gemini 3.5 Flash-Lite"},
@@ -103,6 +104,17 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
 #: ``MODEL_REGISTRY`` — it is the right choice for a pipeline that wants
 #: whatever Pro is current and does not stamp provenance — it simply cannot be
 #: an annotation key.
+#:
+#: ``claude-opus`` was the same ambiguity in a different shape and was split on
+#: 2026-08-07 into ``claude-opus-4.6`` and ``claude-opus-5``. There is no
+#: registry entry for either — the Claude keys exist only so ``AI_summary_issue``
+#: can stamp which model read the PDFs when the index came from the
+#: ``issue-indexing`` agent rather than from a provider API. (The other
+#: agent-driven pipeline, ``AI_reference_indexing``, writes resource links and
+#: stamps nothing.) That model is whatever Claude Code is running, which no code
+#: here observes, so the operator asserts it — and an unversioned key invited
+#: them to assert a name that had quietly come to mean the wrong release. 78528
+#: keeps the existing Opus 4.6 annotations resolving; new runs take 79615.
 RETIRED_AI_MODEL_ITEM_IDS = (79608, 79609)
 
 
