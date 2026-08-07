@@ -100,20 +100,26 @@ class LLMConfig:
 
 
 MODEL_REGISTRY: Dict[str, ModelOption] = {
+    # Prices are in/cached-in/out per 1M tokens, short-context tier, verified
+    # against developers.openai.com/api/docs/pricing on 2026-08-06. They are
+    # DESCRIPTIONS, not something the code computes with — but a stale one is not
+    # harmless: the previous "$1/$6" for Luna was 5x the real rate and produced a
+    # $50 corpus estimate for a job that costs ~$7. Re-check upstream before
+    # quoting any of these; do not infer them from a model's tier name.
     "gpt-5.6-luna": ModelOption(
         "gpt-5.6-luna", PROVIDER_OPENAI, OPENAI_LUNA_MODEL,
         "ChatGPT (GPT-5.6 Luna)",
-        "OpenAI Responses API — cost-optimized tier ($1/$6 per 1M tokens)",
+        "OpenAI Responses API — cost-optimized tier ($0.20/$0.02/$1.20 per 1M)",
     ),
     "gpt-5.6-terra": ModelOption(
         "gpt-5.6-terra", PROVIDER_OPENAI, OPENAI_TERRA_MODEL,
         "ChatGPT (GPT-5.6 Terra)",
-        "OpenAI Responses API — balanced tier ($2.50/$15 per 1M tokens)",
+        "OpenAI Responses API — balanced tier ($2/$0.20/$12 per 1M)",
     ),
     "gpt-5.6-sol": ModelOption(
         "gpt-5.6-sol", PROVIDER_OPENAI, OPENAI_SOL_MODEL,
         "ChatGPT (GPT-5.6 Sol)",
-        "OpenAI Responses API — flagship tier ($5/$30 per 1M tokens)",
+        "OpenAI Responses API — flagship tier ($5/$0.50/$30 per 1M)",
     ),
     "gemini-flash": ModelOption(
         "gemini-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_FLASH,

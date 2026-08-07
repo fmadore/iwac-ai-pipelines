@@ -282,6 +282,52 @@ the larger budget.
 at a time — the normal mode — keeps requests in flight equal to the flag;
 running all four multiplies it by four.
 
+### Cost — measure it, never infer it from the tier name
+
+Measured full-corpus figures (12,305 articles):
+
+| Model | Full pass | How it was obtained |
+|---|---|---|
+| DeepSeek V4 Flash 0731 | **$10.95** | measured against the OpenRouter credits endpoint |
+| Gemini 3.5 Flash-Lite | **~$47** projected | 8 articles sampled across the corpus, `thinking_level=MEDIUM` |
+
+Two traps, both of which have caught this repo:
+
+**Reasoning tokens dominate, and they invert the rate-card ranking.** Gemini
+3.5 Flash-Lite averaged 2,852 input / 159 answer / **1,037 thinking** tokens —
+so 87% of billed output is thinking, and the output rate lands on it. Assuming
+thinking is unbilled gives ~$19 and is wrong by 2.5×. This is why the cheaper
+looking tier costs 4× the DeepSeek pass.
+
+**The price in `MODEL_REGISTRY` is a description, not a source of truth.** On
+2026-08-06 the `gpt-5.6-luna` entry read `$1/$6 per 1M` against a real
+`$0.20/$0.02/$1.20`; a corpus estimate built on it came out 5× high, and
+ignoring cached input made it 7× high overall. Re-check
+[OpenAI's pricing page](https://developers.openai.com/api/docs/pricing) (or the
+provider's) before quoting a figure.
+
+**Prompt caching is not a rounding error.** These pipelines send one long system
+prompt with every request, so it is the shared prefix of every call: on the
+summary pipeline, 55% of input tokens were served from cache at 10% of the rate,
+with 39 of 40 concurrent calls hitting it. Read `cached_tokens`, do not assume
+zero.
+
+To measure tokens for any member, replicate the call — `generate_structured()`
+returns only the parsed object, and no provider surfaces usage through it:
+
+```python
+client = build_llm_client(option, LLMConfig(**panel_reasoning(key)))
+cfg = client._build_generation_config(client._get_effective_config(None))
+cfg |= {"system_instruction": ..., "response_mime_type": ..., "response_schema": ...}
+resp = client._client.models.generate_content(...)      # Gemini
+resp.usage_metadata.thoughts_token_count
+# OpenAI: responses.parse(...).usage.output_tokens_details.reasoning_tokens
+#         and .usage.input_tokens_details.cached_tokens
+```
+
+Sample items spread across the corpus. The first page of the article class is
+one newspaper's consecutive issues and is not representative.
+
 ### When the money runs out
 
 A provider returning **402** (or a 429 that names a daily/billing cap) stops the

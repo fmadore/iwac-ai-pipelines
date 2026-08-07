@@ -326,9 +326,9 @@ The provider supports these models via the `MODEL_REGISTRY`:
 
 | Key | Provider | Model ID | Label | Description |
 |-----|----------|----------|-------|-------------|
-| `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Cost-optimized tier, $1/$6 per 1M tokens |
-| `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2.50/$15 per 1M tokens |
-| `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Flagship tier, $5/$30 per 1M tokens |
+| `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Cost-optimized tier, $0.20/$0.02/$1.20 per 1M |
+| `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2/$0.20/$12 per 1M |
+| `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Flagship tier, $5/$0.50/$30 per 1M |
 | `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Fast, cost-effective |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality |
