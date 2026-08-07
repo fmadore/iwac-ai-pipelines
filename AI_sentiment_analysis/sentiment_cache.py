@@ -20,8 +20,8 @@ This module fixes both, plus a third problem that only shows up with a panel:
   unparseable line; loading skips it and reports it rather than failing. Every
   earlier line is already complete and readable.
 - **Granular to the model, not the item.** The old cache keyed on the item, so
-  one model erroring meant re-running all of them on resume — with five models
-  that is four wasted calls per retry. Here each (item, model) is cached
+  one model erroring meant re-running all of them on resume — with four models
+  that is three wasted calls per retry. Here each (item, model) is cached
   independently and a resume asks only for what is actually missing.
 
 Only successful results are cached. An errored call is deliberately *not*

@@ -101,7 +101,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 | Gemini | `gemini-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
-| OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the default for every text-generation stage, including sentiment and magazine consolidation. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
+| OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the shared text default (`DEFAULT_TEXT_MODEL_KEY`), used by NER, OCR correction and magazine consolidation. Summarization is the one exception and defaults to `gpt-5.6-luna` for throughput. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
 
 `deepseek-v4-flash-0731` is pinned to the dated OpenRouter slug
 `deepseek/deepseek-v4-flash-0731`; the generic aliases `deepseek` and

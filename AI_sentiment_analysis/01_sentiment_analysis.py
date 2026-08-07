@@ -5,7 +5,7 @@
 
 AI Sentiment Analysis Pipeline for IWAC Omeka S Items — generation 2.
 
-Annotates items with the five-model panel defined in ``sentiment_core.PANEL``
+Annotates items with the four-model panel defined in ``sentiment_core.PANEL``
 and writes the results to Omeka, each model into its own six properties named
 for that model.
 

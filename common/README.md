@@ -382,8 +382,14 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Fast, cost-effective |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality |
+| `gemini-3.6-flash` | Gemini | `gemini-3.6-flash` | Gemini 3.6 Flash | Version-pinned Flash |
+| `gemini-3.5-flash-lite` | Gemini | `gemini-3.5-flash-lite` | Gemini 3.5 Flash-Lite | Version-pinned; the generation-2 sentiment panel's Gemini seat |
+| `gemini-3.1-flash-lite` | Gemini | `gemini-3.1-flash-lite` | Gemini 3.1 Flash-Lite | Version-pinned |
+| `gemini-3.1-pro` | Gemini | `gemini-3.1-pro-preview` | Gemini 3.1 Pro | Version-pinned quality tier |
+| `gemma-4` | Gemini | `gemma-4-31b-it` | Gemma 4 31B | Dense open-weights flagship, served on `GEMINI_API_KEY`; text + image only, `MINIMAL`/`HIGH` thinking only |
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |
+| `mistral-small` | Mistral | `mistral-small-2603` | Mistral Small 4 | Hybrid reasoning model |
 | `qwen3.5-moe` | OpenRouter | `qwen/qwen3.5-122b-a10b` | Qwen3.5 122B-A10B | Apache-2.0 open weights, MoE 10B active, $0.26/$2.08 per 1M tokens |
 | `qwen3.5-moe-small` | OpenRouter | `qwen/qwen3.5-35b-a3b` | Qwen3.5 35B-A3B | Apache-2.0 open weights, MoE 3B active, $0.14/$1.00 per 1M tokens |
 | `qwen3.5-dense` | OpenRouter | `qwen/qwen3.5-27b` | Qwen3.5 27B | Apache-2.0 open weights, dense, $0.195/$1.56 per 1M tokens |

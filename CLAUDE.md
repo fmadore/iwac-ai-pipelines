@@ -74,7 +74,11 @@ grep across five pipelines.
 **The shared text default is `DEFAULT_TEXT_MODEL_KEY`.** It currently points to
 the pinned `deepseek-v4-flash-0731` release. Text-only entry points use it when
 `--model` is omitted; multimodal extraction stages do not pretend a text-only
-model can consume their source media.
+model can consume their source media. `AI_summary` is the one deliberate
+exception — it pins `gpt-5.6-luna`, because 0731 has no middle reasoning level
+and rounds up to `high`, which cost 31.5 h against Luna's 2.7 h on a full-corpus
+pass. A pipeline overriding the shared default must say why, in the module that
+does it.
 
 **Never set `temperature` in a pipeline.** It belongs to the vendor and lives once
 in `MODEL_REGISTRY`: nothing at all for Gemini 3 / Gemma, `1.0` for DeepSeek V4,

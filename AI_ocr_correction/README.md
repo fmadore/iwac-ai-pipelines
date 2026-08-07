@@ -56,7 +56,9 @@ python 02_correct_alto_xml.py --model gemini-flash
 | `gpt-5.6-sol` | Slower | Higher quality |
 | `mistral-large` | Medium | European languages |
 | `ministral-14b` | Fast | Budget option |
+| `mistral-small` | Fast | Hybrid reasoning, between the two above |
 | `qwen3.5-moe` | Fast | Cheapest bulk option (via OpenRouter) |
+| `qwen3.5-dense` | Fast | Dense 27B sibling of the above (via OpenRouter) |
 | `deepseek-v4-flash-0731` | Fast | Default and cheapest bulk option (via OpenRouter) |
 | `deepseek-v4-flash` | Fast | Superseded preview, retained for reproducibility |
 | `deepseek-v4-pro` | Slowest | Hardest scans; reasons at `high` by default (via OpenRouter) |

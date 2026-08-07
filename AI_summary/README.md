@@ -87,8 +87,10 @@ All models produce comparable summary quality for this task. Luna is the default
 throughput: measured over the sentiment panel's full-corpus passes, Luna ran 2.7 h
 against DeepSeek V4 Flash 0731's 31.5 h — 0731 has no middle reasoning level, so the
 panel rounds it up to `high`. Since Luna's real price makes the whole corpus ~$7, the
-~$4 saved by DeepSeek does not buy back a ~12× slower run; pass `--model-timeout 300`
-if you pick it anyway.
+~$4 saved by DeepSeek does not buy back a ~12× slower run.
+
+This pipeline is the one text entry point that does **not** default to the shared
+`DEFAULT_TEXT_MODEL_KEY`; every other one still does.
 
 ## Output
 
@@ -142,7 +144,7 @@ The one constraint that falls on **this** pipeline: never write two literals of 
 
 **Hallucination risk**: AI may occasionally include information not present in the source text. Summaries are aids for discovery, not substitutes for reading originals.
 
-**Language**: Summaries are generated in French and English regardless of source language. The prompt is written in French and assumes French input — the collection holds ~45 Ewé, Kabiyè and Dendi items for which a French-prompted model returns confident but unreliable output. Exclude them from the item sets you feed step 01 rather than trusting the result.
+**Language**: Summaries are generated in French and English regardless of source language. The prompt is written in French and assumes French input — the collection holds ~45 Ewé, Kabiyè and Dendi items for which a French-prompted model returns confident but unreliable output. Step 01 drops them by default (`--language` keeps only Français/Anglais); passing `--language` with no value disables that filter and puts them back in scope.
 
 **Fidelity**: the prompt forbids adding any fact, place or date the source does not state — including the obvious ones. This is enforcement against a real failure: on a 338-character stub, GPT-5.6 Luna added the city "à Ouagadougou?", question mark included, inferring the organization's seat and flagging its own doubt inside the summary. Both the invented location and uncertainty markers are now explicitly prohibited. Spot-check short and OCR-degraded documents anyway.
 

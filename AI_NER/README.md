@@ -55,6 +55,7 @@ different provenance; use `--force` to replace it deliberately.
 | `gpt-5.6-luna` | OpenAI | Fast | Low |
 | `mistral-large` | Mistral | Medium | Medium |
 | `ministral-14b` | Mistral | Fast | Low |
+| `mistral-small` | Mistral (hybrid reasoning) | Fast | Low |
 | `qwen3.5-moe` | Alibaba (open weights, Apache-2.0, via OpenRouter) | Fast | Lowest |
 | `deepseek-v4-flash-0731` | DeepSeek (open weights via OpenRouter) | Fast | Lowest (default) |
 
