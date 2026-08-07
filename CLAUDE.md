@@ -42,7 +42,7 @@ Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provide
 | `iwac_config.py` | IWAC-instance constants: property IDs, authority item sets, `AI_MODEL_ITEMS` |
 | `gemini_utils.py` | Gemini plumbing for multimodal scripts: generation config, Files API upload, text extraction that skips `thought` parts |
 | `gemini_page_processor.py` | The page-by-page Gemini PDF loop shared by OCR and HTR: inline→Files-API fallback, retry policy, `finish_reason` handling, page markers, batch driver |
-| `omeka_text_updater.py` | The `03` write step shared by summary/OCR/correction/transcription: change detection, `@annotation` re-attachment, `--dry-run`, confirmation gate |
+| `omeka_text_updater.py` | The `03` write step shared by summary/OCR/correction/transcription: change detection, `@annotation` attachment, `@language`-tagged values, several values per item in one PATCH, `--dry-run`, confirmation gate |
 | `omeka_link_updater.py` | The same idempotent write for *resource-link* properties (`dcterms:subject`, `dcterms:spatial`): dedup against existing links, whole-item PATCH, `dry_run`, pre-write snapshot |
 | `write_guard.py` | The gate in front of every bulk write: `--dry-run`, `--yes`, pre-write payload dump, confirmation panel |
 | `checkpoint.py` | Atomic JSON checkpoints for resumable runs: a stored fingerprint of model, prompt and input decides resume vs. regenerate |
@@ -124,19 +124,30 @@ now goes through `common/write_guard.py` — argument parsing, `--dry-run`, a pr
 payload dump, and a confirmation gate — and `tests/test_write_guard.py` fails if a new
 write script skips it. Never run one of these scripts to "see what it does".
 
-**`upsert_property_value()` drops `@annotation`.** It rebuilds the value object from
-five keys when appending to a property that has no literal yet, so value annotations
-(`iwac:summaryModel`, `iwac:ocrModel` — which AI model produced the content) are
-silently lost. `common/omeka_text_updater.apply_text_value()` re-attaches them and is
-what the `03` steps use; call `upsert_property_value()` directly only if you re-attach
-the annotation yourself. Before any bulk write, dump the pre-write payloads to JSON;
-that backup is the only route back.
+**`upsert_property_value()` drops `@annotation` and ignores `@language`.** It rebuilds
+the value object from five keys when appending to a property that has no literal yet,
+so value annotations (`iwac:summaryModel`, `iwac:ocrModel` — which AI model produced
+the content) are silently lost; and it matches the *first* literal on a property
+whatever its language, so calling it once per language makes the second write clobber
+the first. `common/omeka_text_updater.apply_text_value()` handles both and is what the
+`03` steps use — it no longer delegates to `upsert_property_value()` for exactly this
+reason. Call `upsert_property_value()` directly only for a single untagged literal
+whose annotation you re-attach yourself. Before any bulk write, dump the pre-write
+payloads to JSON; that backup is the only route back.
 
 **AI summaries go in `bibo:shortDescription`**, exported to Hugging Face as
 `descriptionAI`. Not `dcterms:abstract`, which holds publisher abstracts on issues
 and scholarly references. When unsure which property a pipeline should target, count
 live field population per resource class through the API rather than trusting a
 docstring.
+
+**Since 2026-08-06 that property carries TWO literals**, tagged `@language` `fr` and
+`en`, both annotated with the one model that produced them. The ~12,300 summaries
+written before then carry no language tag at all, so the French `PropertyTarget` sets
+`adopt_untagged=True` to claim and tag the existing literal instead of appending a
+second French value beside it — never set that flag on more than one target of the
+same property. The HF export pipe-joins multi-values, so `descriptionAI` becomes
+`"résumé|summary"` until the IWAC-Hugging-Face mapper learns to split by language.
 
 Instance-specific constants — property IDs, authority item sets, the `AI_MODEL_ITEMS`
 model-provenance registry — belong in `common/iwac_config.py`, not inline in scripts.

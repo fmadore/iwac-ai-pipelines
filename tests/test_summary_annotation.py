@@ -23,7 +23,11 @@ from common.iwac_config import (
     RETIRED_AI_MODEL_ITEM_IDS,
     model_annotation_value,
 )
-from common.omeka_text_updater import PropertyTarget, apply_text_value
+from common.omeka_text_updater import (
+    PropertyTarget,
+    apply_text_value,
+    apply_text_values,
+)
 
 SUMMARY_PID = 116
 BASE_URL = "https://example.org/api"
@@ -78,6 +82,52 @@ def test_idempotent_when_text_and_model_unchanged(target):
     assert apply_text_value(item, target, "Résumé.") is False
 
 
+def test_server_added_annotation_keys_are_not_a_difference(target, model_value):
+    """The regression that re-PATCHed a whole corpus.
+
+    Omeka echoes a ``resource:item`` annotation back with ``"url": null`` — a key
+    no client sends. An exact dict comparison therefore never matched a value
+    that had just been written, so every annotated item reported as changed and
+    the unchanged-skip never fired: a resumed 12,305-article summary run wrote
+    the entire corpus again instead of only its remainder.
+    """
+    item = {"o:id": 1}
+    apply_text_value(item, target, "Résumé.")
+
+    # Simulate the round trip: Omeka returns what we sent, plus its own keys.
+    stored = item["bibo:shortDescription"][0]["@annotation"]["iwac:summaryModel"][0]
+    stored["url"] = None
+    stored["thumbnail_display_urls"] = {"square": None}
+
+    assert apply_text_value(item, target, "Résumé.") is False, (
+        "a server-added key must not count as a change"
+    )
+
+
+def test_a_genuinely_different_model_still_counts_as_a_change(target, model_value):
+    """The loosened comparison must not stop noticing a real difference."""
+    item = {"o:id": 1}
+    apply_text_value(item, target, "Résumé.")
+    stored = item["bibo:shortDescription"][0]["@annotation"]["iwac:summaryModel"][0]
+    stored["url"] = None
+    stored["value_resource_id"] = 78053  # annotated by a different model
+
+    assert apply_text_value(item, target, "Résumé.") is True
+    assert (_annotation(item)["iwac:summaryModel"][0]["value_resource_id"]
+            == AI_MODEL_ITEMS["gpt-5.6-luna"]["item_id"])
+
+
+def test_missing_annotation_is_still_a_change(target):
+    item = {
+        "o:id": 1,
+        "bibo:shortDescription": [{
+            "@value": "Résumé.", "property_id": SUMMARY_PID,
+            "type": "literal", "@language": "fr",
+        }],
+    }
+    assert apply_text_value(item, target, "Résumé.") is True
+
+
 def test_refreshes_a_stale_model_annotation(target):
     item = {
         "o:id": 1,
@@ -106,6 +156,139 @@ def test_annotation_survives_a_text_rewrite(target):
     assert len(values) == 1, "rewrite should replace the literal, not append a second one"
     assert values[0]["@value"] == "Nouveau résumé."
     assert _annotation(item) is not None, "annotation was dropped by the rewrite"
+
+
+# ---------------------------------------------------------------------------
+# Bilingual writes: two language-tagged literals on one property
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def french(model_value):
+    return PropertyTarget(
+        term="bibo:shortDescription", property_id=SUMMARY_PID,
+        property_label="shortDescription",
+        annotation_term="iwac:summaryModel", annotation_value=model_value,
+        language="fr", adopt_untagged=True,
+    )
+
+
+@pytest.fixture
+def english(model_value):
+    return PropertyTarget(
+        term="bibo:shortDescription", property_id=SUMMARY_PID,
+        property_label="shortDescription",
+        annotation_term="iwac:summaryModel", annotation_value=model_value,
+        language="en",
+    )
+
+
+def _by_language(item):
+    return {
+        value.get("@language"): value["@value"]
+        for value in item["bibo:shortDescription"]
+    }
+
+
+def test_writes_one_literal_per_language(french, english):
+    """The core bilingual guard.
+
+    ``upsert_property_value`` matches the first literal on a property whatever
+    its language, so routing both writes through it would make the English
+    summary overwrite the French one.
+    """
+    item = {"o:id": 1}
+    assert apply_text_values(item, [(french, "Résumé."), (english, "Summary.")]) is True
+
+    assert _by_language(item) == {"fr": "Résumé.", "en": "Summary."}
+    for value in item["bibo:shortDescription"]:
+        linked = value["@annotation"]["iwac:summaryModel"][0]
+        assert linked["value_resource_id"] == AI_MODEL_ITEMS["gpt-5.6-luna"]["item_id"]
+
+
+def test_rewrite_replaces_each_language_in_place(french, english):
+    item = {"o:id": 1}
+    apply_text_values(item, [(french, "Ancien."), (english, "Old.")])
+    assert apply_text_values(item, [(french, "Nouveau."), (english, "New.")]) is True
+
+    assert len(item["bibo:shortDescription"]) == 2, "rewrite appended instead of replacing"
+    assert _by_language(item) == {"fr": "Nouveau.", "en": "New."}
+
+
+def test_bilingual_write_is_idempotent(french, english):
+    item = {"o:id": 1}
+    assert apply_text_values(item, [(french, "Résumé."), (english, "Summary.")]) is True
+    assert apply_text_values(item, [(french, "Résumé."), (english, "Summary.")]) is False
+
+
+def test_french_adopts_the_untagged_legacy_summary(french, english):
+    """~12,300 articles carry a French summary written before the tag existed.
+
+    Appending a second, ``fr``-tagged French value beside the untagged one would
+    give the item two French summaries and pipe-join them in the HF export.
+    """
+    item = {
+        "o:id": 1,
+        "bibo:shortDescription": [{
+            "@value": "Ancien résumé.",
+            "property_id": SUMMARY_PID,
+            "property_label": "shortDescription",
+            "type": "literal",
+            "is_public": True,
+        }],
+    }
+    assert apply_text_values(item, [(french, "Résumé."), (english, "Summary.")]) is True
+
+    assert len(item["bibo:shortDescription"]) == 2
+    assert _by_language(item) == {"fr": "Résumé.", "en": "Summary."}
+
+
+def test_english_never_claims_an_untagged_value(english):
+    """Only the language that owns the legacy values may adopt them.
+
+    Without ``adopt_untagged=False`` on the English target, an English-first
+    write would overwrite a French summary and label it ``en``.
+    """
+    item = {
+        "o:id": 1,
+        "bibo:shortDescription": [{
+            "@value": "Ancien résumé.",
+            "property_id": SUMMARY_PID,
+            "type": "literal",
+        }],
+    }
+    assert apply_text_value(item, english, "Summary.") is True
+
+    assert _by_language(item) == {None: "Ancien résumé.", "en": "Summary."}
+
+
+def test_empty_half_never_blanks_a_stored_value(french, english):
+    """A missing translation must leave Omeka's value alone, not erase it."""
+    item = {"o:id": 1}
+    apply_text_values(item, [(french, "Résumé."), (english, "Summary.")])
+
+    assert apply_text_values(item, [(french, "Résumé."), (english, "   ")]) is False
+    assert _by_language(item) == {"fr": "Résumé.", "en": "Summary."}
+
+
+def test_language_blind_target_is_unchanged_by_the_bilingual_support():
+    """OCR, correction and transcription pass no language — first literal wins.
+
+    Pinned because ``apply_text_value`` no longer delegates to
+    ``upsert_property_value``; these three pipelines must keep the exact
+    behaviour they had when it did.
+    """
+    plain = PropertyTarget(term="bibo:content", property_id=91, property_label="content")
+    item = {
+        "o:id": 1,
+        "bibo:content": [
+            {"@value": "first", "property_id": 91, "type": "literal", "@language": "fr"},
+            {"@value": "second", "property_id": 91, "type": "literal"},
+        ],
+    }
+    assert apply_text_value(item, plain, "corrected") is True
+
+    assert [v["@value"] for v in item["bibo:content"]] == ["corrected", "second"]
+    assert item["bibo:content"][0]["@language"] == "fr", "language-blind write retagged a value"
 
 
 # ---------------------------------------------------------------------------

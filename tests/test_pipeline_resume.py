@@ -25,33 +25,96 @@ summary = _load("summary_generator", "AI_summary/02_AI_generate_summaries.py")
 ner = _load("ner_generator", "AI_NER/01_NER_AI.py")
 
 
+def _bilingual_client():
+    """A client whose structured call returns both renderings of the input."""
+    client = Mock()
+    client.generate_structured.side_effect = lambda _system, user, _schema: (
+        summary.BilingualSummary(
+            summary_fr=f"résumé:{user[-1]}", summary_en=f"summary:{user[-1]}"
+        )
+    )
+    return client
+
+
 def test_summary_resume_reprocesses_only_changed_input(tmp_path):
     input_dir = tmp_path / "input"
-    output_dir = tmp_path / "output"
+    french_dir = tmp_path / "fr"
+    english_dir = tmp_path / "en"
     input_dir.mkdir()
     (input_dir / "a.txt").write_text("article a", encoding="utf-8")
     (input_dir / "b.txt").write_text("article b", encoding="utf-8")
     checkpoint = JsonCheckpoint.open(
-        output_dir / ".summary_checkpoint.json", {"model": "pinned", "prompt": "one"}
+        french_dir / ".summary_checkpoint.json", {"model": "pinned", "prompt": "one"}
     )
-    client = Mock()
-    client.generate.side_effect = lambda _system, user: f"summary:{user[-1]}"
+    client = _bilingual_client()
 
-    first = summary.process_txt_files(
-        client, str(input_dir), str(output_dir), "system", checkpoint
-    )
-    second = summary.process_txt_files(
-        client, str(input_dir), str(output_dir), "system", checkpoint
-    )
+    def run():
+        return summary.process_txt_files(
+            client, str(input_dir), str(french_dir), str(english_dir), "system", checkpoint
+        )
+
+    first = run()
+    second = run()
     (input_dir / "b.txt").write_text("article b revised", encoding="utf-8")
-    third = summary.process_txt_files(
-        client, str(input_dir), str(output_dir), "system", checkpoint
-    )
+    third = run()
 
     assert first == (2, 0, 0)
     assert second == (0, 0, 2)
     assert third == (1, 0, 1)
-    assert client.generate.call_count == 3
+    assert client.generate_structured.call_count == 3
+    assert (french_dir / "a.txt").read_text(encoding="utf-8") == "résumé:a"
+    assert (english_dir / "a.txt").read_text(encoding="utf-8") == "summary:a"
+
+
+def test_summary_regenerates_when_one_language_is_missing(tmp_path):
+    """A run interrupted between the two writes must not resume half-done.
+
+    The checkpoint is marked once, after both files land — but a crash during
+    ``atomic_write_text`` of the English half would leave a marked entry with no
+    English file, and resuming on the checkpoint alone would ship an item to
+    Omeka in French only.
+    """
+    input_dir = tmp_path / "input"
+    french_dir = tmp_path / "fr"
+    english_dir = tmp_path / "en"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("article a", encoding="utf-8")
+    checkpoint = JsonCheckpoint.open(
+        french_dir / ".summary_checkpoint.json", {"model": "pinned", "prompt": "one"}
+    )
+    client = _bilingual_client()
+
+    def run():
+        return summary.process_txt_files(
+            client, str(input_dir), str(french_dir), str(english_dir), "system", checkpoint
+        )
+
+    assert run() == (1, 0, 0)
+    (english_dir / "a.txt").unlink()
+    assert run() == (1, 0, 0), "missing English half should regenerate, not resume"
+    assert (english_dir / "a.txt").exists()
+
+
+def test_summary_with_one_empty_half_is_an_error_not_a_partial_write(tmp_path):
+    """Half a pair is a failed generation: writing it would mark the item done."""
+    input_dir = tmp_path / "input"
+    french_dir = tmp_path / "fr"
+    english_dir = tmp_path / "en"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("article a", encoding="utf-8")
+    checkpoint = JsonCheckpoint.open(
+        french_dir / ".summary_checkpoint.json", {"model": "pinned", "prompt": "one"}
+    )
+    client = Mock()
+    client.generate_structured.return_value = summary.BilingualSummary(
+        summary_fr="résumé", summary_en="   "
+    )
+
+    assert summary.process_txt_files(
+        client, str(input_dir), str(french_dir), str(english_dir), "system", checkpoint
+    ) == (0, 1, 0)
+    assert not (french_dir / "a.txt").exists()
+    assert not (english_dir / "a.txt").exists()
 
 
 def test_ner_resume_uses_flushed_csv_ids(tmp_path):

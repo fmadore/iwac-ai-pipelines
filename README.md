@@ -19,7 +19,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **OCR Extraction** | Extract text from PDF scans using Gemini vision or Mistral Document AI |
 | **OCR Correction** | Fix errors in machine-generated text, including ALTO XML with coordinate preservation |
 | **Named Entity Recognition** | Extract people, places, organizations with authority reconciliation |
-| **Summarization** | Generate French summaries for document discovery |
+| **Summarization** | Generate bilingual French/English summaries for document discovery |
 | **Audio Transcription** | Transcribe interviews and oral histories using Gemini or Voxtral (with speaker diarization) |
 | **Video Processing** | Summarize or transcribe video with visual descriptions |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |

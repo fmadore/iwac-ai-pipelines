@@ -66,6 +66,8 @@ AI_ocr_correction/TXT/
 AI_ocr_extraction/OCR_Results/
 AI_ocr_extraction/PDF/
 AI_reference_indexing/output/
+AI_summary/backups/
+AI_summary/Summaries_EN_TXT/
 AI_summary/Summaries_FR_TXT/
 AI_summary/TXT/
 AI_summary_issue/Magazine_Extractions/
