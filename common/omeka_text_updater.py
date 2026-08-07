@@ -13,10 +13,12 @@ This module owns the write half so every pipeline gets the safest behaviour:
 
 - The full item is fetched and PATCHed back (never a trimmed payload — Omeka
   deletes any property missing from the request).
-- ``@annotation`` is re-attached after ``upsert_property_value``, which builds
-  a bare literal and would otherwise silently drop the model provenance.
+- ``@annotation`` is attached to the value that was just written, so the model
+  provenance survives both the append and the in-place rewrite path.
 - Unchanged items are skipped rather than re-PATCHed.
 - ``--dry-run`` and an interactive confirmation gate are available to all.
+- Several values can be written to one item in ONE PATCH — see
+  ``TextUpdate.extra_values``.
 
 Usage:
     from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
@@ -32,9 +34,13 @@ Usage:
     stats = run_text_updates(client, updates, target, console=console, dry_run=args.dry_run)
 """
 
+import copy
+import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -57,9 +63,20 @@ class PropertyTarget:
     annotation_term: Optional[str] = None
     #: The ``resource:item`` value object built by ``iwac_config.model_annotation_value``.
     annotation_value: Optional[Dict[str, Any]] = None
+    #: BCP-47 tag written as ``@language`` (e.g. ``"fr"``). When set, this write
+    #: owns only the literal carrying that tag, so several languages can coexist
+    #: on one property. ``None`` keeps the language-blind behaviour every
+    #: pipeline had before: the first literal on the property is the target.
+    language: Optional[str] = None
+    #: Claim a pre-existing literal that carries no ``@language`` at all, tagging
+    #: it on the way past. Set on the language that owns the legacy values —
+    #: IWAC's ~12,300 French summaries predate the tag — so a bilingual run
+    #: upgrades them instead of appending a second French value beside them.
+    adopt_untagged: bool = False
 
     def describe(self) -> str:
-        return f"{self.term} (id {self.property_id})"
+        suffix = f" @{self.language}" if self.language else ""
+        return f"{self.term} (id {self.property_id}){suffix}"
 
 
 @dataclass
@@ -69,50 +86,191 @@ class TextUpdate:
     ``item_id`` is ``None`` when the source could not be resolved to an item
     (e.g. an identifier with no match); such entries are counted as
     ``not_found`` rather than silently dropped.
+
+    ``extra_values`` carries additional ``(target, text)`` pairs applied to the
+    same item in the SAME PATCH. AI_summary uses it to write the French and
+    English summaries as two language-tagged literals on one property: two
+    PATCHes would double the round trips and leave a window where an item holds
+    one language and not the other.
     """
 
     label: str
     item_id: Optional[int]
     text: str
     metadata: Dict[str, Any] = field(default_factory=dict)
+    extra_values: List[Tuple[PropertyTarget, str]] = field(default_factory=list)
+
+    def writes(self, target: PropertyTarget) -> List[Tuple[PropertyTarget, str]]:
+        """Every ``(target, text)`` pair this update applies, main value first."""
+        return [(target, self.text), *self.extra_values]
+
+
+def _own_literal(
+    values: List[Any], target: PropertyTarget
+) -> Optional[Dict[str, Any]]:
+    """Return the value object *target* owns on an already-fetched property.
+
+    Matching is by ``@language`` when the target declares one, so a French and
+    an English summary on the same property do not overwrite each other. A
+    language-blind target (``language=None``) keeps the historical rule — the
+    first literal wins — which is what the OCR, correction and transcription
+    updaters rely on.
+    """
+    untagged: Optional[Dict[str, Any]] = None
+    for entry in values:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("property_id") != target.property_id:
+            continue
+        if entry.get("type", "literal") != "literal":
+            continue
+        if target.language is None:
+            return entry
+        if entry.get("@language") == target.language:
+            return entry
+        if target.adopt_untagged and not entry.get("@language") and untagged is None:
+            untagged = entry
+    return untagged
 
 
 def apply_text_value(item_data: Dict[str, Any], target: PropertyTarget, text: str) -> bool:
     """Set *target*'s literal on a fetched item *in place*, annotation included.
 
-    ``OmekaClient.upsert_property_value`` rebuilds the value object from five
-    keys when it appends, so any existing ``@annotation`` is lost. The
-    annotation is therefore re-attached here, and a change to the annotation
-    alone still counts as a change.
+    This deliberately does not call ``OmekaClient.upsert_property_value``: that
+    helper matches the first literal on a property regardless of ``@language``,
+    so calling it once per language would make the second write clobber the
+    first. It also rebuilds the value object from five keys when appending,
+    dropping any ``@annotation`` — the provenance is therefore attached here, to
+    the exact value just written, and a change to the annotation alone still
+    counts as a change.
 
     Returns:
         True if *item_data* differs from what Omeka currently holds.
     """
-    changed = OmekaClient.upsert_property_value(
-        item_data,
-        target.term,
-        target.property_id,
-        text,
-        property_label=target.property_label or target.term.split(":")[-1],
-    )
+    values = item_data.get(target.term)
+    if not isinstance(values, list):
+        values = item_data[target.term] = []
+
+    changed = False
+    value = _own_literal(values, target)
+
+    if value is None:
+        value = {
+            "type": "literal",
+            "property_id": target.property_id,
+            "property_label": target.property_label or target.term.split(":")[-1],
+            "is_public": True,
+            "@value": text,
+        }
+        if target.language:
+            value["@language"] = target.language
+        values.append(value)
+        changed = True
+    else:
+        if value.get("@value") != text:
+            value["@value"] = text
+            value["type"] = "literal"
+            changed = True
+        # Tags a legacy untagged literal claimed via ``adopt_untagged``.
+        if target.language and value.get("@language") != target.language:
+            value["@language"] = target.language
+            changed = True
 
     if not target.annotation_term or target.annotation_value is None:
         return changed
 
     annotation = {target.annotation_term: [dict(target.annotation_value)]}
-    for value in item_data.get(target.term, []) or []:
-        if (
-            isinstance(value, dict)
-            and value.get("property_id") == target.property_id
-            and value.get("type", "literal") == "literal"
-            and value.get("@value") == text
-        ):
-            if value.get("@annotation") != annotation:
-                value["@annotation"] = annotation
-                changed = True
-            break
+    if not _annotation_matches(value.get("@annotation"), annotation):
+        value["@annotation"] = annotation
+        changed = True
 
     return changed
+
+
+def _annotation_matches(stored: Any, wanted: Dict[str, Any]) -> bool:
+    """True if *stored* already carries every key/value in *wanted*.
+
+    Deliberately not ``==``. Omeka echoes value objects back with keys it fills
+    in itself that no client ever sends — a ``resource:item`` link comes back
+    carrying ``"url": null`` — so an exact comparison can never match a value
+    that was just written, every annotated item reports as changed, and the
+    unchanged-skip that this module exists to provide silently never fires.
+    That turned a resumed 12,305-item summary run into a full re-PATCH of the
+    corpus: correct data, but every item written again.
+
+    Compare only the keys we set, so a server-added key is not a difference.
+    """
+    if not isinstance(stored, dict):
+        return False
+    for term, values in wanted.items():
+        found = stored.get(term)
+        if not isinstance(found, list) or len(found) != len(values):
+            return False
+        for got, want in zip(found, values, strict=True):
+            if not isinstance(got, dict):
+                return False
+            if any(got.get(key) != value for key, value in want.items()):
+                return False
+    return True
+
+
+def apply_text_values(
+    item_data: Dict[str, Any], writes: Sequence[Tuple[PropertyTarget, str]]
+) -> bool:
+    """Apply every ``(target, text)`` pair to one fetched item.
+
+    Returns True if any of them changed it. Empty texts are skipped rather than
+    written: a missing translation must not blank a value Omeka already holds.
+    """
+    changed = False
+    for target, text in writes:
+        if not text.strip():
+            continue
+        if apply_text_value(item_data, target, text):
+            changed = True
+    return changed
+
+
+#: Called with each item's pre-write JSON, immediately before its PATCH.
+BackupSink = Callable[[Dict[str, Any]], None]
+
+
+@contextmanager
+def open_backup(
+    directory: Optional[Path],
+    *,
+    label: str,
+    dry_run: bool = False,
+    now: Optional[datetime] = None,
+) -> Iterator[Optional[BackupSink]]:
+    """Yield a sink that appends pre-write item payloads to a JSONL file.
+
+    ``write_guard.WriteGuard.dump_backup`` buffers every payload and writes once
+    at the end. That is right for a few hundred items and wrong for a corpus
+    pass: it holds ~50 MB of OCR in memory for 12k articles, and a crash at item
+    7,000 leaves no backup at all — precisely when one is needed. This writes and
+    flushes each item *before* its PATCH, one JSON object per line, so an
+    interrupted run still has every item it actually touched.
+
+    Yields ``None`` when backups are off or this is a dry run (nothing changes,
+    so there is nothing to roll back to), which callers pass straight through.
+    """
+    if directory is None or dry_run:
+        yield None
+        return
+
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"_pre_write_{label}_{stamp}.jsonl"
+
+    with path.open("w", encoding="utf-8") as handle:
+        def sink(payload: Dict[str, Any]) -> None:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            handle.flush()  # the PATCH follows immediately; an unflushed line is no backup
+
+        sink.path = path  # type: ignore[attr-defined]
+        yield sink
 
 
 def update_item_text(
@@ -122,19 +280,55 @@ def update_item_text(
     target: PropertyTarget,
     *,
     dry_run: bool = False,
+    extra_values: Sequence[Tuple[PropertyTarget, str]] = (),
+    backup: Optional[BackupSink] = None,
 ) -> str:
-    """Fetch, mutate and PATCH one item. Returns a status from :data:`STATUSES`."""
+    """Fetch, mutate and PATCH one item. Returns a status from :data:`STATUSES`.
+
+    Every value in *extra_values* lands in the same PATCH as *text*. When
+    *backup* is given, the item's pre-write state is handed to it before the
+    PATCH — and only for items that actually change, so the backup is a record
+    of what was overwritten rather than of everything inspected.
+    """
     item_data = client.get_item(int(item_id))
     if not item_data:
         return "not_found"
 
-    if not apply_text_value(item_data, target, text):
+    # Copy before mutating, and only when it will be used: deep-copying a full
+    # item means duplicating its OCR blob, which is most of the payload.
+    original = copy.deepcopy(item_data) if backup is not None and not dry_run else None
+
+    if not apply_text_values(item_data, [(target, text), *extra_values]):
         return "unchanged"
 
     if dry_run:
         return "would_update"
 
+    if original is not None and backup is not None:
+        backup(original)
+
     return "updated" if client.update_item(int(item_id), item_data) else "failed"
+
+
+def texts_from_directory(
+    directory: Path,
+    *,
+    suffix: str = ".txt",
+    strip: bool = True,
+) -> Dict[int, str]:
+    """Map ``<item_id><suffix>`` files in *directory* to their text.
+
+    Files whose stem is not numeric are skipped: the item ID comes from the
+    filename, so a non-numeric stem means the file was not produced by the
+    pipeline step that owns this directory.
+    """
+    texts: Dict[int, str] = {}
+    for path in sorted(directory.glob(f"*{suffix}")):
+        if not path.stem.isdigit():
+            continue
+        text = path.read_text(encoding="utf-8")
+        texts[int(path.stem)] = text.strip() if strip else text
+    return texts
 
 
 def updates_from_directory(
@@ -143,20 +337,13 @@ def updates_from_directory(
     suffix: str = ".txt",
     strip: bool = True,
 ) -> List[TextUpdate]:
-    """Build updates from ``<item_id><suffix>`` files in *directory*.
-
-    Files whose stem is not numeric are skipped: the item ID comes from the
-    filename, so a non-numeric stem means the file was not produced by the
-    pipeline step that owns this directory.
-    """
-    updates: List[TextUpdate] = []
-    for path in sorted(directory.glob(f"*{suffix}")):
-        if not path.stem.isdigit():
-            continue
-        text = path.read_text(encoding="utf-8")
-        updates.append(TextUpdate(label=path.name, item_id=int(path.stem),
-                                  text=text.strip() if strip else text))
-    return updates
+    """Build updates from ``<item_id><suffix>`` files in *directory*."""
+    return [
+        TextUpdate(label=f"{item_id}{suffix}", item_id=item_id, text=text)
+        for item_id, text in texts_from_directory(
+            directory, suffix=suffix, strip=strip
+        ).items()
+    ]
 
 
 def confirm_write(
@@ -173,11 +360,21 @@ def confirm_write(
     Returns False when the operator declines. Bulk PATCH against a live archive
     is not something to start from a bare argv.
     """
+    # Every distinct target across the batch, so a bilingual run names both
+    # values it is about to write rather than only the main one.
+    targets: List[PropertyTarget] = [target]
+    for update in updates:
+        for extra_target, _ in update.extra_values:
+            if extra_target not in targets:
+                targets.append(extra_target)
+
     lines = [
         f"Items to update:  {len(updates)}",
         f"Omeka:            {client.base_url}",
-        f"Property written: {target.describe()}",
     ]
+    for index, written in enumerate(targets):
+        label = "Property written:" if index == 0 else " " * 17
+        lines.append(f"{label} {written.describe()}")
     if target.annotation_term and target.annotation_value:
         lines.append(
             f"Annotation:       {target.annotation_term} -> "
@@ -195,8 +392,16 @@ def confirm_write(
     if dry_run:
         return True
 
-    answer = console.input("\n[bold]Proceed with updating these items? [y/N]:[/] ").strip().lower()
-    if answer not in ("y", "yes"):
+    # An EOF is not consent. Matches WriteGuard.confirm: a run with no stdin —
+    # cron, a pipe, a subprocess — must pass --yes on purpose rather than have
+    # the gate crash out of the try block in run_text_updates and be counted as
+    # a failure after some items were already written.
+    try:
+        answer = console.input("\n[bold]Proceed with updating these items? [y/N]:[/] ")
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]No answer on stdin — aborted, nothing written.[/]")
+        return False
+    if answer.strip().lower() not in ("y", "yes"):
         console.print("[yellow]Aborted — no changes made.[/]")
         return False
     return True
@@ -212,8 +417,14 @@ def run_text_updates(
     require_confirmation: bool = True,
     extra_confirm_lines: Sequence[str] = (),
     description: str = "Updating items...",
+    backup_dir: Optional[Path] = None,
+    backup_label: str = "text_update",
 ) -> Dict[str, int]:
     """Run the whole write step: confirm, PATCH each item, print a summary.
+
+    When *backup_dir* is set, every item's pre-write JSON is appended to a
+    timestamped ``.jsonl`` there before its PATCH — the only route back from a
+    bulk overwrite.
 
     Returns:
         A dict of :data:`STATUSES` counts. An empty dict means the operator
@@ -226,8 +437,14 @@ def run_text_updates(
         console.print("[yellow]⚠[/] Nothing to update.")
         return stats
 
+    backup_note = (
+        f"Backup:           {backup_dir}" if backup_dir and not dry_run
+        else "Backup:           [red]disabled — no route back[/]" if not dry_run
+        else None
+    )
     if require_confirmation and not confirm_write(
-        console, updates, target, client, dry_run=dry_run, extra_lines=extra_confirm_lines
+        console, updates, target, client, dry_run=dry_run,
+        extra_lines=[*extra_confirm_lines, *([backup_note] if backup_note else [])],
     ):
         return {}
 
@@ -235,32 +452,39 @@ def run_text_updates(
     console.rule("[bold blue]Updating Omeka S Items")
     console.print()
 
-    with standard_progress(console) as progress:
-        task = progress.add_task(f"[cyan]{description}", total=len(updates))
+    with open_backup(backup_dir, label=backup_label, dry_run=dry_run) as backup:
+        with standard_progress(console) as progress:
+            task = progress.add_task(f"[cyan]{description}", total=len(updates))
 
-        for update in updates:
-            try:
-                if update.item_id is None:
-                    stats["not_found"] += 1
-                elif not update.text.strip():
-                    console.print(f"  [yellow]⚠[/] {update.label} is empty — skipped")
-                    stats["empty"] += 1
-                else:
-                    status = update_item_text(
-                        client, update.item_id, update.text, target, dry_run=dry_run
-                    )
-                    if status == "failed":
-                        console.print(f"  [red]✗[/] PATCH failed for item {update.item_id} (see log)")
-                    elif status == "not_found":
-                        console.print(f"  [yellow]⚠[/] Item {update.item_id} not found — skipped")
-                    stats[status] += 1
-            except Exception as exc:
-                console.print(f"  [red]✗[/] Error processing {update.label}: {exc}")
-                stats["failed"] += 1
+            for update in updates:
+                try:
+                    if update.item_id is None:
+                        stats["not_found"] += 1
+                    elif not any(text.strip() for _, text in update.writes(target)):
+                        console.print(f"  [yellow]⚠[/] {update.label} is empty — skipped")
+                        stats["empty"] += 1
+                    else:
+                        status = update_item_text(
+                            client, update.item_id, update.text, target,
+                            dry_run=dry_run, extra_values=update.extra_values,
+                            backup=backup,
+                        )
+                        if status == "failed":
+                            console.print(f"  [red]✗[/] PATCH failed for item {update.item_id} (see log)")
+                        elif status == "not_found":
+                            console.print(f"  [yellow]⚠[/] Item {update.item_id} not found — skipped")
+                        stats[status] += 1
+                except Exception as exc:
+                    console.print(f"  [red]✗[/] Error processing {update.label}: {exc}")
+                    stats["failed"] += 1
 
-            progress.update(task, advance=1)
+                progress.update(task, advance=1)
+
+        backup_path = getattr(backup, "path", None) if backup else None
 
     _print_summary(console, stats, len(updates), dry_run=dry_run)
+    if backup_path:
+        console.print(f"[dim]Pre-write backup: {backup_path}[/]")
     return stats
 
 

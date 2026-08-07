@@ -6,6 +6,7 @@ pipelines that each had their own copy: skipping unchanged items, honouring
 """
 
 import io
+import json
 from unittest.mock import MagicMock
 
 from rich.console import Console
@@ -119,6 +120,27 @@ def test_declining_confirmation_writes_nothing(monkeypatch):
     client.update_item.assert_not_called()
 
 
+def test_closed_stdin_declines_rather_than_crashing(monkeypatch):
+    """An EOF is not consent, and must not surface as a write failure.
+
+    Before this, ``console.input`` raised straight out of the gate on a piped or
+    cron run — no writes happened, but the caller saw an exception rather than a
+    clean decline.
+    """
+    client = fake_client({"o:id": 1})
+
+    def raise_eof(self, *a, **k):
+        raise EOFError
+
+    monkeypatch.setattr(Console, "input", raise_eof)
+
+    stats = run_text_updates(client, [TextUpdate("1.txt", 1, "text")], TARGET,
+                             console=quiet_console())
+
+    assert stats == {}
+    client.update_item.assert_not_called()
+
+
 def test_unresolved_items_counted_not_dropped():
     client = fake_client({"o:id": 1})
     updates = [TextUpdate("missing", None, ""), TextUpdate("1.txt", 1, "text")]
@@ -153,3 +175,132 @@ def test_dry_run_reports_without_writing():
 
     assert stats["would_update"] == 1
     client.update_item.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# extra_values — several values on one item, one PATCH
+# ---------------------------------------------------------------------------
+
+# Mirrors AI_summary/03: French adopts the untagged legacy literal, English never does.
+FRENCH = PropertyTarget(
+    term="bibo:shortDescription", property_id=116, language="fr", adopt_untagged=True,
+)
+ENGLISH = PropertyTarget(term="bibo:shortDescription", property_id=116, language="en")
+
+
+def test_extra_values_land_in_a_single_patch():
+    """Two PATCHes per item would double the round trips over a 12k corpus and
+    leave a window where an item holds one language and not the other."""
+    client = fake_client({"o:id": 1})
+    update = TextUpdate("1.txt", 1, "Résumé.", extra_values=[(ENGLISH, "Summary.")])
+
+    stats = run_text_updates(
+        client, [update], FRENCH, console=quiet_console(), require_confirmation=False,
+    )
+
+    assert stats["updated"] == 1
+    client.update_item.assert_called_once()
+    written = client.update_item.call_args[0][1]["bibo:shortDescription"]
+    assert {v["@language"]: v["@value"] for v in written} == {
+        "fr": "Résumé.", "en": "Summary.",
+    }
+
+
+def test_item_is_skipped_only_when_every_value_is_empty():
+    client = fake_client({"o:id": 1})
+    updates = [
+        TextUpdate("1.txt", 1, "  ", extra_values=[(ENGLISH, "Summary.")]),
+        TextUpdate("2.txt", 2, "  ", extra_values=[(ENGLISH, "  ")]),
+    ]
+
+    stats = run_text_updates(
+        client, updates, FRENCH, console=quiet_console(), require_confirmation=False,
+    )
+
+    assert (stats["updated"], stats["empty"]) == (1, 1)
+
+
+# ---------------------------------------------------------------------------
+# Pre-write backup — the only route back from a bulk overwrite
+# ---------------------------------------------------------------------------
+
+def _backup_lines(tmp_path):
+    files = list(tmp_path.glob("_pre_write_*.jsonl"))
+    assert len(files) == 1, f"expected one backup file, found {files}"
+    return [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
+
+
+def test_backup_captures_the_state_before_the_patch(tmp_path):
+    """What the backup must contain is the OLD summary, not the new one."""
+    existing = {"o:id": 1, "bibo:shortDescription": [
+        {"@value": "ancien résumé", "property_id": 116, "type": "literal"}
+    ]}
+    client = fake_client(existing)
+
+    run_text_updates(
+        client, [TextUpdate("1.txt", 1, "nouveau résumé")], FRENCH,
+        console=quiet_console(), require_confirmation=False, backup_dir=tmp_path,
+    )
+
+    captured = _backup_lines(tmp_path)
+    assert len(captured) == 1
+    assert captured[0]["bibo:shortDescription"][0]["@value"] == "ancien résumé"
+    # And the PATCH really did send the new one.
+    assert client.update_item.call_args[0][1]["bibo:shortDescription"][0]["@value"] == "nouveau résumé"
+
+
+def test_backup_is_flushed_before_each_patch(tmp_path):
+    """A crash mid-run must leave a backup of everything already overwritten.
+
+    ``WriteGuard.dump_backup`` buffers and writes once at the end, so an
+    interrupted corpus pass would produce nothing at all — which is exactly when
+    the backup is needed.
+    """
+    seen = []
+
+    def blow_up_on_the_third(item_id, data):
+        seen.append(item_id)
+        if len(seen) == 3:
+            raise RuntimeError("connection reset")
+        return True
+
+    client = fake_client({"o:id": 0})
+    client.get_item.side_effect = lambda i: {"o:id": i, "bibo:shortDescription": [
+        {"@value": f"old {i}", "property_id": 116, "type": "literal"}]}
+    client.update_item.side_effect = blow_up_on_the_third
+
+    stats = run_text_updates(
+        client, [TextUpdate(f"{i}.txt", i, f"new {i}") for i in (1, 2, 3, 4)], FRENCH,
+        console=quiet_console(), require_confirmation=False, backup_dir=tmp_path,
+    )
+
+    captured = _backup_lines(tmp_path)
+    assert [c["o:id"] for c in captured] == [1, 2, 3, 4]
+    assert [c["bibo:shortDescription"][0]["@value"] for c in captured[:2]] == ["old 1", "old 2"]
+    assert stats["failed"] == 1
+
+
+def test_dry_run_writes_no_backup(tmp_path):
+    client = fake_client({"o:id": 1})
+
+    run_text_updates(
+        client, [TextUpdate("1.txt", 1, "text")], FRENCH, console=quiet_console(),
+        require_confirmation=False, dry_run=True, backup_dir=tmp_path,
+    )
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unchanged_items_are_not_backed_up(tmp_path):
+    """The backup records what was overwritten, not everything inspected."""
+    same = {"o:id": 1, "bibo:shortDescription": [
+        {"@value": "identique", "property_id": 116, "type": "literal", "@language": "fr"}
+    ]}
+    client = fake_client(same)
+
+    run_text_updates(
+        client, [TextUpdate("1.txt", 1, "identique")], FRENCH,
+        console=quiet_console(), require_confirmation=False, backup_dir=tmp_path,
+    )
+
+    assert _backup_lines(tmp_path) == []

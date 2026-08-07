@@ -263,11 +263,61 @@ stats = run_text_updates(
 ```
 
 Every pipeline using it gets: the full item fetched and PATCHed back (never a
-trimmed payload), `@annotation` re-attached after `upsert_property_value`,
-unchanged items skipped rather than re-PATCHed, and a `--dry-run` plus
-confirmation gate. `updates_from_directory` reads `<item_id>.txt` files;
-build `TextUpdate` objects yourself when items are matched some other way (the
-transcription updater resolves `dcterms:identifier` first).
+trimmed payload), `@annotation` attached to the value just written, unchanged
+items skipped rather than re-PATCHed, and a `--dry-run` plus confirmation gate.
+`updates_from_directory` reads `<item_id>.txt` files (`texts_from_directory`
+returns the same as an `{item_id: text}` map); build `TextUpdate` objects
+yourself when items are matched some other way (the transcription updater
+resolves `dcterms:identifier` first).
+
+### Several values on one property
+
+`PropertyTarget.language` writes `@language` and, more importantly, decides
+**which literal the write owns**. Without it a second write would clobber the
+first: `OmekaClient.upsert_property_value` matches the first literal on a
+property whatever its language, which is why `apply_text_value` no longer
+delegates to it. A target with `language=None` keeps that language-blind rule,
+so the OCR, correction and transcription updaters are unaffected.
+
+`TextUpdate.extra_values` carries additional `(target, text)` pairs applied in
+the **same PATCH**. AI_summary writes its French and English summaries this way:
+
+```python
+french = PropertyTarget(..., language="fr", adopt_untagged=True)
+english = PropertyTarget(..., language="en")
+
+update = TextUpdate("2231.txt", 2231, "Résumé…", extra_values=[(english, "Summary…")])
+run_text_updates(client, [update], french, console=console)
+```
+
+`adopt_untagged` claims a pre-existing literal that carries no `@language`,
+tagging it on the way past. Set it on the language that owns the legacy values —
+IWAC's French summaries predate the tag — so a bilingual run upgrades them
+instead of appending a second French value. Never set it on more than one target
+of the same property: the first write would take the untagged literal and the
+second would take it back.
+
+An empty text is skipped rather than written, so a missing translation cannot
+blank a value Omeka already holds; an item counts as `empty` only when *every*
+one of its values is blank.
+
+### Pre-write backup
+
+Pass `backup_dir=` and every item's pre-write JSON is appended to a timestamped
+`.jsonl` there — **flushed before its PATCH**, and only for items that actually
+change:
+
+```python
+run_text_updates(client, updates, target, backup_dir=Path("backups"),
+                 backup_label="summaries")
+```
+
+This is deliberately not `write_guard.WriteGuard.dump_backup`, which buffers
+every payload and writes once at the end. That is right for a few hundred items
+and wrong for a corpus pass: it holds ~50 MB of OCR in memory for 12k articles,
+and a crash at item 7,000 leaves no backup at all — exactly when one is needed.
+`open_backup()` is the streaming equivalent and yields `None` on a dry run,
+which callers pass straight through.
 
 ---
 
