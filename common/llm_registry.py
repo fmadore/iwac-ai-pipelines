@@ -210,10 +210,15 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort="low",
         supported_reasoning_efforts=("low", "high", "max"),
     ),
+    # ARCHIVE ONLY — deliberately absent from every tier, so no pipeline offers
+    # it and no `--model` accepts it. The entry survives so the 11,482 sentiment
+    # annotations this preview wrote stay attributable (``sentiment_core``'s
+    # RETIRED_PANEL names this key) and so its OpenRouter slug still resolves in
+    # stored provenance. New runs take ``deepseek-v4-flash-0731``.
     "deepseek-v4-flash": ModelOption(
         "deepseek-v4-flash", PROVIDER_OPENROUTER, OPENROUTER_DEEPSEEK_FLASH_MODEL,
         "DeepSeek V4 Flash Preview (OpenRouter)",
-        "DeepSeek V4 Flash April preview — superseded by the dated 0731 release",
+        "DeepSeek V4 Flash April preview — archive only, superseded by 0731",
         default_temperature=1.0,
         default_reasoning_effort=None,
         supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
@@ -297,7 +302,7 @@ TEXT_ECONOMY_MODELS: List[str] = [
 ]
 TEXT_OPEN_MODELS: List[str] = [
     "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
-    "deepseek-v4-flash-0731", "deepseek-v4-flash", "deepseek-v4-pro",
+    "deepseek-v4-flash-0731", "deepseek-v4-pro",
 ]
 TEXT_EXTENDED_MODELS: List[str] = [
     DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-flash", "gemma-4",
@@ -306,7 +311,7 @@ TEXT_EXTENDED_MODELS: List[str] = [
 TEXT_FULL_MODELS: List[str] = [
     DEFAULT_TEXT_MODEL_KEY, "gemini-flash", "gemini-pro", "gpt-5.6-luna",
     "gpt-5.6-sol", "mistral-large", "ministral-14b", "mistral-small",
-    "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-flash", "deepseek-v4-pro",
+    "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]
 GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-flash", "gemini-pro", "gemma-4"]
 LEGACY_CLI_MODEL_KEYS: List[str] = ["gpt-5-mini", "gpt-5.1", "gpt-5", "gpt-5-nano"]

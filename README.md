@@ -105,8 +105,10 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-flash
 
 `deepseek-v4-flash-0731` is pinned to the dated OpenRouter slug
 `deepseek/deepseek-v4-flash-0731`; the generic aliases `deepseek` and
-`deepseek-flash` resolve to it. The former `deepseek-v4-flash` key remains
-available only to reproduce runs made with the superseded preview.
+`deepseek-flash` resolve to it. Every DeepSeek Flash run goes to that release:
+the earlier `deepseek-v4-flash` preview sits in no model tier, so no pipeline
+offers it and no `--model` accepts it. Its registry entry is kept for the
+archive alone, so the annotations it already wrote stay attributable.
 
 ## Adapting for Other Projects
 

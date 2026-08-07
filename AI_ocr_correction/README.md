@@ -60,8 +60,9 @@ python 02_correct_alto_xml.py --model gemini-flash
 | `qwen3.5-moe` | Fast | Cheapest bulk option (via OpenRouter) |
 | `qwen3.5-dense` | Fast | Dense 27B sibling of the above (via OpenRouter) |
 | `deepseek-v4-flash-0731` | Fast | Default and cheapest bulk option (via OpenRouter) |
-| `deepseek-v4-flash` | Fast | Superseded preview, retained for reproducibility |
 | `deepseek-v4-pro` | Slowest | Hardest scans; reasons at `high` by default (via OpenRouter) |
+
+The April `deepseek-v4-flash` preview is **no longer selectable** — every DeepSeek Flash run goes to the dated 0731 release. Its registry entry survives for the archive only, so annotations it already wrote stay attributable.
 
 The OpenRouter models share one `OPENROUTER_API_KEY`.
 

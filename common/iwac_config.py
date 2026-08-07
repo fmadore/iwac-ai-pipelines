@@ -67,7 +67,6 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     "mistral-small": {"item_id": 79614, "display_title": "Mistral Small 4"},
     "qwen3.5-moe": {"item_id": 79616, "display_title": "Qwen3.5 122B-A10B"},
     "qwen3.5-moe-small": {"item_id": 79612, "display_title": "Qwen3.5 35B-A3B"},
-    "deepseek-v4-flash": {"item_id": 79613, "display_title": "DeepSeek V4 Flash"},
     "deepseek-v4-flash-0731": {
         "item_id": 83261,
         "display_title": "DeepSeek V4 Flash 0731",
@@ -115,6 +114,14 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
 #: here observes, so the operator asserts it — and an unversioned key invited
 #: them to assert a name that had quietly come to mean the wrong release. 78528
 #: keeps the existing Opus 4.6 annotations resolving; new runs take 79615.
+#:
+#: ``deepseek-v4-flash`` (item 79613, "DeepSeek V4 Flash") left this dict on
+#: 2026-08-07: the April preview is superseded everywhere by the dated 0731
+#: release, so it is no longer offered for new writes. **Item 79613 is not
+#: retired** — it holds 11,482 real sentiment annotations and must keep
+#: resolving, which is why it is absent from RETIRED_AI_MODEL_ITEM_IDS. Never
+#: repoint it at the 0731 snapshot: preview-era values stay attributable to the
+#: model that actually produced them.
 RETIRED_AI_MODEL_ITEM_IDS = (79608, 79609)
 
 

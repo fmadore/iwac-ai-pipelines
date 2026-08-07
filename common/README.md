@@ -394,7 +394,7 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `qwen3.5-moe-small` | OpenRouter | `qwen/qwen3.5-35b-a3b` | Qwen3.5 35B-A3B | Apache-2.0 open weights, MoE 3B active, $0.14/$1.00 per 1M tokens |
 | `qwen3.5-dense` | OpenRouter | `qwen/qwen3.5-27b` | Qwen3.5 27B | Apache-2.0 open weights, dense, $0.195/$1.56 per 1M tokens |
 | `deepseek-v4-flash-0731` | OpenRouter | `deepseek/deepseek-v4-flash-0731` | DeepSeek V4 Flash 0731 | **Default text model**; official release, 284B/13B active, 1M context, from $0.09/$0.18 per 1M tokens |
-| `deepseek-v4-flash` | OpenRouter | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash Preview | Superseded April preview, retained for reproducibility |
+| `deepseek-v4-flash` | OpenRouter | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash Preview | **Archive only** — in no tier, so no pipeline offers it; see below |
 | `deepseek-v4-pro` | OpenRouter | `deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1.6T/49B active MoE flagship, $0.435/$0.87 per 1M tokens |
 
 ### Model Aliases
@@ -611,7 +611,7 @@ dependency.
   (deliberately not the Flash/Plus/Max hosted tiers, which publish no weights). Accept
   `reasoning_effort` minimal/low/medium/high/xhigh, normalised by OpenRouter.
 - **`deepseek-v4-flash-0731`**: official DeepSeek V4 Flash release and the shared text default; accepts exactly `"low"`, `"high"`, or `"max"` reasoning (bulk pipelines use low; sentiment uses high).
-- **`deepseek-v4-flash`**: superseded April preview, retained only to reproduce earlier runs.
+- **`deepseek-v4-flash`**: the April preview — **archive only**. Removed from every tier on 2026-08-07, so no pipeline offers it and no `--model` accepts it; every DeepSeek Flash run goes to 0731. The `MODEL_REGISTRY` entry survives because `sentiment_core.RETIRED_PANEL` names the key and 11,482 stored annotations must stay attributable to the model that actually wrote them. `test_the_deepseek_preview_is_archive_only` keeps it out of the tiers.
 - **`deepseek-v4-pro`**: DeepSeek V4 Pro — quality tier, reasons at `"high"` by default; accepts `"high"` / `"xhigh"`.
 
 Three behaviours are specific to this provider and worth knowing:
