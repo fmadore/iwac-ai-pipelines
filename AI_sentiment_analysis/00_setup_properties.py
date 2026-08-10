@@ -246,9 +246,7 @@ def emit_ttl() -> str:
         "# controlled vocabulary, so they are ObjectProperties here.",
         "#",
         "# The panel is defined once in AI_sentiment_analysis/sentiment_core.py",
-        "# (PANEL);",
-        "# turn in the panel); this file is generated from it by",
-        "# 00_setup_properties.py.",
+        "# (PANEL); this block is generated from it by 00_setup_properties.py.",
         "",
         _ttl_block(SENTIMENT_MODEL_DEF),
     ]

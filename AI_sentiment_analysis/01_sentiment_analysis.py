@@ -327,8 +327,8 @@ def build_property_values(
     therefore a second copy of the property name, written six times per model
     per item, that no query could ever reach.
 
-    This is also why the panel keeps thirty model-keyed properties instead of
-    six multi-valued ones. The tidier design — one ``iwac:polarite`` holding a
+    This is also why the panel keeps six model-keyed properties per member —
+    twenty-four across the four — instead of six multi-valued ones. The tidier design — one ``iwac:polarite`` holding a
     value per model — puts the only thing distinguishing those values in the
     unsearchable layer, so "polarité = Négatif according to DeepSeek" stops
     being answerable by query at all.

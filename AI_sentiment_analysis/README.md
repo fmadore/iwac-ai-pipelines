@@ -105,8 +105,8 @@ that annotation, and `GET /api/value_annotations` is a 500. It was an
 unreachable second copy of what the property name already says, written six
 times per model per item.
 
-That same finding is why the panel keeps thirty model-keyed properties rather
-than six multi-valued ones. The tidier design — one `iwac:polarite` holding a
+That same finding is why the panel keeps six model-keyed properties per member —
+twenty-four across the four — rather than six multi-valued ones. The tidier design — one `iwac:polarite` holding a
 value per model — would need no vocabulary change to add a model, but it puts
 the only thing distinguishing those values in the unsearchable layer, so
 *"polarité = Négatif according to DeepSeek"* stops being answerable by query.
@@ -566,9 +566,10 @@ is true of `Centralite` and `Polarite`, which generation 1 nonetheless declared
 
 Generation-2 IDs are
 assigned when the vocabulary is updated and are **not** hardcoded anywhere —
-`01` resolves all 31 terms in a single request at startup via
-`common.iwac_config.resolve_property_ids`, and fails loudly naming any that are
-missing rather than writing a partial annotation set.
+`01` resolves the six terms of every selected member in a single request at
+startup (24 for a full panel) via `common.iwac_config.resolve_property_ids`, and
+fails loudly naming any that are missing rather than writing a partial
+annotation set.
 
 Every generation-2 value additionally carries:
 
