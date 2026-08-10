@@ -9,11 +9,12 @@ pilot exists to answer: does a candidate model earn a slot?
 Three things are reported, because a single agreement number cannot separate
 them:
 
-1. **Agreement with the generation-1 consensus** — does the candidate broadly
-   reproduce the existing annotation, or is it an outlier?
-2. **Agreement within the candidate panel** — pairwise Cohen's kappa. Two models
-   that agree only because both are wrong look identical to two that are right,
-   so this is read alongside (1), not instead of it.
+1. **Agreement with the rest of the panel** — each model against the majority of
+   the *others* (leave-one-out). Scoring a model against a consensus it votes in
+   inflates it structurally, which is why the yardstick excludes it.
+2. **Agreement within the panel** — pairwise Cohen's kappa. Two models that agree
+   only because both are wrong look identical to two that are right, so this is
+   read alongside (1), not instead of it.
 3. **Self-consistency** (needs ``--repeats`` > 1 in the pilot) — how often a
    model gives the same answer to the same article twice. DeepSeek V4 runs at
    the vendor-recommended temperature 1.0 and Qwen3.7 at 0.7, so without this a
@@ -126,34 +127,33 @@ def _value(result: Dict[str, Any], field: str) -> Optional[Any]:
 def collect(payload: Dict[str, Any], field: str):
     """Per-model value lists for one dimension, aligned across articles.
 
-    Returns ``(v1, v2, v1_consensus, v1_loo)`` where ``v1_loo[m]`` is the
-    leave-one-out consensus for v1 model *m* — the majority of the OTHER v1
-    models. A v1 model scored against the full v1 consensus is scored against
-    something it is a voting member of (2 of 3), which inflates it structurally
-    and makes it useless as a yardstick for candidates that had no vote. The
-    leave-one-out figure is the honest comparison.
+    Returns ``(values, consensus, loo)`` where ``loo[m]`` is the leave-one-out
+    consensus for model *m* — the majority of the OTHER models. Scoring a model
+    against the full consensus scores it against something it is a voting member
+    of, which inflates it structurally; the leave-one-out figure is the honest
+    comparison, and is what the κ values in the README were computed with.
+
+    Pilots run before 2026-08-07 also carry a ``v1`` block per article, read
+    from the generation-1 Omeka properties that no longer exist. It is ignored:
+    reporting it would mix a live measurement with a frozen one.
     """
     articles = payload["articles"]
-    v1_models = list(payload["manifest"]["v1_models"])
-    v2_models = list(payload["manifest"]["v2_models"])
+    models = list(payload["manifest"]["v2_models"])
 
-    v1: Dict[str, List[Any]] = {m: [] for m in v1_models}
-    v2: Dict[str, List[Any]] = {m: [] for m in v2_models}
-    v1_consensus: List[Any] = []
-    v1_loo: Dict[str, List[Any]] = {m: [] for m in v1_models}
+    values: Dict[str, List[Any]] = {m: [] for m in models}
+    consensus: List[Any] = []
+    loo: Dict[str, List[Any]] = {m: [] for m in models}
 
     for article in articles.values():
-        for m in v1_models:
-            v1[m].append(_value(article["v1"].get(m, {}), field))
         first_run = article["v2_runs"][0]
-        for m in v2_models:
-            v2[m].append(_value(first_run.get(m, {}), field))
-        row = {m: v1[m][-1] for m in v1_models}
-        v1_consensus.append(majority(list(row.values())))
-        for m in v1_models:
-            v1_loo[m].append(majority([v for k, v in row.items() if k != m]))
+        for m in models:
+            values[m].append(_value(first_run.get(m, {}), field))
+        row = {m: values[m][-1] for m in models}
+        consensus.append(majority(list(row.values())))
+        for m in models:
+            loo[m].append(majority([v for k, v in row.items() if k != m]))
 
-    return v1, v2, v1_consensus, v1_loo
+    return values, consensus, loo
 
 
 def self_consistency(payload: Dict[str, Any], field: str) -> Dict[str, Optional[float]]:
@@ -203,8 +203,6 @@ def show_models(manifest: Dict[str, Any]) -> None:
     models_table.add_column("Generation", style="dim")
     models_table.add_column("Prefix")
     models_table.add_column("Model id", style="green")
-    for prefix, model_id in manifest["v1_models"].items():
-        models_table.add_row("v1 (Jan–Feb 2026)", prefix, model_id)
     for prefix, info in manifest["v2_models"].items():
         models_table.add_row("v2 (candidate)", prefix, info["model_id"])
     for skip in manifest.get("v2_skipped", []):
@@ -221,34 +219,25 @@ def _paired_count(values: List[Any], target: List[Any]) -> int:
 
 def consensus_table(
     dim_name: str,
-    v1: Dict[str, List[Any]],
-    v2: Dict[str, List[Any]],
-    v1_consensus: List[Any],
-    v1_loo: Dict[str, List[Any]],
+    values: Dict[str, List[Any]],
+    loo: Dict[str, List[Any]],
 ) -> Table:
-    """Build candidate-vs-consensus metrics with a fair v1 baseline."""
+    """Each model against the majority of the others."""
     table = Table(
-        title=f"{dim_name}: agreement with the generation-1 consensus",
+        title=f"{dim_name}: agreement with the panel (leave-one-out)",
         box=box.ROUNDED,
     )
     table.add_column("Model")
     table.add_column("Exact", justify="right")
     table.add_column("Kappa", justify="right")
     table.add_column("n", justify="right", style="dim")
-    for model, values in v2.items():
+    for model, series in values.items():
+        target = loo[model]
         table.add_row(
             model,
-            fmt(exact_agreement(values, v1_consensus)),
-            fmt(cohen_kappa(values, v1_consensus)),
-            str(_paired_count(values, v1_consensus)),
-        )
-    for model, values in v1.items():
-        target = v1_loo[model]
-        table.add_row(
-            f"[dim]{model} (v1, leave-one-out)[/]",
-            fmt(exact_agreement(values, target)),
-            fmt(cohen_kappa(values, target)),
-            str(_paired_count(values, target)),
+            fmt(exact_agreement(series, target)),
+            fmt(cohen_kappa(series, target)),
+            str(_paired_count(series, target)),
         )
     return table
 
@@ -292,12 +281,12 @@ def consistency_table(
 
 def show_dimension(payload: Dict[str, Any], dim_name: str, field: str, repeats: int) -> None:
     """Render all agreement views for one sentiment dimension."""
-    v1, v2, v1_consensus, v1_loo = collect(payload, field)
+    values, _consensus, loo = collect(payload, field)
     console.print()
     console.rule(f"[bold]{dim_name}")
-    console.print(consensus_table(dim_name, v1, v2, v1_consensus, v1_loo))
+    console.print(consensus_table(dim_name, values, loo))
     for table in (
-        pairwise_table(dim_name, v2),
+        pairwise_table(dim_name, values),
         consistency_table(payload, dim_name, field, repeats),
     ):
         if table is not None:

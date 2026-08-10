@@ -265,8 +265,7 @@ class PanelMember:
 #: sat at 4–6 s, i.e. a corpus pass measured in days rather than hours, and the
 #: bottleneck was never the prompt or the reasoning level (it is marginally
 #: *faster* at ``medium`` than at ``low``). ``iwac:qwen35A10b*`` holds zero
-#: values, so unlike ``iwac:deepseekV4Flash*`` it needs no RETIRED_PANEL entry
-#: to keep — it follows ``qwen35A3b`` and ``gemini36Flash`` out of the emitted
+#: values, so it follows ``qwen35A3b`` and ``gemini36Flash`` out of the emitted
 #: ontology, which ``00_setup_properties.py --verify`` confirms is empty before
 #: any upload.
 PANEL: Dict[str, PanelMember] = {
@@ -328,24 +327,19 @@ PANEL_REASONING_EFFECTIVE: Dict[str, str] = {
     for key in PANEL
 }
 
-#: Generation-2 properties that have already been used but are no longer in
-#: the active panel. Keep these terms in the ontology and never repoint them to
-#: a new snapshot; preview-era values remain attributable.
-RETIRED_PANEL: Dict[str, PanelMember] = {
-    "deepseek_v4_flash": PanelMember(
-        "deepseek_v4_flash", "deepseek-v4-flash", "DeepSeek V4 Flash Preview",
-        "deepseekV4Flash",
-    ),
-}
-
-#: Generation 1, annotated Jan-Feb 2026: HF column prefix -> Omeka property
-#: prefix. Vendor-keyed and un-annotated; kept intact beside generation 2 so
-#: the two can be compared. Never write to these.
-V1_PANEL: Dict[str, str] = {
-    "gemini_3_flash_preview": "iwac:gemini",
-    "gpt_5_mini": "iwac:chatgpt",
-    "ministral_14b_2512": "iwac:mistral",
-}
+#: Sentiment on Omeka is now generation 2 alone. Deleted from the archive on
+#: 2026-08-07, after the values were confirmed present on the Hugging Face full
+#: mirror: the vendor-keyed generation-1 campaign (``iwac:gemini*``,
+#: ``iwac:chatgpt*``, ``iwac:mistral*``, 12,286 items each) and the retired
+#: April preview ``iwac:deepseekV4Flash*`` (11,482). The Hub keeps generation 1
+#: as ``gemini_3_flash_preview_*`` / ``gpt_5_mini_*`` / ``ministral_14b_2512_*``,
+#: frozen with ``omeka_prefix=None`` in the uploader's panel so ``hub_merge``
+#: preserves what the uploader no longer emits — that freeze is the archive, and
+#: removing it would drop the only remaining copy. The preview was not on the
+#: Hub and was discarded deliberately.
+#:
+#: Nothing here reads those properties any more. Anything comparing generations
+#: reads the Hub, not Omeka.
 
 
 # ---------------------------------------------------------------------------

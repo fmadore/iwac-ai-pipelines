@@ -251,12 +251,11 @@ def test_openrouter_models_are_offered_by_the_right_tiers():
 def test_the_deepseek_preview_is_archive_only():
     """Every DeepSeek Flash run goes to the dated 0731 release.
 
-    The April preview keeps its ``MODEL_REGISTRY`` entry — ``sentiment_core``'s
-    RETIRED_PANEL names that key, and 11,482 stored annotations have to stay
-    attributable to the model that actually wrote them — but a tier is what a
-    pipeline passes to ``choices=``, so membership in one is what decides
-    whether a run can still land on it. Being merely *superseded* in a
-    description had not stopped it being selectable.
+    The April preview keeps its ``MODEL_REGISTRY`` entry so its slug still
+    resolves where it survives in old artifacts, but a tier is what a pipeline
+    passes to ``choices=``, so membership in one is what decides whether a run
+    can still land on it. Being merely *superseded* in a description had not
+    stopped it being selectable.
     """
     for tier in (TEXT_ECONOMY_MODELS, TEXT_OPEN_MODELS,
                  TEXT_EXTENDED_MODELS, TEXT_FULL_MODELS):

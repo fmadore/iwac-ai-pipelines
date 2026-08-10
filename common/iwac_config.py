@@ -117,11 +117,9 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
 #:
 #: ``deepseek-v4-flash`` (item 79613, "DeepSeek V4 Flash") left this dict on
 #: 2026-08-07: the April preview is superseded everywhere by the dated 0731
-#: release, so it is no longer offered for new writes. **Item 79613 is not
-#: retired** — it holds 11,482 real sentiment annotations and must keep
-#: resolving, which is why it is absent from RETIRED_AI_MODEL_ITEM_IDS. Never
-#: repoint it at the 0731 snapshot: preview-era values stay attributable to the
-#: model that actually produced them.
+#: release. Its sentiment values were deleted from Omeka the same day, so
+#: nothing links to 79613 any more. The item itself is still live and is left
+#: out of RETIRED_AI_MODEL_ITEM_IDS, which means "this id no longer resolves".
 RETIRED_AI_MODEL_ITEM_IDS = (79608, 79609)
 
 

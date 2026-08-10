@@ -27,11 +27,9 @@ from sentiment_core import (
     PANEL,
     PANEL_REASONING_EFFECTIVE,
     POLARITE_ITEM_IDS,
-    RETIRED_PANEL,
     RESULT_FIELD_SUFFIXES,
     SENTIMENT_MODEL_ANNOTATION_TERM,
     SUBJECTIVITE_ITEM_IDS,
-    V1_PANEL,
     request_timeout_for_budget,
 )
 
@@ -104,28 +102,36 @@ def test_panel_terms_are_unique():
     assert len(seen) == 6 * len(PANEL)
 
 
-def test_panel_does_not_collide_with_generation_1():
-    """A shared term would overwrite 12,286 articles of existing annotations.
+#: Property prefixes emptied and abandoned on 2026-08-07 — the vendor-keyed
+#: generation-1 campaign and the retired April preview. No longer installed
+#: anywhere, so they can no longer be *overwritten*; they are pinned because
+#: reusing one would resurrect what generation 2 exists to prevent.
+ABANDONED_PREFIXES = (
+    "iwac:gemini", "iwac:chatgpt", "iwac:mistral", "iwac:deepseekV4Flash",
+)
 
-    Compared as exact term sets, not by prefix: ``iwac:mistralSmall2603*`` does
-    begin with ``iwac:mistral``, and reading that as a collision would be a
-    false alarm — the terms it generates are all distinct from the vendor slot's.
+
+def test_panel_does_not_reuse_an_abandoned_property():
+    """A vendor slot names a vendor, and a vendor is not a model.
+
+    Generation 1 could not say which model produced a stored value, and
+    recovering that took a dig through git history. Naming a member ``mistral``
+    or ``gemini`` would generate exactly those terms again.
+
+    Compared as exact terms, not by prefix: ``iwac:mistralSmall2603*`` does begin
+    with ``iwac:mistral`` and ``iwac:deepseekV4Flash0731*`` with
+    ``iwac:deepseekV4Flash``, and reading either as a collision would be a false
+    alarm — both are live members whose terms are distinct from the slot's.
     """
-    v1_terms = {
+    abandoned = {
         f"{prefix}{suffix}"
-        for prefix in V1_PANEL.values()
+        for prefix in ABANDONED_PREFIXES
         for suffix in RESULT_FIELD_SUFFIXES.values()
     }
-    v2_terms = {term for member in PANEL.values() for term in member.terms}
-
-    assert len(v1_terms) == 18
-    assert not (v1_terms & v2_terms), sorted(v1_terms & v2_terms)
-
-
-def test_active_panel_does_not_reuse_retired_snapshot_properties():
     active = {term for member in PANEL.values() for term in member.terms}
-    retired = {term for member in RETIRED_PANEL.values() for term in member.terms}
-    assert not (active & retired), sorted(active & retired)
+
+    assert len(abandoned) == 24
+    assert not (abandoned & active), sorted(abandoned & active)
 
 
 def test_every_member_has_a_declared_effective_reasoning_depth():

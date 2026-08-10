@@ -6,10 +6,12 @@
 Pilot a candidate sentiment panel on a sample of already-annotated articles.
 
 Reads from Omeka, writes nothing to it. The point is to find out whether a new
-set of models earns a place — and 30 new Omeka properties across 12,000+ items
-— before any of that is created. Results land in a local JSON file alongside
-the generation-1 annotations for the same articles, so
-``03_pilot_report.py`` can compare them.
+set of models earns a place — and 24 new Omeka properties across 12,000+ items
+— before any of that is created. Results land in a local JSON file that
+``03_pilot_report.py`` turns into agreement and self-consistency tables.
+
+The sample is drawn from articles the live panel has already annotated, so a
+candidate is measured on the same population production runs against.
 
 Because the schema, prompt and call path come from ``sentiment_core``, the
 pilot annotations are produced exactly the way production produces them; the
@@ -61,10 +63,8 @@ from common.log_redaction import install_credential_redaction
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
     ANALYSABLE_LANGUAGES,
-    ITEM_ID_TO_SUBJECTIVITE,
     PANEL,
     PANEL_REASONING_EFFECTIVE,
-    V1_PANEL,
     analyze_with_all_models,
     get_item_content,
     get_item_language,
@@ -82,9 +82,14 @@ console = Console()
 #: Omeka resource class for newspaper articles.
 ARTICLE_CLASS_ID = 36
 
-#: iwac:geminiCentralite. Used only as an "has generation-1 annotations" probe
-#: so the sample is guaranteed comparable.
-V1_PROBE_PROPERTY_ID = 319
+#: An "is already annotated" probe, so the sample is guaranteed comparable.
+#:
+#: This was ``iwac:geminiCentralite`` (id 319) until the generation-1 properties
+#: were deleted on 2026-08-07 — after which it matched nothing and the pilot
+#: sampled an empty corpus. It now names a live generation-2 property and is
+#: resolved through the API rather than hardcoded: property IDs are assigned at
+#: vocabulary-import time, so a literal is a claim this file cannot check.
+PROBE_PROPERTY_TERM = "iwac:gpt56LunaCentralite"
 
 #: The candidate panel, its reasoning depth and the generation-1 property
 #: prefixes all come from ``sentiment_core`` — the same definitions production
@@ -116,12 +121,30 @@ def configure_logging() -> logging.Logger:
 # SAMPLING
 # ============================================================================
 
-def _items_page(client: OmekaClient, page: int, per_page: int = PER_PAGE) -> List[Dict[str, Any]]:
-    """One page of articles that already carry generation-1 annotations."""
+def resolve_probe_property(client: OmekaClient) -> int:
+    """Property ID of :data:`PROBE_PROPERTY_TERM`, or abort.
+
+    Failing loudly matters: a probe that resolves to nothing does not error, it
+    silently matches zero items, and the pilot reports an empty sample as though
+    the corpus were unannotated.
+    """
+    pid = client.get_property_id(PROBE_PROPERTY_TERM)
+    if pid is None:
+        raise SystemExit(
+            f"{PROBE_PROPERTY_TERM} is not in the Omeka vocabulary — the pilot "
+            f"cannot find already-annotated articles to sample."
+        )
+    return pid
+
+
+def _items_page(
+    client: OmekaClient, page: int, probe_property_id: int, per_page: int = PER_PAGE
+) -> List[Dict[str, Any]]:
+    """One page of articles that already carry a live panel annotation."""
     url = (
         f"{client.base_url}/items"
         f"?resource_class_id={ARTICLE_CLASS_ID}"
-        f"&property%5B0%5D%5Bproperty%5D={V1_PROBE_PROPERTY_ID}"
+        f"&property%5B0%5D%5Bproperty%5D={probe_property_id}"
         f"&property%5B0%5D%5Btype%5D=ex"
         f"&per_page={per_page}&page={page}"
     )
@@ -129,17 +152,17 @@ def _items_page(client: OmekaClient, page: int, per_page: int = PER_PAGE) -> Lis
     return result if isinstance(result, list) else []
 
 
-def _last_page(client: OmekaClient, console: Console) -> int:
+def _last_page(client: OmekaClient, probe_property_id: int) -> int:
     """Binary-search the final page rather than paging the whole corpus."""
     lo, hi = 1, 2
-    while _items_page(client, hi, per_page=1):
+    while _items_page(client, hi, probe_property_id, per_page=1):
         lo, hi = hi, hi * 2
         if hi > 1_000_000:  # pathological guard
             break
     # invariant: page `lo` has data, page `hi` does not
     while lo + 1 < hi:
         mid = (lo + hi) // 2
-        if _items_page(client, mid, per_page=1):
+        if _items_page(client, mid, probe_property_id, per_page=1):
             lo = mid
         else:
             hi = mid
@@ -159,8 +182,9 @@ def sample_articles(
     spread tracks ingest order. Cheap (a few dozen requests) and good enough to
     compare panels; it is not a basis for population-level estimates.
     """
+    probe_property_id = resolve_probe_property(client)
     with console.status("[bold green]Locating corpus bounds...", spinner="dots"):
-        total_items = _last_page(client, console)
+        total_items = _last_page(client, probe_property_id)
     max_page = max(1, -(-total_items // PER_PAGE))  # ceil
     console.print(
         f"[green]✓[/] ~{total_items:,} annotated articles across {max_page} pages"
@@ -178,7 +202,7 @@ def sample_articles(
             # different population than the run it validates measures the wrong
             # thing.
             items = [
-                it for it in _items_page(client, page)
+                it for it in _items_page(client, page, probe_property_id)
                 if get_item_content(it).strip()
                 and get_item_language(it) in ANALYSABLE_LANGUAGES
             ]
@@ -191,43 +215,11 @@ def sample_articles(
     return sampled[:sample_size]
 
 
-# ============================================================================
-# GENERATION-1 READBACK
-# ============================================================================
-
-def _resource_label(values: List[Dict[str, Any]]) -> Optional[str]:
-    """Label of a resource:item value (centralité / polarité)."""
-    if not values:
-        return None
-    return values[0].get("display_title")
-
-
-def _resource_item_id(values: List[Dict[str, Any]]) -> Optional[int]:
-    if not values:
-        return None
-    return values[0].get("value_resource_id")
-
-
-def _literal(values: List[Dict[str, Any]]) -> Optional[str]:
-    if not values:
-        return None
-    return values[0].get("@value")
-
-
-def read_v1_annotations(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Read the generation-1 annotations already stored on an Omeka item."""
-    out: Dict[str, Dict[str, Any]] = {}
-    for prefix, prop in V1_PANEL.items():
-        subj_item_id = _resource_item_id(item.get(f"{prop}SubjectiviteScore", []))
-        out[prefix] = {
-            "centralite_islam_musulmans": _resource_label(item.get(f"{prop}Centralite", [])),
-            "centralite_justification": _literal(item.get(f"{prop}CentraliteJustification", [])),
-            "polarite": _resource_label(item.get(f"{prop}Polarite", [])),
-            "polarite_justification": _literal(item.get(f"{prop}PolariteJustification", [])),
-            "subjectivite_score": ITEM_ID_TO_SUBJECTIVITE.get(subj_item_id),
-            "subjectivite_justification": _literal(item.get(f"{prop}SubjectiviteJustification", [])),
-        }
-    return out
+# A pilot used to read each article's generation-1 annotations off the item and
+# score the candidate against them. Those properties were deleted from Omeka on
+# 2026-08-07; generation 1 now lives only on the Hugging Face full mirror. A
+# pilot compares candidates against each other and, through the sample, against
+# the live panel.
 
 
 # ============================================================================
@@ -440,7 +432,6 @@ def annotate_articles(
             results[item_id] = {
                 "title": item.get("o:title"),
                 "n_chars": len(content),
-                "v1": read_v1_annotations(item),
                 "v2_runs": runs,
             }
     return results, errors
@@ -481,16 +472,6 @@ def build_payload(
             },
             "v2_reasoning_effective": {
                 prefix: PANEL_REASONING_EFFECTIVE[prefix] for prefix in models.clients
-            },
-            "v1_models": {
-                "gemini_3_flash_preview": "gemini-3-flash-preview",
-                "gpt_5_mini": "gpt-5-mini",
-                "ministral_14b_2512": "ministral-14b-2512",
-            },
-            "v1_run_config": {
-                "gemini_3_flash_preview": "temperature=0.2; response_schema; no thinking_level",
-                "gpt_5_mini": "response_format schema only; no temperature; no reasoning_effort",
-                "ministral_14b_2512": "temperature=0.2; max_tokens=512; response_format schema",
             },
             "prompt_chars": len(system_prompt),
             "prompt_fingerprint": prompt_id,

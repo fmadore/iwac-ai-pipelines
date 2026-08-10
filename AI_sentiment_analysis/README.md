@@ -67,8 +67,9 @@ Sentiment towards Islam/Muslims:
 
 ## Model provenance — read this before comparing generations
 
-Two generations of annotations coexist on the same items. They live in separate
-properties and a run never touches the other generation's values.
+Omeka now carries generation 2 alone. Generation 1 was deleted on 2026-08-07
+and survives on Hugging Face, so a cross-generation comparison reads the Hub for
+one side and Omeka for the other — never Omeka for both.
 
 ### Generation 2 (from 2026-07-31) — what `01` writes now
 
@@ -82,9 +83,10 @@ is the only thing that can be, because Omeka does not index value annotations:
 | `iwac:mistralSmall2603*` | `mistral-small-2603` | 79614 | `mistral_small_2603_` |
 | `iwac:deepseekV4Flash0731*` | `deepseek/deepseek-v4-flash-0731` | 83261 | `deepseek_v4_flash_0731_` |
 
-The superseded preview remains under `iwac:deepseekV4Flash*` with authority
-item 79613. Those properties are historical and are never repointed to 0731;
-mixing two checkpoints in one property set would destroy model provenance.
+The April preview's `iwac:deepseekV4Flash*` values (11,482 items) were deleted
+on 2026-08-07. They were never exported to Hugging Face, so that reading is
+gone; `deepseek_v4_flash_0731_` on the Hub is a different run, not a newer copy
+of the same one.
 
 **Qwen3.5 122B-A10B was dropped from the panel on 2026-08-05** without ever
 annotating an article, so `iwac:qwen35A10b*` holds zero values and is not part of
@@ -116,48 +118,42 @@ Property **IDs** are resolved from Omeka at startup rather than hardcoded,
 because Omeka assigns them when the vocabulary is updated and a stale ID would
 write sentiment into the wrong property.
 
-### Generation 1 (January–February 2026) — read-only
+### Generation 1 (January–February 2026) — deleted from Omeka, kept on the Hub
 
-The Omeka properties are keyed by **vendor** (`iwac:gemini*`, `iwac:chatgpt*`,
-`iwac:mistral*`) and carry **no `iwac:*Model` value annotation**. The property
-name therefore does not identify the model that produced a value.
+The vendor-keyed properties (`iwac:gemini*`, `iwac:chatgpt*`, `iwac:mistral*`,
+12,286 items each) were **deleted from Omeka on 2026-08-07**, after the values
+were confirmed present on the Hugging Face full mirror. Nothing in this pipeline
+reads them any more. The archive is:
 
-The stored corpus was annotated in **January–February 2026** (campaign window
-verified from `o:modified` on the annotated items), by:
-
-| Omeka property prefix | Model that produced it | Hugging Face column prefix |
+| Hugging Face column prefix | Model that produced it | Run configuration |
 |---|---|---|
-| `iwac:gemini*` | `gemini-3-flash-preview` (Gemini 3 Flash) | `gemini_3_flash_preview_` |
-| `iwac:chatgpt*` | `gpt-5-mini` (GPT-5 mini) | `gpt_5_mini_` |
-| `iwac:mistral*` | `ministral-14b-2512` (Ministral 3 14B) | `ministral_14b_2512_` |
+| `gemini_3_flash_preview_` | `gemini-3-flash-preview` | temperature `0.2`, `response_schema` |
+| `gpt_5_mini_` | `gpt-5-mini` | no temperature sent, `response_format` |
+| `ministral_14b_2512_` | `ministral-14b-2512` | temperature `0.2`, **`max_tokens=512`** |
 
-#### Exact generation-1 run configuration
+Those columns are frozen on the Hub with `omeka_prefix=None` in the uploader's
+panel, so `hub_merge` preserves what the uploader no longer emits. **That freeze
+is now the only copy** — unfreezing it, or dropping the entries, deletes the
+campaign.
 
-Recovered from commit `07fb007` (2026-01-27), which was the live code for the
-whole campaign — the pipeline then called each SDK directly, before the
-`llm_provider` refactor (`fbc2645`, 2026-02-10). The three models did **not**
-share a configuration:
+Three things matter when reading those columns, none of them recoverable from
+the data:
 
-| Model | Temperature | Reasoning / thinking | Other |
-|---|---|---|---|
-| `gemini-3-flash-preview` | `0.2` | **none set** | `response_mime_type=application/json`, `response_schema`, system_instruction |
-| `gpt-5-mini` | **none sent** | **none set** | `chat.completions.parse` with `response_format` |
-| `ministral-14b-2512` | `0.2` | **none set** | `response_format`, **`max_tokens=512`** |
+- **No model ran with any reasoning or thinking parameter** — `thinking_level`
+  postdates the campaign. A recollection of v1 running at `thinking_level="low"`
+  is mistaken.
+- **Ministral alone capped output at 512 tokens**, so its long justifications
+  could be truncated where the others' were not.
+- **GPT-5 mini sent no temperature**, running at the API default while the other
+  two were pinned to 0.2.
 
-Three details that are easy to miss and matter for reproducing a value:
-
-- **No model ran with any reasoning or thinking parameter.** `thinking_level`
-  only entered this repo on 2026-02-16 (`5748358`), after the campaign; the
-  Gemini call above sets temperature and schema only. Any recollection of the
-  v1 run using `thinking_level="low"` is mistaken — `low` was the *Pro* default
-  introduced later, and Flash's later default was `MINIMAL`.
-- **Ministral capped output at `max_tokens=512`**, the only model with a cap.
-  Long justifications could be truncated for that model and not the others.
-- **GPT-5 mini sent no temperature at all**, so it ran at the API default while
-  the other two were pinned to 0.2.
+Generation 1 also carried no model annotation, so the property name named a
+*vendor* and nothing recorded which model ran; the mapping above was recovered
+from commit `07fb007`.
 
 > **Rule:** a new model gets a new property set named for the model. Never
-> reuse a vendor slot — that is what made generation 1 ambiguous.
+> reuse a vendor slot — that is what made generation 1 ambiguous, and
+> `test_panel_does_not_reuse_an_abandoned_property` now pins it.
 
 ## Adding a model to the panel
 
@@ -568,8 +564,7 @@ is true of `Centralite` and `Polarite`, which generation 1 nonetheless declared
 `owl:DatatypeProperty` in the ontology; the generation-2 declarations are
 `owl:ObjectProperty` and match what is actually written.
 
-Generation-1 property IDs are 319–336 (`iwac:gemini*` 319–324, `iwac:chatgpt*`
-325–330, `iwac:mistral*` 331–336) in the order above. Generation-2 IDs are
+Generation-2 IDs are
 assigned when the vocabulary is updated and are **not** hardcoded anywhere —
 `01` resolves all 31 terms in a single request at startup via
 `common.iwac_config.resolve_property_ids`, and fails loudly naming any that are

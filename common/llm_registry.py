@@ -210,11 +210,11 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort="low",
         supported_reasoning_efforts=("low", "high", "max"),
     ),
-    # ARCHIVE ONLY — deliberately absent from every tier, so no pipeline offers
-    # it and no `--model` accepts it. The entry survives so the 11,482 sentiment
-    # annotations this preview wrote stay attributable (``sentiment_core``'s
-    # RETIRED_PANEL names this key) and so its OpenRouter slug still resolves in
-    # stored provenance. New runs take ``deepseek-v4-flash-0731``.
+    # ARCHIVE ONLY — absent from every tier, so no pipeline offers it and no
+    # `--model` accepts it. The entry survives so its OpenRouter slug still
+    # resolves when it turns up in an old pilot payload or a git-archaeology
+    # session; the sentiment annotations it wrote were deleted from Omeka on
+    # 2026-08-07 and were never on the Hub. New runs take the 0731 release.
     "deepseek-v4-flash": ModelOption(
         "deepseek-v4-flash", PROVIDER_OPENROUTER, OPENROUTER_DEEPSEEK_FLASH_MODEL,
         "DeepSeek V4 Flash Preview (OpenRouter)",

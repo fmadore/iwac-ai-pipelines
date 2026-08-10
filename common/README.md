@@ -611,7 +611,7 @@ dependency.
   (deliberately not the Flash/Plus/Max hosted tiers, which publish no weights). Accept
   `reasoning_effort` minimal/low/medium/high/xhigh, normalised by OpenRouter.
 - **`deepseek-v4-flash-0731`**: official DeepSeek V4 Flash release and the shared text default; accepts exactly `"low"`, `"high"`, or `"max"` reasoning (bulk pipelines use low; sentiment uses high).
-- **`deepseek-v4-flash`**: the April preview — **archive only**. Removed from every tier on 2026-08-07, so no pipeline offers it and no `--model` accepts it; every DeepSeek Flash run goes to 0731. The `MODEL_REGISTRY` entry survives because `sentiment_core.RETIRED_PANEL` names the key and 11,482 stored annotations must stay attributable to the model that actually wrote them. `test_the_deepseek_preview_is_archive_only` keeps it out of the tiers.
+- **`deepseek-v4-flash`**: the April preview — **archive only**. Removed from every tier on 2026-08-07, so no pipeline offers it and no `--model` accepts it; every DeepSeek Flash run goes to 0731. The `MODEL_REGISTRY` entry survives only so the slug still resolves where it turns up in an old pilot payload; the sentiment values it wrote were deleted from Omeka the same day. `test_the_deepseek_preview_is_archive_only` keeps it out of the tiers.
 - **`deepseek-v4-pro`**: DeepSeek V4 Pro — quality tier, reasons at `"high"` by default; accepts `"high"` / `"xhigh"`.
 
 Three behaviours are specific to this provider and worth knowing:

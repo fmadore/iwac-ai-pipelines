@@ -64,7 +64,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
     PANEL,
     RESULT_FIELD_SUFFIXES,
-    RETIRED_PANEL,
     SENTIMENT_MODEL_ANNOTATION_TERM,
     PanelMember,
 )
@@ -225,11 +224,13 @@ def _ttl_block(definition: PropertyDef) -> str:
 def emit_ttl() -> str:
     """The Turtle to append to ``iwac-vocabulary.ttl``.
 
-    Emits the active panel **and** :data:`RETIRED_PANEL`. The retired members
-    are not optional decoration: Omeka deletes any installed property the
-    uploaded file omits, along with every value stored under it, so a generator
-    that emitted only ``PANEL`` would quietly turn each panel revision into a
-    proposal to destroy the previous member's annotations.
+    Emits the active panel, and only it. **Omeka deletes any installed property
+    the uploaded file omits, along with every value stored under it**, so this
+    function decides what survives the next vocabulary upload: a member dropped
+    from ``PANEL`` while still holding annotations would have them destroyed
+    silently. Every retired member has now been emptied deliberately, so there
+    is nothing left for an omission to take — but check that before removing the
+    next one, not after.
     """
     out: List[str] = [
         "# ============================================",
@@ -242,12 +243,10 @@ def emit_ttl() -> str:
         "# the current pipeline does not write it.",
         "#",
         "# Centralité, polarité and the subjectivité score are links into the",
-        "# controlled vocabulary, so they are ObjectProperties here — the",
-        "# generation-1 declarations above call two of the three DatatypeProperty,",
-        "# which does not match how the pipeline has always written them.",
+        "# controlled vocabulary, so they are ObjectProperties here.",
         "#",
         "# The panel is defined once in AI_sentiment_analysis/sentiment_core.py",
-        "# (PANEL, plus RETIRED_PANEL for members whose values must outlive their",
+        "# (PANEL);",
         "# turn in the panel); this file is generated from it by",
         "# 00_setup_properties.py.",
         "",
@@ -260,14 +259,6 @@ def emit_ttl() -> str:
         out.append("")
         out.extend(_ttl_block(d) + "\n" for d in definitions_for(member))
 
-    for member in RETIRED_PANEL.values():
-        out.append("")
-        out.append(f"# --- RETIRED: {member.label} ({model_id_for(member)}) "
-                   f"-> HF prefix {member.key}_ ---")
-        out.append("#     No longer in the panel. Declared so an upload does not")
-        out.append("#     delete the values it already holds; never repointed.")
-        out.append("")
-        out.extend(_ttl_block(d) + "\n" for d in definitions_for(member))
     return "\n".join(out).rstrip() + "\n"
 
 
