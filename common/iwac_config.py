@@ -40,6 +40,11 @@ IWAC_SUMMARY_MODEL_PROPERTY_ID = 313  # iwac:summaryModel ("AI Model - Summary")
 #: :func:`resolve_property_ids` rather than assuming a range.
 IWAC_VOCABULARY_ID = 10
 
+#: Slug of the public site an item page is served from. The same items are
+#: published under ``westafrica`` for the English UI; the French site is the
+#: one cited, so it is the default.
+IWAC_SITE_SLUG = "afrique_ouest"
+
 # ---------------------------------------------------------------------------
 # Authority items
 # ---------------------------------------------------------------------------
@@ -160,6 +165,19 @@ def item_api_url(base_url: str, item_id: int) -> str:
     URLs so that a changed ``OMEKA_BASE_URL`` keeps working.
     """
     return f"{base_url.rstrip('/')}/items/{item_id}"
+
+
+def item_page_url(base_url: str, item_id: int, site_slug: str = IWAC_SITE_SLUG) -> str:
+    """Build an item's *public page* URL from the client's base URL.
+
+    ``OmekaClient.base_url`` always ends in ``/api``, which serves JSON; the
+    human-readable record a citation should point at lives on the site path
+    instead. Pass ``site_slug="westafrica"`` for the English UI.
+    """
+    root = base_url.rstrip("/")
+    if root.endswith("/api"):
+        root = root[: -len("/api")]
+    return f"{root}/s/{site_slug}/item/{item_id}"
 
 
 def select_model_key(default: Optional[str] = None) -> Optional[str]:

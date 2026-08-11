@@ -37,6 +37,44 @@ python omeka_items_to_md.py 60638            # Single item set
 python omeka_items_to_md.py subject:12345    # Subject lookup
 ```
 
+## Markdown layout
+
+Each file opens with an H1 naming its source, and every article below it is an
+H2 — so NotebookLM segments on headings that mean something, and split exports
+say which part they are:
+
+```markdown
+# Item Set: L'Observateur (ID 60638) — Part 1 of 3
+
+## Le CERFI forme 68 jeunes à Kaya
+**Journal :** L'Observateur | **Date :** 2018-04-03 | **Pays :** Burkina Faso | **Item :** [2233](https://islam.zmo.de/s/afrique_ouest/item/2233)
+
+Article text…
+
+---
+```
+
+The **Item** link is what makes a NotebookLM citation checkable: it resolves
+straight to the record in the archive.
+
+### Optional AI summaries
+
+```bash
+python omeka_items_to_md.py 60638 --with-summaries
+```
+
+Adds each article's stored summary (`bibo:shortDescription`, written by
+[`AI_summary/`](../AI_summary/)) as a labelled `**Résumé (IA) :**` line above
+the body. It is read from the item JSON the exporter already fetches, so it
+costs **no extra API call and no model call** — this script never generates
+text.
+
+Off by default on purpose: it puts machine-written prose into a corpus whose
+value is that it's primary sources, and NotebookLM will cite the summary as
+readily as the newspaper. The label is there so a grounded answer leaning on
+one is visibly doing so. Interactive runs are asked; scripted runs must pass
+the flag.
+
 ## Output
 
 Files are saved to `extracted_articles/`:

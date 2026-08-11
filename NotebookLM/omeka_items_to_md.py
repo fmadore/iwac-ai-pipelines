@@ -52,20 +52,30 @@ Output
 - File path: NotebookLM/extracted_articles/<item-title>_articles.md
     (or _part1.md, _part2.md, etc. for large collections)
 - Encoding: UTF-8
-- Layout per article (Markdown):
+- Layout: one H1 naming the file's source (item set, or subject + publisher,
+    plus the part number when split), then one H2 per article:
 
-        # <title>
-        **Journal :** <publisher(s)>
-        **Date :** <date>
-        **Pays :** <country>
+        # Item Set: <set title> (ID <set id>) — Part 1 of 3
+
+        ## <title>
+        **Journal :** <publisher(s)> | **Date :** <date> | **Pays :** <country> | **Item :** [<id>](<url>)
 
         <article body>
 
         ---
 
+Optional AI summaries
+- ``--with-summaries`` inlines each article's stored ``bibo:shortDescription``
+    as a "Résumé (IA)" line. The summary is read from the item JSON already
+    fetched, so it costs no extra API call and no model call — this script never
+    generates text. It is off by default because it puts machine-written prose
+    into a corpus of primary sources, which NotebookLM will cite as readily as
+    it cites the newspaper.
+
 Notes
 - The format favors readability and simple chunking for tools like NotebookLM.
 - French labels are used (Journal, Date, Pays) since most content is in French.
+- The item link makes a NotebookLM citation traceable back to the Omeka record.
 - Country is extracted from the publisher's "Spatial Coverage" (dcterms:spatial) field.
 - Only the first value is taken for multi-valued fields (date/content) to avoid
     duplications and keep the file compact.
@@ -93,6 +103,7 @@ console = Console()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.checkpoint import atomic_write_text
+from common.iwac_config import item_page_url
 from common.log_redaction import install_credential_redaction
 
 # Credentials ride in Omeka query strings and provider headers; keep them
@@ -248,6 +259,44 @@ def extract_publishers(article: JSONObj) -> List[str]:
     return publishers
 
 
+def extract_summary(article: JSONObj, language: str = "fr") -> Optional[str]:
+    """Extract the AI-written summary in one language from bibo:shortDescription.
+
+    Since 2026-08-06 the property carries two literals, tagged ``@language``
+    ``fr`` and ``en``. The summaries written before then carry no tag at all
+    and are French, so an untagged literal counts as French — the same rule the
+    write side applies through ``PropertyTarget(adopt_untagged=True)``.
+
+    Args:
+        article: Omeka JSON object representing a bibo:Article item.
+        language: BCP-47 tag to return ("fr" or "en").
+
+    Returns:
+        The summary text, or None when the article carries none in that
+        language. Nothing is generated here: this reads a field the AI_summary
+        pipeline already wrote.
+    """
+    values = article.get("bibo:shortDescription")
+    if not isinstance(values, list):
+        return None
+
+    untagged: Optional[str] = None
+    for entry in values:
+        if not isinstance(entry, dict) or "@value" not in entry:
+            continue
+        text = str(entry["@value"]).strip()
+        if not text:
+            continue
+        tag = entry.get("@language")
+        if tag == language:
+            return text
+        if not tag and untagged is None:
+            untagged = text
+
+    # An untagged literal is a legacy French summary; it answers "fr" only.
+    return untagged if language == "fr" else None
+
+
 def extract_country_from_item_set(item_set: JSONObj) -> Optional[str]:
     """Extract the country from an item set's dcterms:spatial field.
 
@@ -327,12 +376,19 @@ def extract_article_country(article: JSONObj, client: OmekaClient) -> Optional[s
     return country
 
 
-def format_article(article: JSONObj, client: Optional[OmekaClient] = None, country: Optional[str] = None) -> str:
+def format_article(
+    article: JSONObj,
+    client: Optional[OmekaClient] = None,
+    country: Optional[str] = None,
+    include_summary: bool = False,
+) -> str:
     """Convert a single newspaper article into NotebookLM-friendly Markdown format.
 
     Creates a standardized Markdown block for each article with:
-    - Level 1 heading with the article title
-    - Bold metadata lines for Journal (newspaper), Date, and Pays (country)
+    - Level 2 heading with the article title (level 1 is the file itself)
+    - A single metadata line: Journal, Date, Pays, and a link back to the Omeka
+      record, so a NotebookLM citation stays traceable to its source
+    - Optionally the AI-written summary, explicitly labelled as such
     - The full article content (cleaned of extra whitespace)
     - A horizontal rule separator for visual separation
 
@@ -342,22 +398,27 @@ def format_article(article: JSONObj, client: Optional[OmekaClient] = None, count
     Args:
         article: Omeka JSON object representing a bibo:Article with fields like
                 o:title, dcterms:date, dcterms:publisher, bibo:content.
-        client: Optional OmekaClient instance for fetching article country.
+        client: Optional OmekaClient instance, used to resolve the article's
+                country and to build the item link from its base URL.
         country: Optional country name to include in metadata. If not provided,
                  will attempt to extract from publisher's spatial coverage.
+        include_summary: Emit the stored ``bibo:shortDescription`` summary above
+                the body. Off by default: it is machine-written text entering a
+                corpus of primary sources, and NotebookLM will cite it as
+                readily as it cites the newspaper.
 
     Returns:
         Formatted Markdown string ready to write to file, including trailing
         horizontal rule and newlines for proper separation between articles.
-        
+
     Example output:
-        # Article Title Here
-        **Journal :** L'Observateur
-        **Date :** 1998-02-16
-        **Pays :** Bénin
-        
+        ## Article Title Here
+        **Journal :** L'Observateur | **Date :** 1998-02-16 | **Pays :** Bénin | **Item :** [2233](https://islam.zmo.de/s/afrique_ouest/item/2233)
+
+        **Résumé (IA) :** One or two sentences written by the summary pipeline.
+
         Article content goes here with proper formatting...
-        
+
         ---
     """
     title = article.get("o:title") or "No title"
@@ -366,17 +427,31 @@ def format_article(article: JSONObj, client: Optional[OmekaClient] = None, count
     content = normalize_md_whitespace(content)
     publishers = extract_publishers(article)
     publisher_str = "; ".join(publishers) if publishers else "Inconnu"
-    
+
     # Use provided country, or try to extract from article's item set if client is provided
     if not country and client:
         country = extract_article_country(article, client)
 
-    lines = [f"# {title}"]
-    lines.append(f"**Journal :** {publisher_str}")
-    lines.append(f"**Date :** {date}")
+    meta = [f"**Journal :** {publisher_str}", f"**Date :** {date}"]
     if country:
-        lines.append(f"**Pays :** {country}")
-    lines.append("")
+        meta.append(f"**Pays :** {country}")
+    item_id = article.get("o:id")
+    if item_id:
+        # The link is what makes a NotebookLM answer checkable against the
+        # archive; without a client we still emit the bare ID to cite.
+        if client:
+            url = item_page_url(client.base_url, item_id)
+            meta.append(f"**Item :** [{item_id}]({url})")
+        else:
+            meta.append(f"**Item :** {item_id}")
+
+    lines = [f"## {title}", " | ".join(meta), ""]
+    if include_summary:
+        summary = extract_summary(article)
+        if summary:
+            # Labelled, so a grounded answer leaning on it is visibly doing so.
+            lines.append(f"**Résumé (IA) :** {normalize_md_whitespace(summary)}")
+            lines.append("")
     if content:
         lines.append(content)
         lines.append("")
@@ -590,6 +665,7 @@ def process_item_set(
     max_items_per_file: int,
     country_label: Optional[str] = None,
     file_ext: str = "md",
+    include_summary: bool = False,
 ) -> Tuple[int, List[str]]:
     """Process a single Item Set: fetch items, filter for articles, and export to file(s).
 
@@ -600,6 +676,7 @@ def process_item_set(
         max_items_per_file: Maximum articles per file before auto-splitting.
         country_label: Optional country name for subfolder organization and logging.
         file_ext: Output file extension ("md" or "txt").
+        include_summary: Emit each article's stored AI summary.
 
     Returns:
         Tuple of (total_article_count, [list_of_written_file_paths]).
@@ -660,7 +737,14 @@ def process_item_set(
     if total_articles <= max_items_per_file:
         # Small collection: write all articles to a single file
         out_path = os.path.join(target_dir, f"{file_stub}_articles.{file_ext}")
-        write_articles_to_file(articles, out_path, header_title, client=client, country=country)
+        write_articles_to_file(
+            articles,
+            out_path,
+            header_title,
+            client=client,
+            country=country,
+            include_summary=include_summary,
+        )
         written_files.append(out_path)
         console.print(f"  [green]✓[/] Wrote {total_articles} articles → [dim]{os.path.basename(out_path)}[/]")
     else:
@@ -673,7 +757,16 @@ def process_item_set(
             end_idx = min(start_idx + max_items_per_file, total_articles)
             part_articles = articles[start_idx:end_idx]
             out_path = os.path.join(target_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
-            write_articles_to_file(part_articles, out_path, header_title, part_num, client=client, country=country)
+            write_articles_to_file(
+                part_articles,
+                out_path,
+                header_title,
+                part_num,
+                client=client,
+                country=country,
+                num_parts=num_parts,
+                include_summary=include_summary,
+            )
             written_files.append(out_path)
             console.print(f"    Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
@@ -686,6 +779,7 @@ def process_subject_items(
     out_dir: str,
     max_items_per_file: int,
     file_ext: str = "md",
+    include_summary: bool = False,
 ) -> Tuple[int, List[str]]:
     """Process reverse-linked items for a given subject Item ID and export to file(s).
 
@@ -695,6 +789,7 @@ def process_subject_items(
         out_dir: Output directory.
         max_items_per_file: Max articles per file before splitting.
         file_ext: Output extension (md|txt).
+        include_summary: Emit each article's stored AI summary.
 
     Returns:
         (article_count, [written_files])
@@ -749,7 +844,13 @@ def process_subject_items(
         
         if pub_count <= max_items_per_file:
             out_path = os.path.join(subject_dir, f"{file_stub}_articles.{file_ext}")
-            write_articles_to_file(pub_articles, out_path, header_title, client=client)
+            write_articles_to_file(
+                pub_articles,
+                out_path,
+                header_title,
+                client=client,
+                include_summary=include_summary,
+            )
             written.append(out_path)
             console.print(f"[green]✓[/] {publisher_name}: {pub_count} articles → [dim]{os.path.basename(out_path)}[/]")
         else:
@@ -760,7 +861,15 @@ def process_subject_items(
                 end_idx = min(start_idx + max_items_per_file, pub_count)
                 part_articles = pub_articles[start_idx:end_idx]
                 out_path = os.path.join(subject_dir, f"{file_stub}_articles_part{part_num}.{file_ext}")
-                write_articles_to_file(part_articles, out_path, header_title, part_num, client=client)
+                write_articles_to_file(
+                    part_articles,
+                    out_path,
+                    header_title,
+                    part_num,
+                    client=client,
+                    num_parts=num_parts,
+                    include_summary=include_summary,
+                )
                 written.append(out_path)
                 console.print(f"  Part {part_num}: {len(part_articles)} articles → [dim]{os.path.basename(out_path)}[/]")
 
@@ -774,19 +883,39 @@ def write_articles_to_file(
     part_num: int = None,
     client: Optional[OmekaClient] = None,
     country: Optional[str] = None,
+    num_parts: Optional[int] = None,
+    include_summary: bool = False,
 ) -> None:
-    """Write a batch of articles to a single Markdown file (no top header).
+    """Write a batch of articles to a single Markdown file under one H1 header.
+
+    The header gives the file a document root, so the articles below it are H2
+    siblings rather than a flat run of H1s. Split exports name their part in
+    that header, which is otherwise the only thing distinguishing them once
+    NotebookLM has ingested the sources.
 
     Args:
         articles: List of article JSON objects to write.
         file_path: Full path to the output file.
-        header_title: Unused (kept for backward compatibility).
-        part_num: Part number for multi-part exports (unused in content).
+        header_title: Title for the file's H1 (the item set, or subject and
+            publisher, the articles were drawn from).
+        part_num: Part number for multi-part exports, named in the header.
         client: OmekaClient instance for fetching publisher country.
         country: Optional country name to include in all articles' metadata.
+        num_parts: Total number of parts, when known, for "Part 2 of 5".
+        include_summary: Emit each article's stored AI summary (see
+            :func:`format_article`).
     """
-    content = "".join(format_article(article, client, country) for article in articles)
-    atomic_write_text(Path(file_path), content)
+    heading = header_title
+    if part_num:
+        heading += f" — Part {part_num}"
+        if num_parts:
+            heading += f" of {num_parts}"
+
+    body = "".join(
+        format_article(article, client, country, include_summary)
+        for article in articles
+    )
+    atomic_write_text(Path(file_path), f"# {heading}\n\n{body}")
 
 
 @dataclass(frozen=True)
@@ -795,6 +924,23 @@ class ExportRequest:
 
     mode: str
     item_id: Optional[str] = None
+
+
+#: CLI spellings that turn on the stored-summary line. Not argparse: this
+#: entry point reads nothing and writes nothing to Omeka, so the flag is a
+#: presentation choice rather than one of the consent gates write_guard exists
+#: to enforce.
+SUMMARY_FLAGS = ("--with-summaries", "--with-summary", "--summaries")
+
+
+def extract_summary_flag(argv: List[str]) -> Tuple[List[str], bool]:
+    """Split the summary flag out of argv, returning the remaining arguments.
+
+    Keeps the compact positional syntax ("all", "12345", "subject:678") free of
+    flag handling, so the flag can appear on either side of the mode.
+    """
+    remaining = [a for a in argv if a.strip().lower() not in SUMMARY_FLAGS]
+    return remaining, len(remaining) != len(argv)
 
 
 def parse_cli_request(argv: List[str]) -> Optional[ExportRequest]:
@@ -837,6 +983,17 @@ def prompt_export_request() -> Optional[ExportRequest]:
     return None
 
 
+def prompt_include_summaries() -> bool:
+    """Ask whether to inline the stored AI summaries (interactive mode only)."""
+    console.print(
+        "\n[dim]Articles carry an AI-written summary (bibo:shortDescription). "
+        "Including it costs no extra API or model calls, but adds machine-written "
+        "text NotebookLM will cite alongside the newspapers.[/]"
+    )
+    answer = console.input("[bold]Include AI summaries? (y/N):[/] ").strip().lower()
+    return answer in ("y", "yes", "o", "oui")
+
+
 def export_file_extension() -> str:
     """Resolve the supported Markdown/plain-text output extension."""
     extension = os.getenv("NOTEBOOKLM_EXPORT_EXT", "md").lower().lstrip(".")
@@ -849,13 +1006,18 @@ def export_file_extension() -> str:
     return "md"
 
 
-def show_export_configuration(out_dir: str, file_ext: str) -> None:
+def show_export_configuration(
+    out_dir: str, file_ext: str, include_summary: bool = False
+) -> None:
     config_table = Table(show_header=False, box=box.ROUNDED, title="⚙️ Configuration")
     config_table.add_column("Setting", style="dim")
     config_table.add_column("Value", style="green")
     config_table.add_row("Output directory", out_dir)
     config_table.add_row("File format", f".{file_ext}")
     config_table.add_row("Max articles/file", str(MAX_ITEMS_PER_FILE))
+    config_table.add_row(
+        "AI summaries", "included" if include_summary else "omitted"
+    )
     console.print(config_table)
     console.print()
 
@@ -869,6 +1031,7 @@ def export_whole_collection(
     client: OmekaClient,
     out_dir: str,
     file_ext: str,
+    include_summary: bool = False,
 ) -> Tuple[int, List[str]]:
     """Export every configured country/item-set pair."""
     console.rule("[bold cyan]Whole IWAC Collection Export[/]")
@@ -887,6 +1050,7 @@ def export_whole_collection(
                 MAX_ITEMS_PER_FILE,
                 country_label=country,
                 file_ext=file_ext,
+                include_summary=include_summary,
             )
             grand_total += count
             all_written.extend(files)
@@ -915,6 +1079,7 @@ def export_one_request(
     request: ExportRequest,
     out_dir: str,
     file_ext: str,
+    include_summary: bool = False,
 ) -> None:
     """Run a subject or single-item-set request and display its result."""
     assert request.item_id is not None
@@ -925,7 +1090,12 @@ def export_one_request(
     )
     processor = process_subject_items if is_subject else process_item_set
     count, files = processor(
-        client, request.item_id, out_dir, MAX_ITEMS_PER_FILE, file_ext=file_ext
+        client,
+        request.item_id,
+        out_dir,
+        MAX_ITEMS_PER_FILE,
+        file_ext=file_ext,
+        include_summary=include_summary,
     )
     if files:
         console.print(Panel(
@@ -961,6 +1131,7 @@ def main() -> int:
         python script.py 12345                  # Export Item Set 12345
         python script.py subject:67890          # Export articles about subject 67890
         python script.py --subject 67890        # Alternative subject syntax
+        python script.py 12345 --with-summaries # Inline the stored AI summaries
     """
     # Welcome banner
     console.print(Panel(
@@ -981,23 +1152,30 @@ def main() -> int:
     out_dir = os.path.join(script_dir, "extracted_articles")
     os.makedirs(out_dir, exist_ok=True)
     file_ext = export_file_extension()
-    show_export_configuration(out_dir, file_ext)
 
-    argv = sys.argv[1:]
+    argv, include_summary = extract_summary_flag(sys.argv[1:])
     request = parse_cli_request(argv)
     if request is None and argv:
         console.print(
             f"[yellow]⚠[/] Unrecognized CLI arguments '{' '.join(argv)}'. "
             "Switching to interactive mode..."
         )
-    request = request or prompt_export_request()
     if request is None:
-        return 1
+        request = prompt_export_request()
+        if request is None:
+            return 1
+        # The flag is the non-interactive route; interactive runs get the ask.
+        include_summary = include_summary or prompt_include_summaries()
+
+    show_export_configuration(out_dir, file_ext, include_summary)
+
     if request.mode == "all":
-        article_count, files = export_whole_collection(client, out_dir, file_ext)
+        article_count, files = export_whole_collection(
+            client, out_dir, file_ext, include_summary
+        )
         show_whole_export_summary(article_count, files)
     else:
-        export_one_request(client, request, out_dir, file_ext)
+        export_one_request(client, request, out_dir, file_ext, include_summary)
     return 0
 
 
