@@ -30,7 +30,7 @@ Which architecture rules apply depends on the pipeline's category:
 - **Text-only** — `AI_summary`, `AI_NER`, `AI_ocr_correction`,
   `AI_sentiment_analysis`, `NotebookLM`
 - **Multimodal** — `AI_audio_summary`, `AI_htr_extraction`, `AI_ocr_extraction`,
-  `AI_video_summary`, `AI_summary_issue`
+  `AI_video_summary`, `AI_summary_issue`, `AI_youtube_transcription`
 - **Agent-driven** — `AI_reference_indexing` (orchestrated by the
   `reference-indexing` skill rather than a numbered run)
 

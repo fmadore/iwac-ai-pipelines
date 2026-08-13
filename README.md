@@ -22,6 +22,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **Summarization** | Generate bilingual French/English summaries for document discovery |
 | **Audio Transcription** | Transcribe interviews and oral histories using Gemini or Voxtral (with speaker diarization) |
 | **Video Processing** | Summarize or transcribe video with visual descriptions |
+| **YouTube Transcription** | Transcribe YouTube-hosted items from their URLs — no download — detecting the spoken languages and correcting the catalogue record from them |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
 | **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a four-model panel |
@@ -124,6 +125,7 @@ The approach assumes you have digitized materials and need to make them searchab
 
 - [Shared Utilities](common/README.md) — OmekaClient, LLM provider configuration, the Gemini page processor and the Omeka text updater
 - [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini, Mistral, or Claude agent)
+- [YouTube Transcription](AI_youtube_transcription/README.md) — URL-based transcription with language detection, the measured token budget, and the public-video-only limit
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Full dataset
 - Individual pipeline directories contain their own documentation

@@ -22,6 +22,22 @@ SUBJECT_AUTHORITY_ITEM_SETS: List[str] = ["854", "2", "266"]
 TOPIC_AUTHORITY_ITEM_SETS: List[str] = ["1"]
 
 # ---------------------------------------------------------------------------
+# YouTube-hosted audiovisual items
+# ---------------------------------------------------------------------------
+
+#: Resource template of the embedded-YouTube items ingested from public channels
+#: since 2026-08-12. They share resource class 38 (``bibo:AudioVisualDocument``)
+#: with the deposited recordings on template 19, so the class alone cannot tell
+#: the two apart — and the difference matters: a YouTube media carries no file
+#: (null ``o:original_url`` / ``o:media_type`` / ``o:size``), so anything that
+#: assumes "primary media ⇒ bytes to download" is wrong for these.
+YOUTUBE_VIDEO_TEMPLATE_ID = 23
+
+#: Item sets holding YouTube videos, one per country. Used as the default scope
+#: of ``AI_youtube_transcription/01``; new channels add new sets here.
+YOUTUBE_VIDEO_ITEM_SETS: List[str] = ["108260"]  # YouTube videos Burkina Faso
+
+# ---------------------------------------------------------------------------
 # Property IDs on the IWAC instance (verified live against islam.zmo.de)
 # ---------------------------------------------------------------------------
 
@@ -29,11 +45,18 @@ DCTERMS_TITLE_PROPERTY_ID = 1
 DCTERMS_SUBJECT_PROPERTY_ID = 3
 DCTERMS_TYPE_PROPERTY_ID = 8
 DCTERMS_IDENTIFIER_PROPERTY_ID = 10
+DCTERMS_LANGUAGE_PROPERTY_ID = 12
 DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID = 18
 DCTERMS_SPATIAL_PROPERTY_ID = 40
 BIBO_CONTENT_PROPERTY_ID = 91
+FABIO_HAS_URL_PROPERTY_ID = 278       # fabio:hasURL — a ``uri`` value, read from ``@id``
 IWAC_OCR_MODEL_PROPERTY_ID = 312      # iwac:ocrModel ("AI Model - OCR")
 IWAC_SUMMARY_MODEL_PROPERTY_ID = 313  # iwac:summaryModel ("AI Model - Summary")
+#: iwac:transcriptionModel ("AI Model - Transcription"). Declared in the IWAC
+#: vocabulary since it was first uploaded but unused until 2026-08-12: the audio
+#: pipeline's ``03`` step stamps no provenance, so a transcription's model was
+#: recorded nowhere. ``AI_youtube_transcription/03`` writes it.
+IWAC_TRANSCRIPTION_MODEL_PROPERTY_ID = 315
 
 #: The IWAC ontology (``iwac:``) in this instance. Its property IDs are
 #: contiguous but not guaranteed to be — resolve terms with
@@ -51,6 +74,37 @@ IWAC_SITE_SLUG = "afrique_ouest"
 
 # "Notice d'autorité" authority-record type item (linked via customvocab:6)
 AUTHORITY_RECORD_TYPE_ITEM_ID = 67568
+
+#: Item set behind custom vocab 6, where the ``dcterms:language`` authority
+#: records live alongside the other "Notice d'autorité" items.
+AUTHORITY_ITEM_SET_ID = 267
+
+#: ``dcterms:language`` links to an authority item whose title is a FRENCH
+#: language name — there is no ISO code anywhere in the record. This maps the
+#: codes an AI language-detection pass returns to the label to look up.
+#:
+#: Deliberately labels, not item IDs: the IDs are assigned per installation and
+#: the ones in use here are not contiguous (Français 8355, Ewé 66720, Kabyè
+#: 79081, Espagnol 26353 — added years apart), so they are resolved by title at
+#: runtime instead.
+#:
+#: This is exactly the languages the instance holds an authority record for,
+#: verified live — no more. Peul, Bambara, Zarma, Yoruba and Wolof are spoken in
+#: this material and deliberately absent: adding a code here without its Omeka
+#: record only moves the failure later, and creating the record is a curatorial
+#: act, not something a pipeline should infer. A detected language outside this
+#: map is reported under its own name so an operator can decide, and never linked.
+#:
+#: ``dyu`` shows how the two halves are meant to move together: transcribing the
+#: 46 YouTube videos on 2026-08-13 turned up Dioula on one item, the pipeline
+#: reported it as unlinkable, the authority record was created (item 108359), and
+#: the entry was added here afterwards. Record first, then code.
+LANGUAGE_LABELS_BY_CODE: Dict[str, str] = {
+    "fr": "Français", "en": "Anglais", "ar": "Arabe", "ha": "Haoussa",
+    "mos": "Mooré", "ee": "Ewé", "kbp": "Kabyè", "ddn": "Dendi",
+    "de": "Allemand", "it": "Italien", "es": "Espagnol", "sl": "Slovène",
+    "dyu": "Dioula",
+}
 
 # AI model annotation items (class 244, "Notice d'autorité", item set 267).
 # display_title mirrors the actual Omeka item title.

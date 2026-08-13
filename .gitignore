@@ -75,6 +75,11 @@ AI_summary_issue/output/
 AI_summary_issue/PDF/
 AI_video_summary/output/
 AI_video_summary/video/
+AI_youtube_transcription/backups/
+# Transcriptions* — the hybrid run writes a second folder (Transcriptions_flash/)
+# so each model's output can be uploaded with its own provenance annotation.
+AI_youtube_transcription/Transcriptions*/
+AI_youtube_transcription/work/
 NotebookLM/extracted_articles/
 
 # Cache and temporary files
