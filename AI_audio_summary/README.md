@@ -69,7 +69,7 @@ Select mode interactively or edit prompt files in `prompts/`.
 | Model | Speed | Quality | Cost |
 |-------|-------|---------|------|
 | `gemini-flash-lite-latest` | Fastest | Good | ~$0.20-1/hour |
-| `gemini-flash-latest` | Faster | Good | ~$0.50-2/hour |
+| `gemini-3.7-flash` | Faster | Good | ~$0.50-2/hour |
 | `gemini-pro-latest` | Slower | Higher | ~$5-15/hour |
 
 Use Flash-Lite for clean, single-speaker recordings on a budget, Flash for general use, Pro for noisy audio or multiple speakers.

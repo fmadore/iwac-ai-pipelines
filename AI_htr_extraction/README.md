@@ -49,7 +49,7 @@ Each mode uses a specialized prompt (`htr_system_prompt_*.md`) with language-spe
 
 | Model | Speed | Accuracy | Best For |
 |-------|-------|----------|----------|
-| Gemini Flash | Faster | Good | Clear handwriting, bulk processing |
+| Gemini 3.7 Flash | Faster | Good | Clear handwriting, bulk processing |
 | Gemini Pro | Slower | Higher | Difficult scripts, faded ink |
 
 ## Output

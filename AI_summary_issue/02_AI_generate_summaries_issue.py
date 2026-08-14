@@ -126,7 +126,7 @@ def get_model_pair(profile: str = "standard") -> Tuple[ModelOption, ModelOption]
         Tuple of (model_step1, model_step2).
     """
     if profile == "light":
-        step1_option = get_model_option("gemini-flash")   # per-page extraction
+        step1_option = get_model_option("gemini-3.7-flash")   # per-page extraction
     else:
         step1_option = get_model_option("gemini-pro")
     step2_option = get_model_option(DEFAULT_TEXT_MODEL_KEY)

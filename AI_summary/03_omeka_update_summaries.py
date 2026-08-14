@@ -32,7 +32,7 @@ Requirements:
 Usage:
     python 03_omeka_update_summaries.py                        # prompts for model
     python 03_omeka_update_summaries.py --model gpt-5.6-luna
-    python 03_omeka_update_summaries.py --model gemini-flash --dry-run
+    python 03_omeka_update_summaries.py --model gemini-3.7-flash --dry-run
 """
 
 import argparse

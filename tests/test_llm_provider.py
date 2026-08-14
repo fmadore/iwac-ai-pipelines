@@ -18,16 +18,20 @@ from common.llm_provider import (
     TEXT_EXTENDED_MODELS,
     TEXT_FULL_MODELS,
     TEXT_OPEN_MODELS,
+    clamp_thinking_level,
     get_model_option,
     normalize_model_key,
 )
 
 
 def test_alias_normalization():
-    assert normalize_model_key("gemini") == "gemini-flash"
+    # The bare vendor name resolves to the *pinned* current Flash, not to the
+    # rolling ``gemini-flash``: whatever a bare alias resolves to can end up
+    # stamped in an iwac:*Model annotation, and a rolling id cannot be cited.
+    assert normalize_model_key("gemini") == "gemini-3.7-flash"
     assert normalize_model_key("openai") == "gpt-5.6-luna"
     assert normalize_model_key("mistral") == "mistral-large"
-    assert normalize_model_key("GEMINI") == "gemini-flash"
+    assert normalize_model_key("GEMINI") == "gemini-3.7-flash"
     assert normalize_model_key(None) is None
 
 
@@ -54,14 +58,14 @@ def test_get_model_option_by_key():
 
 def test_get_model_option_via_alias():
     option = get_model_option("gemini")
-    assert option.key == "gemini-flash"
+    assert option.key == "gemini-3.7-flash"
 
 
 def test_allowed_keys_accept_aliases():
     # allowed_keys entries are normalized too: 'gemini' used to be rejected
     # even when the resolved key was allowed.
-    option = get_model_option("gemini", allowed_keys=["gemini-flash", "gpt-5.6-luna"])
-    assert option.key == "gemini-flash"
+    option = get_model_option("gemini", allowed_keys=["gemini-3.7-flash", "gpt-5.6-luna"])
+    assert option.key == "gemini-3.7-flash"
 
 
 def test_disallowed_model_rejected():
@@ -422,7 +426,8 @@ def test_openrouter_ignores_reasoning_trace_in_content(monkeypatch):
 
 def test_gemini_models_declare_no_temperature():
     """Google recommends sending no temperature at all for Gemini 3."""
-    for key in ("gemini-flash", "gemini-flash-lite", "gemini-pro", "gemma-4"):
+    for key in ("gemini-3.7-flash", "gemini-flash", "gemini-flash-lite",
+                "gemini-pro", "gemma-4"):
         assert MODEL_REGISTRY[key].default_temperature is None, key
 
 
@@ -465,6 +470,71 @@ def test_gemini_still_honors_an_explicit_temperature(monkeypatch):
     kwargs = client._build_generation_config(LLMConfig(temperature=0.4).merged_over(client.config))
 
     assert kwargs["temperature"] == 0.4
+
+
+# --- Thinking levels ------------------------------------------------------
+#
+# Google's thinking ladder is per-model and changes between releases: Gemini 3.7
+# Flash dropped MINIMAL, and ``gemini-flash-latest`` rolled onto it the same day.
+# Every pipeline here asked for MINIMAL, so all of them started 400ing at once.
+# The registry now states which rungs exist and clamps to the nearest.
+
+
+def test_gemini_37_flash_has_no_minimal_rung():
+    """Verified against the live API on 2026-08-14: LOW is the floor."""
+    assert MODEL_REGISTRY["gemini-3.7-flash"].supported_thinking_levels == (
+        "low", "medium", "high",
+    )
+    assert MODEL_REGISTRY["gemini-3.7-flash"].default_thinking_level == "LOW"
+
+
+def test_rolling_flash_alias_tracks_37s_ladder():
+    """``gemini-flash-latest`` resolves to 3.7, so it lost MINIMAL too."""
+    option = MODEL_REGISTRY["gemini-flash"]
+    assert "minimal" not in option.supported_thinking_levels
+    assert option.default_thinking_level == "LOW"
+
+
+def test_clamp_rounds_minimal_up_to_the_shallowest_rung_that_exists():
+    assert clamp_thinking_level("gemini-3.7-flash", "minimal") == "low"
+    assert clamp_thinking_level("gemini-flash-latest", "MINIMAL") == "low"
+    assert clamp_thinking_level("gemini-pro-latest", "minimal") == "low"
+
+
+def test_clamp_leaves_supported_levels_alone():
+    assert clamp_thinking_level("gemini-3.7-flash", "high") == "high"
+    assert clamp_thinking_level("gemini-3.6-flash", "minimal") == "minimal"
+    assert clamp_thinking_level("gemini-3.5-flash-lite", "minimal") == "minimal"
+    assert clamp_thinking_level("gemini-3.7-flash", None) is None
+
+
+def test_clamp_reproduces_the_gemma_mapping_it_replaced():
+    """Gemma has only MINIMAL and HIGH; ties round up, so MEDIUM -> HIGH.
+
+    This was hand-coded in the Gemini adapter before the ladder became data.
+    The panel asks Gemma for "medium" and must land on high, not on a
+    non-reasoning mode.
+    """
+    assert clamp_thinking_level("gemma-4-31b-it", "medium") == "high"
+    assert clamp_thinking_level("gemma-4-31b-it", "low") == "minimal"
+    assert clamp_thinking_level("gemma-4-31b-it", "high") == "high"
+
+
+def test_clamp_passes_through_unknown_models_and_levels():
+    """Guessing a restriction would silently downgrade an unprobed model."""
+    assert clamp_thinking_level("some-future-model", "minimal") == "minimal"
+    assert clamp_thinking_level("gemini-3.7-flash", "ludicrous") == "ludicrous"
+
+
+def test_gemini_client_clamps_before_calling_the_sdk(monkeypatch):
+    """The end-to-end guard: a MINIMAL request must not reach 3.7 Flash."""
+    client = _gemini_client(monkeypatch, key="gemini-3.7-flash")
+
+    kwargs = client._build_generation_config(
+        LLMConfig(thinking_level="minimal").merged_over(client.config)
+    )
+
+    assert kwargs["thinking_config"].thinking_level == "LOW"
 
 
 def test_openrouter_sends_the_vendor_default_temperature(monkeypatch):

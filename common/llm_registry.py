@@ -22,6 +22,7 @@ OPENAI_LUNA_MODEL = "gpt-5.6-luna"
 DEFAULT_OPENAI_MODEL = OPENAI_LUNA_MODEL
 OPENAI_FULL_MODEL = OPENAI_SOL_MODEL
 DEFAULT_GEMINI_FLASH = "gemini-flash-latest"
+DEFAULT_GEMINI_37_FLASH = "gemini-3.7-flash"
 DEFAULT_GEMINI_36_FLASH = "gemini-3.6-flash"
 DEFAULT_GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
 DEFAULT_GEMINI_35_FLASH_LITE = "gemini-3.5-flash-lite"
@@ -61,6 +62,12 @@ OPENROUTER_HEADERS: Dict[str, str] = {
 }
 
 
+#: Google's thinking levels, weakest first. The order is what
+#: :func:`clamp_thinking_level` measures distance along, so it is API contract,
+#: not decoration.
+THINKING_LEVELS = ("minimal", "low", "medium", "high")
+
+
 @dataclass(frozen=True)
 class ModelOption:
     key: str
@@ -74,6 +81,12 @@ class ModelOption:
     default_text_verbosity: str = "low"
     default_store: bool = False
     default_thinking_level: Optional[str] = None
+    #: Which of :data:`THINKING_LEVELS` this model actually accepts. Empty means
+    #: all four. Google enforces this per model and rejects the rest with a 400
+    #: ``INVALID_ARGUMENT``, so an unstated gap is not a soft preference — it is
+    #: a pipeline that cannot make a single call. Verified against the live API,
+    #: 2026-08-14.
+    supported_thinking_levels: tuple = ()
 
 
 @dataclass
@@ -122,10 +135,23 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "ChatGPT (GPT-5.6 Sol)",
         "OpenAI Responses API — flagship tier ($5/$0.50/$30 per 1M)",
     ),
+    # Gemini 3.7 Flash dropped MINIMAL: the level its two predecessors defaulted
+    # to is now a 400 on this model, and because ``gemini-flash-latest`` rolled
+    # onto 3.7 the same day, the rolling entry below inherited the break. LOW is
+    # the floor for both. See ``supported_thinking_levels`` and
+    # ``clamp_thinking_level`` — pipelines still ask for MINIMAL meaning "as
+    # little as this model allows", and the clamp is what makes that true.
+    "gemini-3.7-flash": ModelOption(
+        "gemini-3.7-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_37_FLASH,
+        "Gemini 3.7 Flash", "Google Gemini 3.7 Flash — version-pinned Flash",
+        default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high"),
+    ),
     "gemini-flash": ModelOption(
         "gemini-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_FLASH,
         "Gemini Flash", "Google Gemini Flash — latest stable rolling alias",
-        default_thinking_level="MINIMAL",
+        default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high"),
     ),
     "gemini-3.6-flash": ModelOption(
         "gemini-3.6-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_36_FLASH,
@@ -151,16 +177,19 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "gemini-3.1-pro", PROVIDER_GEMINI, DEFAULT_GEMINI_31_PRO,
         "Gemini 3.1 Pro", "Google Gemini 3.1 Pro — version-pinned quality tier",
         default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high"),
     ),
     "gemini-pro": ModelOption(
         "gemini-pro", PROVIDER_GEMINI, DEFAULT_GEMINI_PRO,
         "Gemini Pro", "Google Gemini Pro — latest stable rolling alias",
         default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high"),
     ),
     "gemma-4": ModelOption(
         "gemma-4", PROVIDER_GEMINI, DEFAULT_GEMMA_4,
         "Gemma 4 31B", "Google Gemma 4 31B dense open-weights flagship",
         default_thinking_level="HIGH",
+        supported_thinking_levels=("minimal", "high"),
     ),
     "mistral-large": ModelOption(
         "mistral-large", PROVIDER_MISTRAL, DEFAULT_MISTRAL_LARGE,
@@ -258,7 +287,9 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
 
 
 MODEL_ALIASES = {
-    "gemini": "gemini-flash",
+    "gemini": "gemini-3.7-flash",
+    "flash": "gemini-3.7-flash",
+    "gemini-3.7": "gemini-3.7-flash",
     "flash-lite": "gemini-flash-lite",
     "gemini-flash-lite-latest": "gemini-flash-lite",
     "gemini-flash-lite-3.1": "gemini-3.1-flash-lite",
@@ -287,6 +318,7 @@ MODEL_ALIASES = {
     "gemini-flash-latest": "gemini-flash",
     "gemini-3.5-flash": "gemini-flash",
     "gemini-3-flash-preview": "gemini-flash",
+    "gemini-3.7-flash-preview": "gemini-3.7-flash",
     "gemini-pro-latest": "gemini-pro",
     "gemini-3.1-pro-preview": "gemini-pro",
     "gemini-3-pro-preview": "gemini-pro",
@@ -323,24 +355,80 @@ MODEL_ALIASES = {
 }
 
 
+# Every tier offers the *pinned* ``gemini-3.7-flash`` rather than the rolling
+# ``gemini-flash``. A tier is what a pipeline picks when it does not name a
+# model, so it is also what gets stamped into an ``iwac:*Model`` annotation —
+# and a rolling alias reports its own version as the string "Gemini Flash
+# Latest", which cannot be cited. The rolling entry stays in MODEL_REGISTRY for
+# the pipelines that want whatever Flash is current and stamp nothing.
 TEXT_ECONOMY_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-flash", "ministral-14b",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-3.7-flash", "ministral-14b",
 ]
 TEXT_OPEN_MODELS: List[str] = [
     "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
     "deepseek-v4-flash-0731", "deepseek-v4-pro",
 ]
 TEXT_EXTENDED_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-flash", "gemma-4",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-3.7-flash", "gemma-4",
     "mistral-large", "ministral-14b", "mistral-small", "qwen3.5-moe",
 ]
 TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-flash", "gemini-pro", "gpt-5.6-luna",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-3.7-flash", "gemini-pro", "gpt-5.6-luna",
     "gpt-5.6-sol", "mistral-large", "ministral-14b", "mistral-small",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]
-GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-flash", "gemini-pro", "gemma-4"]
+# Both Gemini entries are pinned, unlike the text tiers above, because this is
+# the tier ``AI_ocr_extraction/02`` picks from and its step 03 stamps
+# ``iwac:ocrModel``. ``gemini-pro`` was the rolling alias here until 2026-08-14 —
+# an operator who ran OCR with it had no honest answer at the write step, since
+# every Pro authority item names a version the run never confirmed.
+GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.7-flash", "gemini-3.1-pro", "gemma-4"]
 LEGACY_CLI_MODEL_KEYS: List[str] = ["gpt-5-mini", "gpt-5.1", "gpt-5", "gpt-5-nano"]
+
+
+def supported_thinking_levels_for_model(model_id: str) -> tuple:
+    """Levels ``model_id`` accepts, or ``()`` when unconstrained/unknown.
+
+    Keyed on the provider's model id rather than the registry key, because the
+    multimodal pipelines never hold a ``ModelOption`` — they pass raw ids such
+    as ``gemini-pro-latest`` straight to the SDK. An id absent from the registry
+    is reported unconstrained: guessing a restriction would silently downgrade a
+    model nobody here has probed.
+    """
+    for option in MODEL_REGISTRY.values():
+        if option.model == model_id and option.supported_thinking_levels:
+            return option.supported_thinking_levels
+    return ()
+
+
+def clamp_thinking_level(model_id: str, level: Optional[str]) -> Optional[str]:
+    """Snap ``level`` to the nearest level ``model_id`` actually accepts.
+
+    Pipelines ask for a level meaning "roughly this much deliberation", and the
+    models disagree about which rungs exist: Gemini 3.7 Flash and every Pro drop
+    MINIMAL, Gemma 4 offers only MINIMAL and HIGH. Rejecting the request would
+    turn a vendor's ladder change into a dead pipeline — Gemini 3.7 Flash landing
+    on ``gemini-flash-latest`` broke OCR, HTR, audio, video and every text tier
+    at once, because all of them asked for a MINIMAL that had ceased to exist.
+
+    Ties round *up*: a level the model cannot serve becomes more deliberation,
+    never a silent drop to none. Returns lowercase; callers case it as their SDK
+    wants.
+    """
+    if level is None:
+        return None
+    requested = str(level).strip().lower()
+    supported = supported_thinking_levels_for_model(model_id)
+    if not supported or requested in supported:
+        return requested
+    if requested not in THINKING_LEVELS:
+        return requested  # unknown name — let the provider report it
+    target = THINKING_LEVELS.index(requested)
+    return min(
+        supported,
+        key=lambda name: (abs(THINKING_LEVELS.index(name) - target),
+                          -THINKING_LEVELS.index(name)),
+    )
 
 
 def normalize_model_key(model_key: Optional[str]) -> Optional[str]:

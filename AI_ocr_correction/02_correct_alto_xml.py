@@ -14,7 +14,7 @@ The approach:
 
 Supports multiple models via --model flag:
 - deepseek-v4-flash-0731 (default): DeepSeek official Flash release via OpenRouter
-- gemini-flash: Gemini Flash - fast, cost-effective
+- gemini-3.7-flash: Gemini 3.7 Flash - fast, cost-effective
 - gemini-pro: Gemini Pro - highest quality
 - gpt-5.6-luna: OpenAI GPT-5.6 Luna - cost-optimized tier
 - gpt-5.6-sol: OpenAI GPT-5.6 Sol - flagship tier
@@ -625,7 +625,7 @@ Examples:
   python 02_correct_alto_xml.py
 
   # Use Gemini Flash (fast, no thinking)
-  python 02_correct_alto_xml.py --model gemini-flash
+  python 02_correct_alto_xml.py --model gemini-3.7-flash
 
   # Custom directories and max lines per request
   python 02_correct_alto_xml.py --input-dir ./ALTO --output-dir ./ALTO_Corrected --max-lines 40
@@ -690,7 +690,9 @@ def main():
     # Configure LLM based on provider. Temperature is deliberately absent: it is
     # set per model in MODEL_REGISTRY from each vendor's guidance, and forcing it
     # low here is what Gemini 3 and Qwen both document as a cause of looping.
-    if model_option.key == "gemini-flash":
+    # "minimal" here means "as little as this model offers" — Gemini 3.7 Flash
+    # dropped that rung, and the registry clamp turns the request into LOW.
+    if model_option.key == "gemini-3.7-flash":
         config = LLMConfig(thinking_level="minimal")  # Fastest/cheapest
     elif model_option.key == "gemini-pro":
         config = LLMConfig(thinking_level="low")  # Minimal thinking
@@ -707,8 +709,8 @@ def main():
     config_table.add_row("Input Directory", str(input_dir))
     config_table.add_row("Output Directory", str(output_dir))
     config_table.add_row("Max Lines/Request", f"{args.max_lines} (for large blocks)")
-    if model_option.key == "gemini-flash":
-        config_table.add_row("Thinking", "Minimal (thinking_level=minimal)")
+    if model_option.key == "gemini-3.7-flash":
+        config_table.add_row("Thinking", "Shallowest available (thinking_level=low)")
     elif model_option.key == "gemini-pro":
         config_table.add_row("Thinking Level", "low")
     console.print(config_table)

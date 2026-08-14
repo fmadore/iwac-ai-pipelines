@@ -31,7 +31,7 @@ which **model profile** to run (or pass `--profile` / `--light` to skip the prom
 | Choice | Profile | Step 1 — per page | Step 2 — consolidation | Best for |
 |--------|---------|-------------------|------------------------|----------|
 | `1` / `a` | standard | Gemini Pro | DeepSeek V4 Flash 0731 | Best extraction quality |
-| `2` / `b` | light | Gemini Flash (latest) | DeepSeek V4 Flash 0731 | Cheaper extraction |
+| `2` / `b` | light | Gemini 3.7 Flash | DeepSeek V4 Flash 0731 | Cheaper extraction |
 
 The profile controls only the quality-critical visual extraction. Both variants
 send the resulting typed page JSON to the shared default text model,
@@ -68,13 +68,16 @@ On that path the provenance to record is the Claude model that did the reading, 
 |----------|-------|----------|
 | **Claude Agent** (recommended) | Opus 5 | Reads PDFs directly, no API costs, best quality |
 | **Gemini** (standard profile) | Gemini Pro → DeepSeek V4 Flash 0731 | Good extraction quality, accurate article detection |
-| **Gemini** (light profile) | Gemini Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
+| **Gemini** (light profile) | Gemini 3.7 Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
 | Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |
 
-Gemini model IDs come from the shared registry (`common/llm_registry.py`) via the
-rolling `gemini-pro-latest` / `gemini-flash-latest` aliases, so they always track
-the newest stable models. The Gemini version produces significantly better
-results than Mistral; use Mistral only for experimentation.
+Gemini model IDs come from the shared registry (`common/llm_registry.py`). The
+standard profile takes the rolling `gemini-pro-latest`, which always tracks the
+newest stable Pro; the light profile is pinned to `gemini-3.7-flash`, because
+`gemini-flash-latest` rolled onto 3.7 on 2026-08-14 and 3.7 had dropped the
+`MINIMAL` thinking level, changing the model under a run that named no version.
+The Gemini version produces significantly better results than Mistral; use
+Mistral only for experimentation.
 
 The Mistral version extracts each page in a single request, passing the schema as
 `document_annotation_format` on `ocr.process`. It previously called `ocr.process`

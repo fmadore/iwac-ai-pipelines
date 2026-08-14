@@ -89,6 +89,24 @@ means a transcript repeating a paragraph through a 90-minute interview or OCR
 stalling on one line. `top_p` / `top_k` are never set either. Constrain output with
 system-prompt rules and `generate_structured()` instead.
 
+**`thinking_level` is a request for a depth, not for a rung.** Which of
+`minimal`/`low`/`medium`/`high` a Google model accepts is per model and changes
+between releases; the rest are a 400, not a soft preference. Declare the real set
+in `MODEL_REGISTRY` as `supported_thinking_levels` (verified against the live API,
+never inferred from the name) and let `clamp_thinking_level()` snap the request to
+the nearest, rounding up on a tie. Gemini 3.7 Flash dropped `MINIMAL` and
+`gemini-flash-latest` rolled onto it the same day, so every pipeline here — OCR,
+HTR, audio, video, and all four text tiers — started failing on a level they had
+all hardcoded. Keep asking for `minimal` to mean "as little as this model offers";
+never branch on a model name to pick the rung.
+
+**Prefer a pinned model id wherever a run's model gets written down.** The tiers
+and `GEMINI_DOCUMENT_MODELS` offer `gemini-3.7-flash`, not the rolling
+`gemini-flash`, because whatever a tier picks is what step 03 stamps into an
+`iwac:*Model` annotation — and a rolling alias reports its own version as the
+string "Gemini Flash Latest". `TEXT_FULL_MODELS` still carries rolling entries on
+purpose: OCR correction writes no annotation of its own.
+
 **OpenRouter models carry a routing policy, not just a key.** Every request is
 pinned to `data_collection: "deny"` and `require_parameters` via
 `OPENROUTER_PROVIDER_PREFS` — the first because these pipelines send whole

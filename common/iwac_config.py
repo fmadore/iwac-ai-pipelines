@@ -115,13 +115,29 @@ LANGUAGE_LABELS_BY_CODE: Dict[str, str] = {
 # Superseded models keep their Omeka items so historical annotations still
 # resolve (e.g. 78053 "Gemini 3.0 flash", 78630 "Gemini 3.5 flash"); they are
 # dropped from this dict once no longer offered for new writes.
+#
+# ``gemini-3.6-flash`` is superseded by 3.7 everywhere a run may be *started*,
+# but stays here because it is still needed to *finish* one: 46 YouTube
+# transcripts already on the archive carry an ``iwac:transcriptionModel``
+# annotation naming item 79611, and OCR text produced by 3.6 that has not
+# reached step 03 yet must be stamped for the model that actually read it, not
+# for whatever is current on upload day.
+#
+# Three ``display_title`` values were corrected on 2026-08-14 to match the live
+# item titles they claim to mirror: "Gemini 3.1 pro" -> "Gemini 3.1 Pro",
+# "Gemini 3.6 flash" -> "Gemini 3.6 Flash", "Gemini 3.1 flash lite" -> "Gemini
+# 3.1 Flash Lite". Omeka regenerates this key from the linked item on read, so
+# nothing stored was ever wrong — but it is what the pre-write payload dump and
+# the confirmation panel show, which is where an operator checks that the run is
+# about to stamp the model they think it is.
 AI_MODEL_ITEMS: Dict[str, Dict] = {
     "claude-opus-5": {"item_id": 79615, "display_title": "Claude Opus 5.0"},
     "claude-opus-4.6": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
-    "gemini-3.1-pro": {"item_id": 78536, "display_title": "Gemini 3.1 pro"},
-    "gemini-3.6-flash": {"item_id": 79611, "display_title": "Gemini 3.6 flash"},
+    "gemini-3.1-pro": {"item_id": 78536, "display_title": "Gemini 3.1 Pro"},
+    "gemini-3.7-flash": {"item_id": 111774, "display_title": "Gemini 3.7 Flash"},
+    "gemini-3.6-flash": {"item_id": 79611, "display_title": "Gemini 3.6 Flash"},
     "gemini-3.5-flash-lite": {"item_id": 79617, "display_title": "Gemini 3.5 Flash-Lite"},
-    "gemini-3.1-flash-lite": {"item_id": 78631, "display_title": "Gemini 3.1 flash lite"},
+    "gemini-3.1-flash-lite": {"item_id": 78631, "display_title": "Gemini 3.1 Flash Lite"},
     # Keyed on the OpenRouter route, which is the only one that may see archive
     # text: Gemma is free-of-charge on the Gemini API and its pricing page states
     # that free-tier content is used to improve Google's products. The registry's

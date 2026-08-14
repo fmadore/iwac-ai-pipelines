@@ -72,8 +72,11 @@ LANGUAGES = {
     "multilingual": ("text (detect language automatically)", "htr_system_prompt_multilingual.md"),
 }
 
-# Gemini models available for HTR, keyed by llm_provider registry key.
-HTR_MODELS = ["gemini-flash", "gemini-pro"]
+# Gemini models available for HTR, keyed by llm_provider registry key. Flash is
+# the pinned 3.7 rather than the rolling ``gemini-flash``: HTR output is written
+# back under an ``iwac:ocrModel`` annotation, and a rolling alias reports its own
+# version as "Gemini Flash Latest".
+HTR_MODELS = ["gemini-3.7-flash", "gemini-3.1-pro"]
 
 
 def load_system_instruction(language: str) -> str:

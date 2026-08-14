@@ -80,7 +80,7 @@ the script stops instead of mixing runs; use `--force` to replace it.
 |-------|----------|-------|------|---|
 | `gpt-5.6-luna` | OpenAI | Fast | $0.20 / $0.02 / $1.20 | **~$7** (default) |
 | `deepseek-v4-flash-0731` | DeepSeek via OpenRouter | Slow | $0.09 / — / $0.18 | ~$3.25 |
-| `gemini-flash` | Google | Fast | see registry | — |
+| `gemini-3.7-flash` | Google | Fast | see registry | — |
 | `ministral-14b` | Mistral | Fast | see registry | — |
 
 All models produce comparable summary quality for this task. Luna is the default for

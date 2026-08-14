@@ -21,7 +21,8 @@ Requirements:
 
 Model Selection:
     - Uses shared LLM provider with three options (all via the Gemini API):
-        * Gemini Flash — faster, cost-effective, uses MINIMAL thinking
+        * Gemini 3.7 Flash — faster, cost-effective, uses LOW thinking
+          (3.7 dropped MINIMAL; LOW is the shallowest rung it has.)
         * Gemini Pro — higher quality, uses LOW thinking
         * Gemma 4 31B    — open-weights flagship, uses MINIMAL thinking
           (Gemma 4 accepts only MINIMAL or HIGH; MINIMAL is used for OCR speed.)
@@ -133,14 +134,15 @@ def main():
 
     # OCR runs at the model's default temperature: Google recommends sending none
     # for Gemini 3, because a lowered one can make the model loop — on a page scan
-    # that shows up as the same line repeating until max_output_tokens. Minimal
-    # thinking for speed. All Gemini 3 / Gemma 4 models use thinking_level (it
-    # cannot be disabled):
-    #   Gemini Flash: MINIMAL — fastest, sufficient for OCR
-    #   Gemini Pro:   LOW     — Pro does not accept MINIMAL
-    #   Gemma 4:      MINIMAL — only MINIMAL or HIGH accepted; MINIMAL for speed
+    # that shows up as the same line repeating until max_output_tokens.
+    #
+    # Ask for the shallowest thinking there is and let the registry's clamp find
+    # it: thinking cannot be disabled on any of these models, and which rungs
+    # exist is per-model and changes between releases (Gemini 3.7 Flash dropped
+    # MINIMAL; Gemma 4 has only MINIMAL and HIGH). Naming the rung here is how
+    # this line used to encode "Flash means MINIMAL", which stopped being true.
     llm_config = LLMConfig(
-        thinking_level="LOW" if "pro" in model_option.model.lower() else "MINIMAL",
+        thinking_level=get_thinking_level(model_option.model, "MINIMAL"),
     )
 
     console.print(key_value_table([

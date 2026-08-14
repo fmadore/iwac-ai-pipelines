@@ -7,7 +7,7 @@ and saves the improved versions while handling large texts through chunking.
 
 Supports multiple models via --model flag:
 - deepseek-v4-flash-0731 (default): DeepSeek official Flash release via OpenRouter
-- gemini-flash: Gemini Flash - fast, cost-effective
+- gemini-3.7-flash: Gemini 3.7 Flash - fast, cost-effective
 - gemini-pro: Gemini Pro - highest quality
 - gpt-5.6-luna: OpenAI GPT-5.6 Luna - cost-optimized tier
 - gpt-5.6-sol: OpenAI GPT-5.6 Sol - flagship tier
@@ -308,11 +308,12 @@ def main():
         sys.exit(1)
     
     # Configure LLM based on provider
-    # For Gemini Flash: disable thinking for faster, cheaper processing
+    # For Gemini Flash: as little thinking as the model offers, for speed/cost.
+    # 3.7 dropped MINIMAL, so the registry clamp turns that request into LOW.
     # For other models: use appropriate defaults
     # Temperature is left to MODEL_REGISTRY, which carries each vendor's own
     # recommendation — pinning it low here is a documented cause of looping.
-    if model_option.key == "gemini-flash":
+    if model_option.key == "gemini-3.7-flash":
         config = LLMConfig(thinking_level="minimal")  # Fastest/cheapest
     elif model_option.key == "gemini-pro":
         config = LLMConfig(thinking_level="low")  # Minimal thinking
@@ -329,8 +330,8 @@ def main():
     config_table.add_row("Input Directory", str(input_dir))
     config_table.add_row("Output Directory", str(output_dir))
     config_table.add_row("Max Chunk Length", f"{args.max_length:,} chars")
-    if model_option.key == "gemini-flash":
-        config_table.add_row("Thinking", "Minimal (thinking_level=minimal)")
+    if model_option.key == "gemini-3.7-flash":
+        config_table.add_row("Thinking", "Shallowest available (thinking_level=low)")
     elif model_option.key == "gemini-pro":
         config_table.add_row("Thinking Level", "low")
     console.print(config_table)

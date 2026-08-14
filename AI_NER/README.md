@@ -50,7 +50,7 @@ different provenance; use `--force` to replace it deliberately.
 
 | Model | Provider | Speed | Cost |
 |-------|----------|-------|------|
-| `gemini-flash` | Google | Fast | Low |
+| `gemini-3.7-flash` | Google | Fast | Low |
 | `gemma-4` | Google (Gemma 4 31B, open-weights via Gemini API) | Fast | Low |
 | `gpt-5.6-luna` | OpenAI | Fast | Low |
 | `mistral-large` | Mistral | Medium | Medium |
@@ -61,7 +61,7 @@ different provenance; use `--force` to replace it deliberately.
 
 All models use the same French-language prompt (`ner_system_prompt.md`) optimized for West African Islamic contexts.
 
-`gemma-4` uses the same `GEMINI_API_KEY` as the Gemini models. Thinking level is `minimal` by default (Gemma 4 accepts only `MINIMAL` or `HIGH`), which matches the low-cost entity-extraction budget used by `gemini-flash`.
+`gemma-4` uses the same `GEMINI_API_KEY` as the Gemini models. Thinking level is `minimal` by default (Gemma 4 accepts only `MINIMAL` or `HIGH`), which matches the low-cost entity-extraction budget used by `gemini-3.7-flash`.
 
 `qwen3.5-moe` and `deepseek-v4-flash-0731` share one `OPENROUTER_API_KEY` and cost
 roughly a tenth of `gpt-5.6-luna`, which is what makes a full-corpus pass

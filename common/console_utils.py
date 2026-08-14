@@ -15,7 +15,7 @@ Usage:
         ...
         progress.update(task, advance=1)
 
-    console.print(key_value_table([("Model", "gemini-flash"), ("Items", "42")]))
+    console.print(key_value_table([("Model", "gemini-3.7-flash"), ("Items", "42")]))
 """
 
 from typing import Iterable, Optional, Sequence, Tuple

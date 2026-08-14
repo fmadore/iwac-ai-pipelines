@@ -160,7 +160,7 @@ place and flagging the item for review.
 | Model | Notes |
 |---|---|
 | `gemini-3.5-flash-lite` | **Default.** Cheapest and fastest. |
-| `gemini-3.6-flash` | Better on non-French speech in testing. |
+| `gemini-3.7-flash` | Better on non-French speech in testing. |
 
 Flash-Lite is the default because cost here scales with runtime, the corpus is
 9.3 h of video today with more channels to come, and it is catalogued as
@@ -178,16 +178,23 @@ Re-running those three on `gemini-3.6-flash` fixed all three: no looping (1–6�
 repeats), 61–85 wpm, on-screen text interleaved and honest `[inaudible]` markers.
 So the failure is model capability on Mooré, not the video or the prompt.
 
+**Those runs were on 3.6 Flash, which the 3.7 release replaced here on
+2026-08-14; the comparison has not been repeated.** Read it as evidence that the
+Flash tier handles local languages Flash-Lite cannot — the claim it is used for —
+rather than as a 3.7 measurement. The 10 transcripts already on the archive keep
+their `iwac:transcriptionModel` link to item 79611 and go on naming 3.6, which is
+what actually produced them.
+
 Naming the language is what makes Flash-Lite attempt Mooré at all — without
 detection it renders the speech as French — but attempting is not managing.
 **The recommended run is therefore hybrid:** Flash-Lite over the corpus, then
 re-run whatever `_language_report.json` flags as non-French with
-`--model gemini-3.6-flash` into its own output directory, and upload the two
+`--model gemini-3.7-flash` into its own output directory, and upload the two
 folders separately so each carries the right `iwac:transcriptionModel`. Read even
-the 3.6 Flash output as a lead rather than a quotation.
+the Flash output as a lead rather than a quotation.
 
 ```bash
-python 02_AI_transcribe_youtube.py --model gemini-3.6-flash \
+python 02_AI_transcribe_youtube.py --model gemini-3.7-flash \
     --work-list work/retry.json --output-dir Transcriptions_flash
 ```
 
@@ -215,12 +222,17 @@ ident) and the broken ones scored **575 or more**. It is enforced twice —
   **not** overridable by `--include-incomplete`, because a looping transcript is
   not a partial transcript.
 
-Both are **pinned** releases rather than the `gemini-flash-latest` rolling
-aliases `AI_video_summary` uses, because `03` stamps provenance. A rolling alias
-reports its own version as the string "Gemini Flash Latest", so a run through one
-cannot confirm which model produced the text, and an annotation naming a model
-the run never confirmed is provenance in name only. Each key here has an Omeka
-authority item in `AI_MODEL_ITEMS`; a test enforces that.
+Both are **pinned** releases rather than the rolling `gemini-flash-latest`,
+because `03` stamps provenance. A rolling alias reports its own version as the
+string "Gemini Flash Latest", so a run through one cannot confirm which model
+produced the text, and an annotation naming a model the run never confirmed is
+provenance in name only. Each key here has an Omeka authority item in
+`AI_MODEL_ITEMS`; a test enforces that.
+
+`gemini-flash-latest` made the point itself on 2026-08-14: it rolled from 3.6 to
+3.7 Flash, and 3.7 had dropped the `MINIMAL` thinking level every pipeline here
+asked for. A run pinned to an id survives that; a run pinned to "whatever is
+current" changes model and breaks without anyone choosing either.
 
 No `temperature` is set. It is vendor-owned, and on a 40-minute transcription a
 lowered one is what makes a model loop on a single paragraph for the rest of the
@@ -238,6 +250,7 @@ and raising `media_resolution` would only cost more.
 |---|---|
 | Measured input rate | ~93–103 tok/s at 1 fps (32 audio + ~61–71 frames) |
 | Measured output rate | 3.77 tok/s (Flash-Lite), 4.90 tok/s (3.6 Flash), no thinking tokens at `minimal` |
+| Thinking floor | `minimal` on Flash-Lite; 3.7 Flash has no `minimal` rung, so it runs at `low` |
 | A 1M context window | ≈ 2.7 hours of video |
 | Default window (`--chunk-minutes`) | 45 min, ≈ 280k tokens — a margin, not the limit |
 | Longest video in the collection today | 33.6 min |
@@ -249,11 +262,16 @@ current on 2026-08-12 — check them rather than trusting this table:
 | model | input | output | corpus |
 |---|---|---|---|
 | `gemini-3.5-flash-lite` | $0.30/M | $2.50/M | **≈ $1.45** |
-| `gemini-3.6-flash` | $1.50/M | $7.50/M | **≈ $6.80** |
+| `gemini-3.7-flash` (to 2026-12-31) | $0.75/M | $3.75/M | **≈ $3.40** |
+| `gemini-3.7-flash` (from 2027-01-01) | $1.50/M | $7.50/M | **≈ $6.80** |
+
+3.7 Flash is on an introductory price that halves on 2027-01-01, to exactly what
+3.6 Flash cost; the corpus figures above are the same tokens at both rates. Its
+output rate has not been measured here, so the token counts are the 3.6 ones.
 
 Input is ~80% of the bill, so `--fps` moves the cost far more than anything on the
-output side. The hybrid run — Flash-Lite over everything, then 3.6 Flash on only
-what the language report flags as non-French — lands near the Flash-Lite figure.
+output side. The hybrid run — Flash-Lite over everything, then Flash on only what
+the language report flags as non-French — lands near the Flash-Lite figure.
 
 Both models have a **free tier**, and the corpus would fit in two free days under
 the 8 h/day YouTube cap. Prefer paying: free-tier requests are used to improve
@@ -320,7 +338,7 @@ Two deliberate differences from `AI_audio_summary/03`:
 
 - **The file's header is stripped, not uploaded.** `bibo:content` is the archive's
   full-text field, exported to Hugging Face as `OCR` and indexed for search;
-  "Generated using: Google gemini-3.6-flash" inside it would be indexed as though
+  "Generated using: Google gemini-3.7-flash" inside it would be indexed as though
   a speaker had said it. The header stays on disk, where it is auditable.
 - **Transcripts are named `<item_id>.txt`**, so no `dcterms:identifier` lookup is
   needed — one fewer request per file, and no chance of matching the wrong item.

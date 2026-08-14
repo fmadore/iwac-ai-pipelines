@@ -82,7 +82,7 @@ class VideoProcessor:
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-pro-latest' or 'gemini-flash-latest'.
+            model (str, optional): Model to use. Either 'gemini-pro-latest' or 'gemini-3.7-flash'.
                                    Default is 'gemini-pro-latest'.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
             processing_prompt: The processing prompt to use (selected in ``main()``);
@@ -371,14 +371,14 @@ def parse_args():
         epilog="""
 Examples:
   python AI_video_summary.py
-  python AI_video_summary.py --model gemini-flash-latest
+  python AI_video_summary.py --model gemini-3.7-flash
   python AI_video_summary.py --video-folder my_videos --output-folder results
   python AI_video_summary.py --rpm 5
         """
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-pro-latest", "gemini-flash-latest"],
+        choices=["gemini-pro-latest", "gemini-3.7-flash"],
         default=None,
         help="Model to use for processing (default: interactive selection)"
     )
@@ -411,7 +411,7 @@ def select_model_interactive():
     models_table.add_column("Model", style="green")
     models_table.add_column("Description", style="dim")
     models_table.add_row("1", "gemini-pro-latest", "Higher quality, best for detailed transcription")
-    models_table.add_row("2", "gemini-flash-latest", "Faster, good for summaries")
+    models_table.add_row("2", "gemini-3.7-flash", "Faster, good for summaries")
     console.print(models_table)
 
     model_choice = console.input(
@@ -419,7 +419,7 @@ def select_model_interactive():
     ).strip()
 
     if model_choice == '2':
-        return 'gemini-flash-latest'
+        return 'gemini-3.7-flash'
     return 'gemini-pro-latest'
 
 

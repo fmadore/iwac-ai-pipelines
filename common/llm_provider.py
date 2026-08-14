@@ -64,6 +64,8 @@ from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     TEXT_EXTENDED_MODELS,
     TEXT_FULL_MODELS,
     TEXT_OPEN_MODELS,
+    THINKING_LEVELS,
+    clamp_thinking_level,
     get_model_option,
     normalize_model_key,
     prompt_for_model_choice,
@@ -280,9 +282,11 @@ class GeminiGenerateContentClient(BaseLLMClient):
 
     def _build_generation_config(self, effective_config: LLMConfig) -> Any:
         """Build Gemini generation config with thinking support.
-        
-        All Gemini 3 models (Flash and Pro) use thinking_level ("MINIMAL", "LOW", or "HIGH").
-        Thinking cannot be disabled for Gemini 3 models.
+
+        All Gemini 3 models (Flash and Pro) use thinking_level; thinking cannot
+        be disabled. Which rungs of the ladder exist differs per model, so the
+        requested level is snapped to a supported one by
+        ``llm_registry.clamp_thinking_level`` rather than sent as-is.
         """
         temp = effective_config.temperature
         # Omit temperature entirely when unset. Google recommends sending no
@@ -297,9 +301,6 @@ class GeminiGenerateContentClient(BaseLLMClient):
             return gen_config_kwargs
         
         try:
-            # All Gemini 3 models use thinking_level (cannot be disabled).
-            # Gemma 4 also supports thinking_level via ThinkingConfig, but only
-            # accepts "MINIMAL" or "HIGH" (no LOW/MEDIUM).
             thinking_level = effective_config.thinking_level
             if thinking_level is None:
                 # Fallback based on model type
@@ -307,21 +308,20 @@ class GeminiGenerateContentClient(BaseLLMClient):
                 is_pro_model = "pro" in model_lower
                 is_gemma_model = "gemma" in model_lower
                 if is_gemma_model:
-                    thinking_level = "HIGH"  # Gemma 4 only supports MINIMAL or HIGH
+                    thinking_level = "HIGH"
                 else:
                     thinking_level = "LOW" if is_pro_model else "MINIMAL"
 
-            # Clamp unsupported values for Gemma 4 (only MINIMAL / HIGH accepted)
-            if "gemma" in self.option.model.lower():
-                requested = str(thinking_level).upper()
-                if requested not in ("MINIMAL", "HIGH"):
-                    # Map LOW/MEDIUM to the nearest supported tier
-                    thinking_level = "HIGH" if requested in ("MEDIUM", "HIGH") else "MINIMAL"
-                    LOGGER.debug(
-                        "Gemma only supports MINIMAL/HIGH thinking_level; "
-                        "mapped %s -> %s", requested, thinking_level
-                    )
-            
+            # Snap to a rung this model actually has. Gemma 4 offers only
+            # MINIMAL/HIGH; Gemini 3.7 Flash and every Pro dropped MINIMAL.
+            requested = thinking_level
+            thinking_level = clamp_thinking_level(self.option.model, thinking_level)
+            if str(requested).lower() != thinking_level:
+                LOGGER.debug(
+                    "%s does not accept thinking_level %s; mapped to %s",
+                    self.option.model, requested, thinking_level,
+                )
+
             # Normalize to uppercase for SDK compatibility (scripts can pass any case)
             thinking_level = thinking_level.upper()
             thinking_config = genai_types.ThinkingConfig(thinking_level=thinking_level)

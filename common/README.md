@@ -333,7 +333,7 @@ with standard_progress(console) as progress:
     ...
     progress.update(task, advance=1)
 
-console.print(key_value_table([("Model", "gemini-flash"), ("Items", "42")]))
+console.print(key_value_table([("Model", "gemini-3.7-flash"), ("Items", "42")]))
 ```
 
 Rows whose value is `None` are skipped, so optional settings can be expressed
@@ -362,8 +362,8 @@ so existing imports remain compatible.
 The `LLMConfig` class allows individual scripts to customize AI behavior without modifying the shared provider code. You can now configure:
 
 - **OpenAI**: `reasoning_effort` and `text_verbosity`
-- **Gemini Flash**: `thinking_level` ("minimal", "low", "medium", or "high")
-- **Gemini Pro**: `thinking_level` ("low" or "high")
+- **Gemini / Gemma**: `thinking_level` ("minimal", "low", "medium", or "high"),
+  clamped per model to the rungs that model actually has
 - **Mistral**: no per-script parameters
 - **OpenRouter**: `reasoning_effort` on the models that accept one
 
@@ -379,10 +379,11 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Cost-optimized tier, $0.20/$0.02/$1.20 per 1M |
 | `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2/$0.20/$12 per 1M |
 | `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Flagship tier, $5/$0.50/$30 per 1M |
-| `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Fast, cost-effective |
+| `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | **The Flash every tier offers**; version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only |
+| `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Rolling alias, currently 3.7; in no tier — use the pinned key unless the run stamps nothing |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
-| `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality |
-| `gemini-3.6-flash` | Gemini | `gemini-3.6-flash` | Gemini 3.6 Flash | Version-pinned Flash |
+| `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality; rolling, so absent from the OCR document tier |
+| `gemini-3.6-flash` | Gemini | `gemini-3.6-flash` | Gemini 3.6 Flash | Version-pinned; superseded by 3.7, kept for the backlog it already annotated |
 | `gemini-3.5-flash-lite` | Gemini | `gemini-3.5-flash-lite` | Gemini 3.5 Flash-Lite | Version-pinned; the generation-2 sentiment panel's Gemini seat |
 | `gemini-3.1-flash-lite` | Gemini | `gemini-3.1-flash-lite` | Gemini 3.1 Flash-Lite | Version-pinned |
 | `gemini-3.1-pro` | Gemini | `gemini-3.1-pro-preview` | Gemini 3.1 Pro | Version-pinned quality tier |
@@ -408,7 +409,8 @@ For convenience, these aliases are also supported:
 | `terra` | `gpt-5.6-terra` |
 | `sol` | `gpt-5.6-sol` |
 | `gpt-5.6` | `gpt-5.6-sol` |
-| `gemini` | `gemini-flash` |
+| `gemini` | `gemini-3.7-flash` |
+| `flash` | `gemini-3.7-flash` |
 | `mistral` | `mistral-large` |
 | `ministral` | `ministral-14b` |
 | `qwen` | `qwen3.5-moe` |
@@ -563,26 +565,31 @@ an escape hatch for a one-off experiment, not something to leave in a script.
 
 ### Gemini Parameters
 
-Both Gemini 3 models use `thinking_level` to control how much reasoning the model does before answering. Thinking cannot be disabled — these models always reason to some degree.
+Gemini and Gemma models use `thinking_level` to control how much reasoning the
+model does before answering. Thinking cannot be disabled — these models always
+reason to some degree.
 
-#### Gemini Flash
+**Which rungs exist is per-model and changes between releases.** Google returns a
+400 `INVALID_ARGUMENT` for a level a model does not have, so this is not a soft
+preference. Each `ModelOption` declares `supported_thinking_levels` (empty = all
+four), and `clamp_thinking_level()` snaps a request to the nearest one that
+exists, rounding **up** on a tie — a level the model cannot serve becomes more
+deliberation, never a silent drop to none.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `thinking_level` | `str` | `"minimal"` | `"minimal"` = fastest, least reasoning<br>`"low"` / `"medium"` = balanced<br>`"high"` = deepest reasoning |
-
-#### Gemini Pro
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `thinking_level` | `str` | `"low"` | `"low"` = faster, less reasoning<br>`"high"` = deeper reasoning, slower |
-
-#### Model Comparison
+That means a pipeline can go on asking for `"minimal"` to mean "as little as this
+model offers" and stay correct across a vendor's ladder change. Gemini 3.7 Flash
+dropping `MINIMAL` — while `gemini-flash-latest` rolled onto it the same day —
+would otherwise have broken OCR, HTR, audio, video and every text tier at once.
 
 | Model | Thinking Levels | Default | Best For |
 |-------|----------------|---------|----------|
-| Gemini Flash | `"minimal"`, `"low"`, `"medium"`, `"high"` | `"minimal"` | Fast processing, bulk tasks |
-| Gemini Pro | `"low"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
+| Gemini 3.7 Flash | `"low"`, `"medium"`, `"high"` | `"low"` | Fast processing, bulk tasks |
+| Gemini 3.6 Flash / Flash-Lite | `"minimal"`, `"low"`, `"medium"`, `"high"` | `"minimal"` | Cheapest bulk work |
+| Gemini Pro | `"low"`, `"medium"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
+| Gemma 4 31B | `"minimal"`, `"high"` | `"high"` | Open-weights alternative |
+
+Verified against the live API on 2026-08-14. Re-probe rather than infer when
+adding a model: nothing in a model's name predicts which rungs it kept.
 
 ### Mistral Parameters
 
@@ -671,7 +678,7 @@ Comprehensive analysis with moderate creativity.
 config = LLMConfig(
     reasoning_effort="medium",     # OpenAI: balanced reasoning
     text_verbosity="medium",       # OpenAI: detailed summaries
-    thinking_level="medium",       # Gemini Flash: balanced thinking
+    thinking_level="medium",       # Gemini: balanced thinking
 )
 ```
 
@@ -684,9 +691,12 @@ Google and Alibaba both warn causes looping.
 config = LLMConfig(
     reasoning_effort="low",        # OpenAI: quick classification
     text_verbosity="low",          # OpenAI: just the category
-    thinking_level="minimal",      # Gemini Flash: least reasoning
+    thinking_level="minimal",      # Gemini: least reasoning the model offers
 )
 ```
+
+`"minimal"` is safe to write even for models that dropped that rung — the clamp
+turns it into their shallowest (`"low"` on Gemini 3.7 Flash and every Pro).
 
 ### Translation
 Moderate reasoning with low creativity.
@@ -752,7 +762,7 @@ from common.llm_provider import (
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", help="Model key (e.g., openai, gemini-flash)")
+    parser.add_argument("--model", help="Model key (e.g., openai, gemini-3.7-flash)")
     args = parser.parse_args()
     
     # Get model selection
@@ -793,7 +803,7 @@ if __name__ == "__main__":
 
 1. **Choose the right effort level**: Don't use `"high"` reasoning for simple tasks — it's slower and more expensive
 2. **Match thinking to model**:
-   - Gemini Flash: `"minimal"` for fast tasks, `"low"`/`"medium"` for balanced work, `"high"` for complex analysis
+   - Gemini Flash: `"minimal"` for fast tasks (clamped to `"low"` on 3.7), `"low"`/`"medium"` for balanced work, `"high"` for complex analysis
    - Gemini Pro: `"low"` for fast tasks, `"high"` for complex analysis
 3. **Don't set temperature**: it belongs to the vendor, and lowering it is a
    documented cause of looping on Gemini 3 and Qwen — see
@@ -830,10 +840,10 @@ A: OpenAI's Responses API uses fixed configuration. Use `reasoning_effort` and `
 A: Enable debug logging: `logging.basicConfig(level=logging.DEBUG)` to see the actual parameters sent to each provider.
 
 **Q: What model keys can I use with `--model`?**  
-A: Use registry keys like `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
+A: Use registry keys like `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-3.7-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
 
 **Q: How do I restrict which models a pipeline can use?**  
 A: Use `allowed_keys` in `get_model_option()`:
 ```python
-model_option = get_model_option(args.model, allowed_keys=["gemini-flash", "gemini-pro"])
+model_option = get_model_option(args.model, allowed_keys=["gemini-3.7-flash", "gemini-pro"])
 ```

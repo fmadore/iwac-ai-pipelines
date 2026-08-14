@@ -28,6 +28,8 @@ from typing import Optional, Union
 from google import genai
 from google.genai import types
 
+from common.llm_registry import clamp_thinking_level
+
 LOGGER = logging.getLogger(__name__)
 
 # The Gemini API caps a request at 20 MB; prompt bytes count toward it, so
@@ -78,18 +80,21 @@ SAFETY_SETTINGS_NONE = [
 def get_thinking_level(model_name: str, override: Optional[str] = None) -> str:
     """Return the appropriate thinking level for a Gemini 3 model.
 
+    The caller states the depth it wants; this snaps it to a rung the model
+    actually has. That clamp is not cosmetic — Gemini 3.7 Flash dropped MINIMAL
+    and ``gemini-flash-latest`` rolled onto it, so the old unconditional
+    ``"minimal"`` became a 400 on every Flash call this module serves.
+
     Args:
         model_name: The full model ID (e.g. ``gemini-pro-latest``).
-        override: An explicit level to use instead of the default.
-            Returned as-is when provided.
+        override: An explicit level to use instead of the default. Still
+            clamped — an override names a depth, not a promise the model has it.
 
     Returns:
-        A lowercase thinking-level string accepted by the Gemini 3 API.
+        A lowercase thinking-level string accepted by *model_name*.
     """
-    if override:
-        return override
-    is_pro = "pro" in model_name.lower()
-    return "low" if is_pro else "minimal"
+    requested = override or ("low" if "pro" in model_name.lower() else "minimal")
+    return clamp_thinking_level(model_name, requested)
 
 
 def build_generation_config(

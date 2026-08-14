@@ -326,9 +326,36 @@ def test_registry_points_at_the_current_authority_items():
     a duplicate, so both had to be repointed. An annotation aimed at a dead item
     is worse than none — it looks like provenance and resolves to nothing."""
     assert AI_MODEL_ITEMS["gpt-5.6-luna"]["item_id"] == 79610
+    assert AI_MODEL_ITEMS["gemini-3.7-flash"]["item_id"] == 111774
     assert AI_MODEL_ITEMS["gemini-3.6-flash"]["item_id"] == 79611
     assert AI_MODEL_ITEMS["gemini-3.5-flash-lite"]["item_id"] == 79617
     assert AI_MODEL_ITEMS["deepseek-v4-flash-0731"]["item_id"] == 83261
+
+
+def test_every_model_a_tier_can_pick_can_also_be_annotated():
+    """A tier is what a pipeline runs when it names no model; the same key is
+    then what step 03 stamps. A Gemini/OpenAI/Mistral entry offered by a tier but
+    missing from AI_MODEL_ITEMS strands the operator at the write step with no
+    authority item to point at — which is how ``gemini-3.7-flash`` would have
+    landed if it had been added to the tiers alone.
+
+    Scoped to the two provenance-stamping tiers — ``GEMINI_DOCUMENT_MODELS``
+    (OCR extraction, step 03 stamps iwac:ocrModel) and ``TEXT_ECONOMY_MODELS``
+    (summaries, step 03 stamps iwac:summaryModel). ``TEXT_FULL_MODELS`` is
+    deliberately excluded: OCR correction writes no annotation of its own, so a
+    rolling alias is a legitimate choice there.
+
+    Checked for Gemini keys only, which is where the ladder of pinned/rolling
+    duplicates lives; the other vendors' tier entries are pinned by construction.
+    """
+    from common.llm_provider import GEMINI_DOCUMENT_MODELS, TEXT_ECONOMY_MODELS
+
+    for key in set(GEMINI_DOCUMENT_MODELS) | set(TEXT_ECONOMY_MODELS):
+        if key.startswith("gemini-"):
+            assert key in AI_MODEL_ITEMS, (
+                f"{key!r} is offered by a model tier but has no authority item; "
+                f"a run picking it cannot be annotated"
+            )
 
 
 def test_no_registry_key_is_a_rolling_alias():

@@ -7,7 +7,7 @@ both deliberate:
 
 * **The file's header is stripped, not uploaded.** ``bibo:content`` is the
   archive's full-text field, exported to Hugging Face as ``OCR`` and indexed for
-  search. "Generated using: Google gemini-3.6-flash" inside it would be indexed
+  search. "Generated using: Google gemini-3.7-flash" inside it would be indexed
   as though it were something a speaker said. The header stays on disk, where it
   is auditable, and provenance goes into a value annotation instead.
 
@@ -220,7 +220,7 @@ def main() -> int:
         if any("repeating" in reason for _, reason in held_back):
             console.print(
                 "[dim]  The repeating ones cannot be uploaded: re-transcribe them with "
-                "a stronger model (--model gemini-3.6-flash) into their own folder.[/]"
+                "a stronger model (--model gemini-3.7-flash) into their own folder.[/]"
             )
     if not updates:
         console.print(f"[yellow]No transcripts to upload from {args.transcriptions_dir}[/]")

@@ -29,7 +29,7 @@ asks for confirmation before writing. Preview first with `--dry-run`; skip the
 prompts with `--model` and `--yes`:
 
 ```bash
-python 03_omeka_content_updater.py --model gemini-flash --dry-run
+python 03_omeka_content_updater.py --model gemini-3.7-flash --dry-run
 ```
 
 Pages are sent at `ULTRA_HIGH` media resolution, which is only available per-Part
@@ -56,11 +56,11 @@ python 02_mistral_ocr_processor.py --rpm 30 # space requests to 30/minute
 
 | Model | Speed | Quality | Cost | Notes |
 |-------|-------|---------|------|-------|
-| Gemini Flash | Fast | Good | Low | Recommended for most documents |
+| Gemini 3.7 Flash | Fast | Good | Low | Recommended for most documents |
 | Gemini Pro | Slower | Higher | Higher | Complex layouts, poor scans |
 | Gemma 4 31B    | Fast  | Good    | Low  | Open-weights flagship via Gemini API; uses `MINIMAL` thinking for OCR speed |
 
-**Recommendation**: Start with Gemini Flash. Switch to Pro for challenging documents or frequent copyright blocks. Try Gemma 4 when you want an open-weights alternative with similar speed to Flash (same `GEMINI_API_KEY`).
+**Recommendation**: Start with Gemini 3.7 Flash. Switch to Pro for challenging documents or frequent copyright blocks. Try Gemma 4 when you want an open-weights alternative with similar speed to Flash (same `GEMINI_API_KEY`).
 
 ## Output
 
@@ -132,5 +132,5 @@ The Gemini free tier has strict limits (5 RPM, 100 requests/day). The script han
 ## Performance
 
 - **Processing speed**: ~20-40 seconds per page
-- **Cost**: ~$0.54 per 450-page document (Gemini Flash)
+- **Cost**: ~$0.54 per 450-page document (Gemini 3.6 Flash, measured before the 3.7 swap)
 - **Token usage**: Fixed 258 tokens per page for PDF processing

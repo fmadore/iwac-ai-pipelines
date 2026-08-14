@@ -104,8 +104,14 @@ class AudioTranscriber(TranscriberBase):
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use — 'gemini-pro-latest', 'gemini-flash-latest', or
+            model (str, optional): Model to use — 'gemini-pro-latest', 'gemini-3.7-flash', or
                 'gemini-flash-lite-latest'. Default is 'gemini-pro-latest'.
+                The Flash slot names a pinned release where the other two roll,
+                because each transcript records ``Generated using: Google
+                <model>`` in its header — and "gemini-flash-latest" names no
+                version a reader could look up later. Pro and Flash-Lite are
+                still rolling for now; pin them when their headers start being
+                cited too.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
             transcription_prompt: The transcription prompt to use (selected in ``main()``);
                 falls back to ``DEFAULT_PROMPT``.
@@ -712,7 +718,7 @@ def parse_args():
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-pro-latest", "gemini-flash-latest", "gemini-flash-lite-latest"],
+        choices=["gemini-pro-latest", "gemini-3.7-flash", "gemini-flash-lite-latest"],
         default=None,
         help="Model to use for transcription (default: interactive selection)"
     )
@@ -754,7 +760,7 @@ def select_model_interactive():
     models_table.add_column("Model", style="green")
     models_table.add_column("Description", style="dim")
     models_table.add_row("1", "gemini-pro-latest", "Higher quality, slower")
-    models_table.add_row("2", "gemini-flash-latest", "Faster, good quality")
+    models_table.add_row("2", "gemini-3.7-flash", "Faster, good quality")
     models_table.add_row("3", "gemini-flash-lite-latest", "Fastest, cheapest, lowest latency")
     console.print(models_table)
 
@@ -763,7 +769,7 @@ def select_model_interactive():
     ).strip()
 
     if model_choice == '2':
-        return 'gemini-flash-latest'
+        return 'gemini-3.7-flash'
     if model_choice == '3':
         return 'gemini-flash-lite-latest'
     return 'gemini-pro-latest'

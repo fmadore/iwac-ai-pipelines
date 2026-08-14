@@ -14,7 +14,7 @@ across all four.
 Usage:
     python 03_omeka_content_updater.py            # prompts, then updates live
     python 03_omeka_content_updater.py --dry-run  # fetch + report only, writes nothing
-    python 03_omeka_content_updater.py --model gemini-flash --yes
+    python 03_omeka_content_updater.py --model gemini-3.7-flash --yes
 
 Requirements:
     - Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
@@ -88,7 +88,7 @@ def main() -> int:
         return 1
 
     # Which model produced this OCR? Recorded as an iwac:ocrModel annotation.
-    model_key = args.model or select_model_key(default="gemini-3.6-flash")
+    model_key = args.model or select_model_key(default="gemini-3.7-flash")
     if model_key is None:
         return 1
     ocr_model_value = model_annotation_value(
