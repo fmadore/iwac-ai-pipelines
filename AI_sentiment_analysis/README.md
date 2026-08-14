@@ -281,11 +281,18 @@ SDK calls, so a timed-out future cannot leave an unbounded HTTP thread behind.
 | GPT-5.6 Luna | **2.7 h** | 4,511 |
 | Mistral Small 4 | **3.7 h** | 3,318 |
 | DeepSeek V4 Flash 0731 | **31.5 h** | 391 |
-| Gemma 4 31B | not yet run | — |
+| Gemma 4 31B | first pass started 2026-08-14 | ~250–550 (early, unstable) |
 
 DeepSeek is ~12× slower than Luna, and nothing like the retired preview's 9.7 s
 median: 0731 has no middle reasoning level, so the panel rounds it up to `high`.
 Budget a full day for it and hours for the others.
+
+Gemma's rate is the least stable of the four, because OpenRouter re-picks a
+backend per call: an 18-item trial ran at **9 items/min** and the first minutes of
+the corpus pass at closer to **4**. Both bracket a pass in DeepSeek's league —
+somewhere between one day and two. Replace this row with the measured wall clock
+from the cache `ts` values once the pass completes, as was done for the other
+three.
 
 **Pass `--model-timeout 300` for any 0731 or Gemma run.** The 120 s default
 allots 37.3 s per attempt while both models take ~55–72 s per item, so normal
