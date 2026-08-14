@@ -78,10 +78,18 @@ is the only thing that can be, because Omeka does not index value annotations:
 
 | Property prefix | Model | Authority item | HF column prefix |
 |---|---|---|---|
-| `iwac:gemini35FlashLite*` | `gemini-3.5-flash-lite` | 79617 | `gemini_3_5_flash_lite_` |
+| `iwac:gemma431bIt*` | `google/gemma-4-31b-it` | 111663 | `gemma_4_31b_it_` |
 | `iwac:gpt56Luna*` | `gpt-5.6-luna` | 79610 | `gpt_5_6_luna_` |
 | `iwac:mistralSmall2603*` | `mistral-small-2603` | 79614 | `mistral_small_2603_` |
 | `iwac:deepseekV4Flash0731*` | `deepseek/deepseek-v4-flash-0731` | 83261 | `deepseek_v4_flash_0731_` |
+
+**The Google slot became Gemma 4 31B on 2026-08-14.** It was
+`gemini-3.5-flash-lite` from 2026-07-31, but Flash-Lite never annotated
+anything: `iwac:gemini35FlashLiteCentralite` was verified at **0 items** on the
+live archive on the day of the swap, and `00 --verify` re-confirmed it as empty
+before the vocabulary upload that removed it. So this filled an empty slot rather
+than mixing two models into one column — **generation 2 is unchanged**, and there
+is no mixed-column question to resolve and no re-run to pay for.
 
 The April preview's `iwac:deepseekV4Flash*` values (11,482 items) were deleted
 on 2026-08-07. They were never exported to Hugging Face, so that reading is
@@ -245,10 +253,20 @@ the panel's reasoning setting, 5 concurrent requests, zero rejections:
 
 | Model | Median | Notes |
 |---|---|---|
-| Gemini 3.5 Flash-Lite | **3.8 s** | 1.1 s at `LOW`, 1.4 s at `MINIMAL` |
 | GPT-5.6 Luna | **5.8 s** | 4.3 s at `low` |
 | Mistral Small 4 | **5.8 s** | 2.1 s at `none` |
 | DeepSeek V4 Flash 0731 | **~55 s** | Measured end to end (below), not on the 07-31 bench |
+| Gemma 4 31B | **~72 s** | 3 calls, one article, 2026-08-14; 13 s with no effort sent |
+
+Gemma is the slowest member and it is not close: 51–142 s per call against
+DeepSeek's 17–42 s in the same sample. Two things drive it — reasoning is the
+larger part (13 s without it), and OpenRouter's routing puts the work on
+whichever third-party backend is free, which is why the spread is so wide. **This
+is the risk the Qwen3.5 rejection was about, and Gemma clears the bar Qwen
+failed**: 16 of its 19 OpenRouter endpoints carry structured outputs, against
+Qwen's four, so the queueing that put Qwen at a 104 s median does not apply.
+Expect a corpus pass in DeepSeek's league or somewhat worse — **budget 40–85 h at
+`--concurrency 6`** — and measure it rather than trusting that range.
 
 Every provider transport now has a finite deadline. `--model-timeout` is the
 total budget across the pipeline's three attempts (120 seconds by default);
@@ -263,16 +281,18 @@ SDK calls, so a timed-out future cannot leave an unbounded HTTP thread behind.
 | GPT-5.6 Luna | **2.7 h** | 4,511 |
 | Mistral Small 4 | **3.7 h** | 3,318 |
 | DeepSeek V4 Flash 0731 | **31.5 h** | 391 |
+| Gemma 4 31B | not yet run | — |
 
 DeepSeek is ~12× slower than Luna, and nothing like the retired preview's 9.7 s
 median: 0731 has no middle reasoning level, so the panel rounds it up to `high`.
 Budget a full day for it and hours for the others.
 
-**Pass `--model-timeout 300` for any 0731 run.** The 120 s default allots 37.3 s
-per attempt while the model takes ~55 s per item, so normal variance crosses a
-line drawn too tight: a corpus pass produced 91 model-call failures of which 88
-succeeded on a plain retry. Only 3 were genuine, and they cleared immediately at
-the larger budget.
+**Pass `--model-timeout 300` for any 0731 or Gemma run.** The 120 s default
+allots 37.3 s per attempt while both models take ~55–72 s per item, so normal
+variance crosses a line drawn too tight: a DeepSeek corpus pass produced 91
+model-call failures of which 88 succeeded on a plain retry. Only 3 were genuine,
+and they cleared immediately at the larger budget. Gemma's slowest probe call was
+142 s, so 300 is the floor for it rather than a comfortable margin.
 
 `--concurrency` multiplies with the per-item model fan-out. Running one member
 at a time — the normal mode — keeps requests in flight equal to the flag;
@@ -285,7 +305,18 @@ Measured full-corpus figures (12,305 articles):
 | Model | Full pass | How it was obtained |
 |---|---|---|
 | DeepSeek V4 Flash 0731 | **$10.95** | measured against the OpenRouter credits endpoint |
-| Gemini 3.5 Flash-Lite | **~$47** projected | 8 articles sampled across the corpus, `thinking_level=MEDIUM` |
+| Gemma 4 31B | **~$8–12** projected | 3 calls; 3,940 in / ~1,100 out at $0.09–0.15 / $0.34–0.40 |
+| Gemini 3.5 Flash-Lite | **~$47** projected | retired from the panel 2026-08-14; 8 articles, `thinking_level=MEDIUM` |
+
+Gemma's projection is what moved it into the Google slot: it lands in the same
+band as the rest of the panel rather than at 4× it, which is the difference
+between a panel and a quality ladder. **It is a projection from three calls on one
+article — re-measure it against the OpenRouter credits endpoint before quoting
+it**, as was done for DeepSeek. The endpoint rates were read live from
+`https://openrouter.ai/api/v1/models/google/gemma-4-31b-it/endpoints` on
+2026-08-14; the cheapest carrying structured outputs was $0.09/$0.34, the routing
+policy will not always pick it, and Gemma emits ~1,100 output tokens per call of
+which most is reasoning.
 
 Two traps, both of which have caught this repo:
 
@@ -357,9 +388,10 @@ annotation once stored. Same reasoning that got the 2026-07 `ocr_quality` column
 reverted before it shipped.
 
 The run reports an estimated duration before asking to proceed. With four models
-in parallel the slowest decides the item, and since 0731 joined that is DeepSeek
-at ~55 s, so a whole-panel pass over the 12,356-article corpus runs to a day and
-a half. It is built to be interrupted; see below.
+in parallel the slowest decides the item, and since the Google slot became Gemma
+that is Gemma at ~72 s rather than DeepSeek at ~55 s, so a whole-panel pass over
+the 12,356-article corpus runs to two days or more. It is built to be
+interrupted; see below.
 
 ### Piloting a candidate panel
 
@@ -452,7 +484,7 @@ there.
 
 | Column prefix | Model id | Omeka properties | Params (active/total) | $/1M in–out |
 |---|---|---|---|---|
-| `gemini_3_5_flash_lite` | `gemini-3.5-flash-lite` | `iwac:gemini35FlashLite*` | closed | $0.30 / $2.50 |
+| `gemma_4_31b_it` | `google/gemma-4-31b-it` | `iwac:gemma431bIt*` | **31B dense** | from $0.09 / $0.34 |
 | `gpt_5_6_luna` | `gpt-5.6-luna` | `iwac:gpt56Luna*` | closed | $1.00 / $6.00 |
 | `mistral_small_2603` | `mistral-small-2603` | `iwac:mistralSmall2603*` | **6.5B / 119B** | $0.15 / $0.60 |
 | `deepseek_v4_flash_0731` | `deepseek/deepseek-v4-flash-0731` | `iwac:deepseekV4Flash0731*` | **13B / 284B** | from $0.09 / $0.18 |
@@ -464,18 +496,29 @@ mapping is mechanical. Every property also records its exact model id in
 ### Why these four
 
 Every member is its vendor's **high-volume tier**, which is what makes the panel
-a panel rather than a quality ladder. The slot Gemini occupies was
+a panel rather than a quality ladder. The slot Google occupies was
 `gemini-3.6-flash` until 2026-07-31; at $1.50/$7.50 it cost five to seventeen
 times the rest, so an inter-model disagreement could always be read as "the
 expensive model knows better" rather than as two readings of the construct.
-Flash-Lite is Google's actual counterpart to Luna and Mistral Small.
+Flash-Lite replaced it and was still the panel's cost outlier at $0.30/$2.50, four
+times the DeepSeek pass; Gemma 4 31B, at $0.09/$0.34 from the cheapest endpoint
+carrying structured outputs, is the first occupant of that slot priced like the
+rest of the panel.
 
-**Two of the four are open weights and can be re-run locally** — which for an
+**Gemma replaces the Google slot rather than joining as a fifth voice**, and that
+is deliberate. Gemma and Gemini come out of the same lab and the same
+pretraining-pipeline family, so running both would buy correlated annotator error
+— the *preference leakage* effect documented in the LLM-as-judge literature —
+which inflates agreement for reasons unrelated to the construct, while making the
+panel 2/5 Google.
+
+**Three of the four are open weights and can be re-run locally** — which for an
 archive is the difference between an annotation you can cite and one you can
 only have taken on trust:
 
 | Model | Licence | Hugging Face |
 |---|---|---|
+| Gemma 4 31B | Apache-2.0 | [`google/gemma-4-31B`](https://huggingface.co/google/gemma-4-31B) |
 | Mistral Small 4 | Apache-2.0 | [`mistralai/Mistral-Small-4-119B-2603`](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603) |
 | DeepSeek V4 Flash 0731 | MIT | [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) |
 
@@ -486,32 +529,94 @@ API model `mistral-small-2603` and the Apache-2.0 release carry the same
 the same `2603` release code. The card does not state weight-identity in so many
 words, so treat it as the same release rather than as a proof.
 
-Their active-parameter counts — 6.5B and 13B — sit inside a factor of two, so an
-agreement figure between them is not quietly measuring model size. That margin
-was tighter before Qwen (10B) left, which makes a size effect marginally harder
-to rule out than it was with three open-weights members.
+**Size parity got worse, not better, and it should be stated in any write-up.**
+The open-weights members' active parameter counts are 6.5B, 13B and — Gemma being
+dense — 31B, a factor of five where the previous pair sat inside a factor of two.
+An agreement figure among them is therefore doing slightly more to measure model
+size than it was. The alternative, Gemma 4 26B-A4B, would have widened the spread
+in the other direction (3.8B active, 3.4× *below* DeepSeek) and given up dense-model
+capability on exactly the boundary calls the rubric turns on — *Central* vs
+*Secondaire*, *Négatif* vs *Très négatif*. Neither option was neutral; the dense
+31B widens the spread less and does not trade away capability to do it.
+
+### Why Gemma is routed through OpenRouter, not `GEMINI_API_KEY`
+
+Gemma runs on the Gemini API and `common/llm_registry.py` has a `gemma-4` key
+that reaches it. The panel deliberately uses `gemma-4-openrouter` instead, and
+the reason is not performance:
+
+- **Gemma is free-of-charge on the Gemini API with no paid tier, and Google's
+  [pricing page](https://ai.google.dev/gemini-api/docs/pricing) states that
+  free-tier content *is* used to improve its products.** This pipeline ships
+  whole archival articles to whoever serves the model. That is precisely what
+  `OPENROUTER_PROVIDER_PREFS`' `data_collection: "deny"` exists to prevent — and
+  OpenRouter's own `:free` Gemma variant has the same problem and is filtered out
+  by that policy anyway.
+- **The free route is capped too tightly to finish anyway.** Measured 2026-08-14
+  against the live API: 16,000 **input tokens per minute** for this model
+  (`GenerateContentInputTokensPerModelPerMinute`, `quotaValue: 16000`), which a
+  ~3,940-token article exhausts four at a time — a 429 after four consecutive
+  calls, and ~51 h for the corpus. That is no faster than OpenRouter, for the
+  privacy cost.
+
+The per-call latency *is* far better on the Gemini route — **5.4 s** median
+against 37–90 s through OpenRouter's third-party backends — so the trade is real
+and worth restating whenever the routing is revisited. It is a policy choice, not
+an oversight.
 
 ### Reasoning depth — comparable, but not identical
 
 The panel is standardised on a middle reasoning setting. Vendors split on the
 parameter name, so `LLMConfig` carries both and each client reads its own.
-Verified against the live APIs on 2026-07-29:
+Verified against the live APIs on 2026-07-29, and 2026-08-14 for Gemma:
 
 | Model | Parameter | Accepted values | Panel setting |
 |---|---|---|---|
-| Gemini 3.5 Flash-Lite | `thinking_level` | MINIMAL / LOW / **MEDIUM** / HIGH | `MEDIUM` |
 | GPT-5.6 Luna | `reasoning.effort` | none / low / **medium** / high / xhigh / max | `medium` |
+| Gemma 4 31B | `reasoning.effort` | **MINIMAL or HIGH only** | `high` |
 | DeepSeek V4 Flash 0731 | `reasoning.effort` | low / high / max | `high` (no medium level) |
 | **Mistral Small 4** | `reasoning_effort` | **`none` or `high` only** | `high` |
 
-**Mistral is the exception and it cannot be fixed by configuration.** Its API
-rejects `low` and `medium` with a 400; there is no middle setting to ask for.
-`MistralClient` rounds a `medium` request up to `high` so Mistral stays in the
-reasoning regime with the rest of the panel rather than dropping to
-non-reasoning, but it is doing more reasoning than Gemini or Luna. DeepSeek 0731
-is rounded up the same way, so the four-model panel now splits evenly: two
-members at a genuine middle setting, two rounded up to `high`. State this in any
-write-up that compares the panel members.
+**Only Luna now sits at a genuine middle setting; the other three are rounded
+up.** Mistral's API rejects `low` and `medium` with a 400 and `MistralClient`
+rounds a `medium` request up to `high`, so it stays in the reasoning regime with
+the rest of the panel rather than dropping to non-reasoning. DeepSeek 0731 and
+Gemma have no middle level either, and both are rounded up explicitly in
+`PANEL_REASONING_OVERRIDES` rather than left to a client fallback, so a run
+manifest records a decision instead of an accident.
+
+**The Gemma swap made this worse and the write-up must say so.** With Flash-Lite
+— which did have a real `MEDIUM` — the four-model panel split evenly, two members
+at a middle setting and two rounded up. It is now **3 of 4 rounded up**, and no
+Google model sits at a middle setting at all. That is a genuine cost of the swap,
+accepted for the cost, open-weights and data-handling reasons above.
+
+**Gemma's `high` is also the least legible of the three**, because OpenRouter
+fans the request across third-party backends serving the same weights and they do
+not agree on what an effort means or on how to report it. Measured on one article
+on 2026-08-14:
+
+| Effort sent | Output tokens | Reasoning | Latency |
+|---|---|---|---|
+| none | ~200 | none | 1.9–14.9 s |
+| `medium` | 1,092–1,208 | 3.7–4.2k chars | 51–142 s |
+| `high` | 1,012–1,140 | 3.3–3.9k chars | 57–79 s |
+
+So Gemma does reason at the panel's setting — but `medium` and `high` are
+**indistinguishable** in both latency and reasoning length, i.e. the thinking is
+on/off through this route rather than graduated. One backend reasoned at
+`minimal` too (897 tokens), and Chutes reports `reasoning_tokens: 1` while
+emitting 3.7k characters of reasoning, so the usage counter cannot be trusted to
+tell you whether thinking happened. Read the depth as *requested*, never as
+measured — unlike Luna, Mistral and DeepSeek, which are each served by one vendor.
+
+**Routing also decides the quantization, and it is not pinned.** Eleven of the
+twelve probe calls landed on Chutes, which serves Gemma at **fp4**; other eligible
+endpoints serve bf16 or fp8. The annotations therefore come from *a* quantization
+of the open weights rather than from the weights themselves, which qualifies the
+"re-runnable from archivable weights" claim for Gemma exactly as it already does
+for DeepSeek. Pin `quantizations` in `OPENROUTER_PROVIDER_PREFS` if that matters
+more than throughput — it is a shared setting, so it would apply to DeepSeek too.
 
 Mistral also changes its response shape once reasoning is on: `message.content`
 becomes a `thinking` + `text` chunk list instead of a string, which the SDK's
@@ -538,7 +643,8 @@ GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key
 MISTRAL_API_KEY=your_mistral_api_key
 
-# Open-weights models via OpenRouter (DeepSeek) — required for the panel's 0731 slot
+# Open-weights models via OpenRouter (DeepSeek, Gemma) — required for two of the
+# four panel slots. Gemma must NOT be routed via GEMINI_API_KEY; see above.
 OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 

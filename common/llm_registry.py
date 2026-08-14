@@ -37,6 +37,7 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"
 OPENROUTER_QWEN_SMALL_MOE_MODEL = "qwen/qwen3.5-35b-a3b"
 OPENROUTER_QWEN_DENSE_MODEL = "qwen/qwen3.5-27b"
+OPENROUTER_GEMMA_4_31B_MODEL = "google/gemma-4-31b-it"
 OPENROUTER_DEEPSEEK_FLASH_0731_MODEL = "deepseek/deepseek-v4-flash-0731"
 OPENROUTER_DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
 OPENROUTER_DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
@@ -178,6 +179,28 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort=None,
         supported_reasoning_efforts=("none", "high"),
     ),
+    # The same weights as the ``gemma-4`` entry above, deliberately reached by a
+    # different route. Gemma is free on the Gemini API because it is served on
+    # the free tier, and free-tier content is used to improve Google's products —
+    # precisely what ``OPENROUTER_PROVIDER_PREFS``' ``data_collection: "deny"``
+    # exists to prevent when whole archival articles are shipped to a third
+    # party. (OpenRouter's own ``:free`` variant has the same problem and is
+    # filtered out by that policy anyway.) Use this key for anything that sends
+    # archive text; ``gemma-4`` stays for the multimodal document work the
+    # OpenAI-shaped chat API cannot do.
+    #
+    # Gemma 4 has two thinking levels, MINIMAL and HIGH, with nothing in
+    # between — the Gemini adapter clamps to the same pair. A caller asking for
+    # the panel's "medium" therefore lands on ``high`` rather than dropping to a
+    # non-reasoning mode, which is the rounding Mistral Small 4 and DeepSeek V4
+    # Flash 0731 already do. Temperature stays unset, as for every Google model.
+    "gemma-4-openrouter": ModelOption(
+        "gemma-4-openrouter", PROVIDER_OPENROUTER, OPENROUTER_GEMMA_4_31B_MODEL,
+        "Gemma 4 31B (OpenRouter)",
+        "Gemma 4 31B dense — Apache-2.0, routed under data_collection: deny",
+        default_reasoning_effort="high",
+        supported_reasoning_efforts=("minimal", "high"),
+    ),
     "qwen3.5-moe": ModelOption(
         "qwen3.5-moe", PROVIDER_OPENROUTER, OPENROUTER_QWEN_MOE_MODEL,
         "Qwen3.5 122B-A10B (OpenRouter)",
@@ -270,6 +293,9 @@ MODEL_ALIASES = {
     "gemma": "gemma-4",
     "gemma-4-31b": "gemma-4",
     "gemma-4-31b-it": "gemma-4",
+    # The OpenRouter slug names the OpenRouter route; the bare ids above keep
+    # resolving to the Gemini one they have always meant.
+    "google/gemma-4-31b-it": "gemma-4-openrouter",
     "mistral": "mistral-large",
     "mistral-large-latest": "mistral-large",
     "mistral-large-2512": "mistral-large",

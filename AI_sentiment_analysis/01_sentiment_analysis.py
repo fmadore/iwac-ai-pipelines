@@ -36,14 +36,14 @@ Throughput
 Items are annotated by a pool of ``--concurrency`` workers. This is the whole
 difference between a feasible run and an infeasible one: the work is almost
 entirely waiting on someone else's API, so a serial loop spends the corpus's
-worth of latency doing nothing. Measured 2026-07-31, median call latency ran
-1.1 s (Gemini 3.5 Flash-Lite) to 104 s (Qwen3.5 via OpenRouter) — and every
-provider in the panel served 5 concurrent structured requests without one
-rejection, so the parallelism is free.
+worth of latency doing nothing. Median call latency across the panel ranges from
+5.8 s (GPT-5.6 Luna, Mistral Small 4) to ~72 s (Gemma 4 31B via OpenRouter, and
+DeepSeek 0731 is not far behind) — and every provider in the panel served 5
+concurrent structured requests without one rejection, so the parallelism is free.
 
 Concurrency multiplies with the per-item model fan-out. Running the panel one
 member at a time — the normal mode — keeps in-flight requests equal to
-``--concurrency``; running all five multiplies it by five.
+``--concurrency``; running all four multiplies it by four.
 
 Resuming
 --------
@@ -155,11 +155,15 @@ ARTICLE_CLASS_ID = 36
 #: Divided by ``--concurrency`` to get wall clock.
 #:
 #: Measured 2026-07-31 across the panel on real articles (2.1-3.7k chars):
-#: median call latency ran 1.1 s (Gemini 3.5 Flash-Lite, low) to 5.8 s
-#: (GPT-5.6 Luna / Mistral Small 4 at their middle setting). Six is the
-#: pessimistic end of the first-party range, so the estimate does not flatter a
-#: run about to take all night. The progress bar's own ETA supersedes it within
-#: a minute, which is the number to actually trust.
+#: median call latency was 5.8 s for GPT-5.6 Luna and Mistral Small 4 at their
+#: middle setting. Six is the pessimistic end of that *first-party* range.
+#:
+#: It is far too optimistic for the two OpenRouter members — DeepSeek 0731 runs
+#: ~55 s and Gemma 4 31B ~72 s — so a run scoped to either gets an estimate an
+#: order of magnitude short. Left as it is deliberately: the constant is one
+#: number for a mixed panel, and raising it would inflate every first-party run
+#: instead. The progress bar's own ETA supersedes it within a minute, and that is
+#: the number to trust.
 SECONDS_PER_ITEM_SERIAL = 6
 
 #: Items annotated in parallel.

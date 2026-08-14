@@ -149,9 +149,9 @@ def test_retry_attempts_fit_inside_model_timeout():
 
 
 def test_pilot_model_subset_validation():
-    assert pilot.selected_models("deepseek_v4_flash_0731, gemini_3_5_flash_lite") == [
+    assert pilot.selected_models("deepseek_v4_flash_0731, gemma_4_31b_it") == [
         "deepseek_v4_flash_0731",
-        "gemini_3_5_flash_lite",
+        "gemma_4_31b_it",
     ]
     with pytest.raises(ValueError, match="Unknown model"):
         pilot.selected_models("not_a_model")
@@ -217,7 +217,7 @@ def test_no_value_carries_a_provenance_annotation(property_ids, good_result):
     per item. Generation 1's hole is closed by the model-keyed property names,
     which ARE queryable (see the two tests above).
     """
-    member = PANEL["gemini_3_5_flash_lite"]
+    member = PANEL["gemma_4_31b_it"]
     values = sentiment_run.build_property_values(
         member, good_result, property_ids
     )
@@ -306,7 +306,7 @@ def test_write_path_preserves_unrelated_properties(monkeypatch, property_ids, go
 
 def test_rewriting_identical_values_is_a_no_op(property_ids, good_result):
     """Skipping unchanged items is what makes a resume cheap."""
-    member = PANEL["gemini_3_5_flash_lite"]
+    member = PANEL["gemma_4_31b_it"]
     values = sentiment_run.build_property_values(
         member, good_result, property_ids
     )
@@ -355,21 +355,21 @@ def test_errored_results_are_never_written(property_ids):
 def test_cache_round_trips(tmp_path, good_result):
     path = tmp_path / "c.jsonl"
     with SentimentCache(path=path) as cache:
-        cache.put(123, "gemini_3_5_flash_lite", good_result, model_id="gemini-3.5-flash-lite")
+        cache.put(123, "gemma_4_31b_it", good_result, model_id="google/gemma-4-31b-it")
 
     reloaded = SentimentCache(path=path)
     report = reloaded.load()
     assert report.records == 1
-    assert reloaded.get(123, "gemini_3_5_flash_lite") == good_result
+    assert reloaded.get(123, "gemma_4_31b_it") == good_result
     # Item ids are normalised, so an int and a str reach the same record.
-    assert reloaded.has("123", "gemini_3_5_flash_lite")
+    assert reloaded.has("123", "gemma_4_31b_it")
 
 
 def test_cache_is_granular_to_the_model(tmp_path, good_result):
     """One model failing must not force re-running the other four."""
     path = tmp_path / "c.jsonl"
     with SentimentCache(path=path) as cache:
-        for key in ("gemini_3_5_flash_lite", "gpt_5_6_luna"):
+        for key in ("gemma_4_31b_it", "gpt_5_6_luna"):
             cache.put(1, key, good_result)
 
     reloaded = SentimentCache(path=path)
@@ -383,7 +383,7 @@ def test_cache_survives_a_torn_final_line(tmp_path, good_result):
     """A process killed mid-write costs one record, not the run."""
     path = tmp_path / "c.jsonl"
     with SentimentCache(path=path) as cache:
-        cache.put(1, "gemini_3_5_flash_lite", good_result)
+        cache.put(1, "gemma_4_31b_it", good_result)
         cache.put(2, "gpt_5_6_luna", good_result)
 
     with open(path, "a", encoding="utf-8") as handle:
@@ -394,7 +394,7 @@ def test_cache_survives_a_torn_final_line(tmp_path, good_result):
     assert report.records == 2
     assert report.skipped_malformed == 1
     assert report.torn_at is not None
-    assert reloaded.get(1, "gemini_3_5_flash_lite") == good_result
+    assert reloaded.get(1, "gemma_4_31b_it") == good_result
     assert reloaded.get(2, "gpt_5_6_luna") == good_result
 
 
@@ -402,12 +402,12 @@ def test_cache_last_record_wins(tmp_path, good_result):
     path = tmp_path / "c.jsonl"
     revised = {**good_result, "polarite": "Positif"}
     with SentimentCache(path=path) as cache:
-        cache.put(1, "gemini_3_5_flash_lite", good_result)
-        cache.put(1, "gemini_3_5_flash_lite", revised)
+        cache.put(1, "gemma_4_31b_it", good_result)
+        cache.put(1, "gemma_4_31b_it", revised)
 
     reloaded = SentimentCache(path=path)
     reloaded.load()
-    assert reloaded.get(1, "gemini_3_5_flash_lite")["polarite"] == "Positif"
+    assert reloaded.get(1, "gemma_4_31b_it")["polarite"] == "Positif"
     # Both lines are kept: the file doubles as an audit trail.
     assert len(path.read_text(encoding="utf-8").strip().splitlines()) == 2
 
@@ -416,25 +416,25 @@ def test_cache_ignores_records_from_another_format_version(tmp_path):
     path = tmp_path / "c.jsonl"
     path.write_text(json.dumps({
         "v": CACHE_FORMAT_VERSION - 1, "item_id": "1",
-        "model": "gemini_3_5_flash_lite", "result": {"polarite": "Neutre"},
+        "model": "gemma_4_31b_it", "result": {"polarite": "Neutre"},
     }) + "\n", encoding="utf-8")
 
     cache = SentimentCache(path=path)
     report = cache.load()
     assert report.records == 0
     assert report.skipped_version == 1
-    assert cache.get(1, "gemini_3_5_flash_lite") is None
+    assert cache.get(1, "gemma_4_31b_it") is None
 
 
 def test_cache_records_the_model_that_answered(tmp_path, good_result):
     """The gap that made generation 1 unattributable."""
     path = tmp_path / "c.jsonl"
     with SentimentCache(path=path) as cache:
-        cache.put(1, "gemini_3_5_flash_lite", good_result,
-                  model_id="gemini-3.5-flash-lite", reasoning="medium")
+        cache.put(1, "gemma_4_31b_it", good_result,
+                  model_id="google/gemma-4-31b-it", reasoning="medium")
 
     record = json.loads(path.read_text(encoding="utf-8").strip())
-    assert record["model_id"] == "gemini-3.5-flash-lite"
+    assert record["model_id"] == "google/gemma-4-31b-it"
     assert record["reasoning"] == "medium"
     assert record["ts"].endswith("+00:00")
 
@@ -498,14 +498,14 @@ def test_already_written_models_are_detected():
 def test_a_scoped_run_leaves_other_members_untouched(property_ids, good_result):
     """Running the panel one model at a time must be additive.
 
-    An item already annotated by Gemini gets DeepSeek's six properties added and
+    An item already annotated by Gemma gets DeepSeek's six properties added and
     nothing else disturbed — including DeepSeek's own neighbours in the same
     vocabulary.
     """
     deepseek = PANEL["deepseek_v4_flash_0731"]
-    gemini = PANEL["gemini_3_5_flash_lite"]
+    gemma = PANEL["gemma_4_31b_it"]
     existing = sentiment_run.build_property_values(
-        gemini, good_result, property_ids
+        gemma, good_result, property_ids
     )
     item = {"o:id": 5, "dcterms:title": [{"@value": "T"}], **existing}
     patched = {}
@@ -525,7 +525,7 @@ def test_a_scoped_run_leaves_other_members_untouched(property_ids, good_result):
     )
 
     assert status == "updated"
-    for term in gemini.terms:
+    for term in gemma.terms:
         assert patched[term] == existing[term], f"scoped run disturbed {term}"
     for term in deepseek.terms:
         assert term in patched

@@ -122,6 +122,11 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     "gemini-3.6-flash": {"item_id": 79611, "display_title": "Gemini 3.6 flash"},
     "gemini-3.5-flash-lite": {"item_id": 79617, "display_title": "Gemini 3.5 Flash-Lite"},
     "gemini-3.1-flash-lite": {"item_id": 78631, "display_title": "Gemini 3.1 flash lite"},
+    # Keyed on the OpenRouter route, which is the only one that may see archive
+    # text: Gemma is free-of-charge on the Gemini API and its pricing page states
+    # that free-tier content is used to improve Google's products. The registry's
+    # ``gemma-4`` (Gemini-routed) key is deliberately absent here.
+    "gemma-4-openrouter": {"item_id": 111663, "display_title": "Gemma 4 31B"},
     "gpt-5.6-luna": {"item_id": 79610, "display_title": "GPT-5.6 Luna"},
     "mistral-small": {"item_id": 79614, "display_title": "Mistral Small 4"},
     "qwen3.5-moe": {"item_id": 79616, "display_title": "Qwen3.5 122B-A10B"},

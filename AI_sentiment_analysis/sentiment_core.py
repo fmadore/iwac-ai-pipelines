@@ -243,19 +243,43 @@ class PanelMember:
 #: for the model, never for its vendor: reusing a vendor slot is what made
 #: generation 1 impossible to attribute without a git archaeology session.
 #:
-#: Two of the four are open-weights releases (Mistral Small 4 under Apache-2.0,
-#: DeepSeek V4 Flash under MIT), so those annotations can be regenerated from
-#: weights that are archivable alongside them. Their active parameter counts —
-#: 6.5B and 13B — sit inside a factor of three.
+#: Three of the four are open-weights releases (Mistral Small 4 and Gemma 4
+#: under Apache-2.0, DeepSeek V4 Flash under MIT), so those annotations can be
+#: regenerated from weights that are archivable alongside them. Their active
+#: parameter counts — 6.5B, 13B and 31B (Gemma is dense, so all of it) — sit
+#: inside a factor of five, wider than the pair that preceded them.
 #:
 #: Every member is its vendor's high-volume tier. That is the property that
 #: makes this a panel rather than a quality ladder, and it is why the Gemini
 #: slot moved off ``gemini-3.6-flash`` on 2026-07-31: at $1.50/$7.50 per 1M it
 #: cost five to seventeen times the others, so any disagreement it had with
 #: them could be read as "the expensive model knows better" rather than as two
-#: readings of the construct. Flash-Lite is Google's actual counterpart to
-#: GPT-5.6 Luna and Mistral Small. Nothing was ever written to
-#: ``iwac:gemini36Flash*``.
+#: readings of the construct. Nothing was ever written to ``iwac:gemini36Flash*``.
+#:
+#: **The Google slot became Gemma 4 31B on 2026-08-14, replacing
+#: ``gemini-3.5-flash-lite``.** Flash-Lite held the slot from 2026-07-31 but
+#: never annotated anything — ``iwac:gemini35FlashLiteCentralite`` was verified
+#: at 0 items on the live archive the day of the swap — so this fills an empty
+#: slot rather than mixing two models into one column, and generation 2 is
+#: unchanged by it. Flash-Lite was still the panel's cost outlier at $0.30/$2.50
+#: per 1M, against $0.09–0.20 in and $0.18–1.20 out for the rest, and the only
+#: member whose weights could not be archived beside its annotations.
+#:
+#: Gemma replaces the Google slot rather than joining as a fifth voice. It comes
+#: out of the same lab and pretraining-pipeline family as Gemini, so running both
+#: would buy correlated annotator error — the preference-leakage effect in the
+#: LLM-as-judge literature — which inflates agreement for reasons that have
+#: nothing to do with the construct, while making the panel 2/5 Google.
+#:
+#: **It is routed through OpenRouter, not ``GEMINI_API_KEY``, and that is not an
+#: implementation detail.** Gemma is free-of-charge on the Gemini API with no
+#: paid tier, and Google's pricing page states that free-tier content is used to
+#: improve its products; this pipeline ships whole archival articles, which is
+#: exactly what ``OPENROUTER_PROVIDER_PREFS``' ``data_collection: "deny"`` exists
+#: to prevent. The Gemini route is also capped at 16,000 input tokens per minute
+#: for this model (measured 2026-08-14, quota
+#: ``GenerateContentInputTokensPerModelPerMinute``), i.e. ~4 articles a minute
+#: and ~51 h for the corpus — no faster than OpenRouter, for the privacy cost.
 #:
 #: **Qwen3.5 122B-A10B was dropped on 2026-08-05, before it annotated
 #: anything.** It was never a model-quality decision — it was a serving one.
@@ -268,11 +292,18 @@ class PanelMember:
 #: values, so it follows ``qwen35A3b`` and ``gemini36Flash`` out of the emitted
 #: ontology, which ``00_setup_properties.py --verify`` confirms is empty before
 #: any upload.
+#:
+#: Gemma was checked against that precedent before it was added, because it is the
+#: same shape of risk: OpenRouter lists 19 endpoints for ``google/gemma-4-31b-it``
+#: and 16 of them support structured outputs, so ``require_parameters`` leaves a
+#: deep pool rather than Qwen's four (verified 2026-08-14). Its ~72 s median is
+#: still the slowest in the panel — see the throughput table in the README — but
+#: it is queueing behind reasoning, not behind a starved endpoint list.
 PANEL: Dict[str, PanelMember] = {
     m.key: m
     for m in (
-        PanelMember("gemini_3_5_flash_lite", "gemini-3.5-flash-lite",
-                    "Gemini 3.5 Flash-Lite", "gemini35FlashLite"),
+        PanelMember("gemma_4_31b_it", "gemma-4-openrouter",
+                    "Gemma 4 31B", "gemma431bIt"),
         PanelMember("gpt_5_6_luna", "gpt-5.6-luna", "GPT-5.6 Luna",
                     "gpt56Luna"),
         PanelMember("mistral_small_2603", "mistral-small", "Mistral Small 4",
@@ -288,26 +319,43 @@ PANEL: Dict[str, PanelMember] = {
 #: takes ``thinking_level``, everyone else ``reasoning_effort``. Each client
 #: reads only its own, so setting both is how one config reaches all four.
 #:
-#: Verified against the live APIs, 2026-07-29/31:
-#:   Gemini 3.5 Flash-Lite  thinking_level MINIMAL/LOW/MEDIUM/HIGH -> MEDIUM
+#: Verified against the live APIs, 2026-07-29/31 and 2026-08-14 for Gemma:
 #:   GPT-5.6 Luna           effort none/low/medium/high/xhigh/max  -> medium
-#:   DeepSeek V4 Flash 0731 accepts only low/high/max             -> high
+#:   Gemma 4 31B            two levels only, MINIMAL|HIGH          -> high
+#:   DeepSeek V4 Flash 0731 accepts only low/high/max              -> high
 #:   Mistral Small 4        effort ONLY none|high — low/medium 400 -> high
 #:
-#: Two of four sit at a genuine middle setting. DeepSeek 0731 and Mistral
-#: Small have no middle level, so their adapters round up to ``high`` rather
-#: than dropping into a lighter/non-reasoning mode. This is a real limit on
-#: comparability and belongs in any write-up of the panel results — and it is
-#: sharper now that Qwen's departure leaves the panel evenly split between
-#: models at a middle setting and models rounded up to ``high``.
+#: **Only GPT-5.6 Luna now sits at a genuine middle setting.** The other three
+#: have no middle level, so they are rounded up to ``high`` rather than dropped
+#: into a lighter/non-reasoning mode. That is a real limit on comparability and
+#: belongs in any write-up of the panel results — and the swap of the Google
+#: slot from Gemini 3.5 Flash-Lite (which did have MEDIUM) to Gemma made it
+#: worse, taking the panel from an even 2/2 split to 3 of 4 rounded up. It was
+#: accepted for the reasons in the ``PANEL`` comment above; it should not pass
+#: unstated.
+#:
+#: Gemma's ``high`` is also the least legible of the three, because OpenRouter
+#: fans the request across third-party backends serving the same weights and they
+#: do not agree on what an effort means or on how to report it. Measured on one
+#: article, 2026-08-14: with no effort sent the answer is ~200 output tokens and
+#: no reasoning; at ``medium`` and at ``high`` it is ~1,000-1,200 output tokens
+#: with 3.3-4.2k characters of reasoning — but the two levels are
+#: indistinguishable from each other in both latency and reasoning length, so
+#: Gemma's thinking is on/off through this route rather than graduated. One
+#: backend reasoned at ``minimal`` too (897 tokens), and one reports
+#: ``reasoning_tokens: 1`` while emitting 3.7k characters of it. Read the depth
+#: as requested, never as measured.
 PANEL_REASONING = {"reasoning_effort": "medium", "thinking_level": "MEDIUM"}
 
-#: Per-member deviations from the shared middle setting. DeepSeek 0731 has no
-#: medium level; round up for the annotation panel (as Mistral Small already
-#: does) so it stays in the reasoning regime. Other bulk text pipelines use the
-#: registry's low default instead.
+#: Per-member deviations from the shared middle setting. DeepSeek 0731 and
+#: Gemma have no medium level; round up for the annotation panel (as Mistral
+#: Small already does) so they stay in the reasoning regime. Stated explicitly
+#: rather than left to each client's fallback, so the run manifest records a
+#: decision instead of an accident. Other bulk text pipelines use the registry
+#: defaults instead.
 PANEL_REASONING_OVERRIDES: Dict[str, Dict[str, str]] = {
     "deepseek_v4_flash_0731": {"reasoning_effort": "high"},
+    "gemma_4_31b_it": {"reasoning_effort": "high"},
 }
 
 
@@ -316,15 +364,13 @@ def panel_reasoning(member_key: str) -> Dict[str, str]:
     return {**PANEL_REASONING, **PANEL_REASONING_OVERRIDES.get(member_key, {})}
 
 #: Effective (not merely requested) depth, for run manifests. See above.
+_ROUNDED_UP_REASONING: Dict[str, str] = {
+    "mistral_small_2603": "high (API accepts only none|high; medium rounded up)",
+    "deepseek_v4_flash_0731": "high (API accepts only low|high|max; medium rounded up)",
+    "gemma_4_31b_it": "high (model has only MINIMAL|HIGH; medium rounded up)",
+}
 PANEL_REASONING_EFFECTIVE: Dict[str, str] = {
-    key: (
-        "high (API accepts only none|high; medium rounded up)"
-        if key == "mistral_small_2603"
-        else "high (API accepts only low|high|max; medium rounded up)"
-        if key == "deepseek_v4_flash_0731"
-        else "medium"
-    )
-    for key in PANEL
+    key: _ROUNDED_UP_REASONING.get(key, "medium") for key in PANEL
 }
 
 #: Sentiment on Omeka is now generation 2 alone. Deleted from the archive on
