@@ -83,13 +83,22 @@ is the only thing that can be, because Omeka does not index value annotations:
 | `iwac:mistralSmall2603*` | `mistral-small-2603` | 79614 | `mistral_small_2603_` |
 | `iwac:deepseekV4Flash0731*` | `deepseek/deepseek-v4-flash-0731` | 83261 | `deepseek_v4_flash_0731_` |
 
-**The Google slot became Gemma 4 31B on 2026-08-14.** It was
+**The Google slot became Gemma 4 31B on 2026-08-14**, and its first corpus pass
+ran the same day: **12,240 articles in 18.8 h**, live on the archive. It was
 `gemini-3.5-flash-lite` from 2026-07-31, but Flash-Lite never annotated
 anything: `iwac:gemini35FlashLiteCentralite` was verified at **0 items** on the
-live archive on the day of the swap, and `00 --verify` re-confirmed it as empty
-before the vocabulary upload that removed it. So this filled an empty slot rather
-than mixing two models into one column — **generation 2 is unchanged**, and there
-is no mixed-column question to resolve and no re-run to pay for.
+live archive on the day of the swap, and `00 --verify` re-confirmed it as empty.
+So this filled an empty slot rather than mixing two models into one column —
+**generation 2 is unchanged**, and there is no mixed-column question to resolve
+and no re-run to pay for.
+
+The upload that added Gemma's six properties did **not** remove Flash-Lite's, or
+any of the other 42 empty declarations: vocabulary 10 went 74 → **80**, not
+74 → 32. Whatever its diff preview lists, the update flow adds on this instance
+and does not delete, so `00 --verify` proves a deletion *would* be safe rather
+than predicting one will happen. Harmless — all 48 are at 0 items and
+`resolve_property_ids` asks for the 25 terms the panel needs — but do not count
+annotators from the installed property list.
 
 The April preview's `iwac:deepseekV4Flash*` values (11,482 items) were deleted
 on 2026-08-07. They were never exported to Hugging Face, so that reading is
@@ -281,18 +290,24 @@ SDK calls, so a timed-out future cannot leave an unbounded HTTP thread behind.
 | GPT-5.6 Luna | **2.7 h** | 4,511 |
 | Mistral Small 4 | **3.7 h** | 3,318 |
 | DeepSeek V4 Flash 0731 | **31.5 h** | 391 |
-| Gemma 4 31B | first pass started 2026-08-14 | ~250–550 (early, unstable) |
+| Gemma 4 31B | **18.8 h** | 653 |
 
 DeepSeek is ~12× slower than Luna, and nothing like the retired preview's 9.7 s
 median: 0731 has no middle reasoning level, so the panel rounds it up to `high`.
 Budget a full day for it and hours for the others.
 
-Gemma's rate is the least stable of the four, because OpenRouter re-picks a
-backend per call: an 18-item trial ran at **9 items/min** and the first minutes of
-the corpus pass at closer to **4**. Both bracket a pass in DeepSeek's league —
-somewhere between one day and two. Replace this row with the measured wall clock
-from the cache `ts` values once the pass completes, as was done for the other
-three.
+Gemma's first corpus pass ran **2026-08-14/15**: 18.8 h for 12,240 annotated
+articles, 653 items/hour — slower than DeepSeek but the same order, and well
+inside the 40–85 h that was budgeted from its ~72 s median call. Per-call latency
+under-predicts a pass here, because OpenRouter re-picks a backend per call and
+the pool absorbs the slow ones: an 18-item trial ran at 9 items/min, the opening
+minutes at closer to 4, and the pass averaged 11.
+
+It ended with **58 model-call failures** out of 12,298 eligible articles (0.5%),
+all transient connection drops, plus a handful of `RemoteDisconnected` retries
+against Omeka that urllib3 absorbed (PATCH failures: 0). Failures are never
+cached — only valid results are — so re-running the same command retries exactly
+those and re-requests nothing else.
 
 **Pass `--model-timeout 300` for any 0731 or Gemma run.** The 120 s default
 allots 37.3 s per attempt while both models take ~55–72 s per item, so normal
@@ -312,7 +327,7 @@ Measured full-corpus figures (12,305 articles):
 | Model | Full pass | How it was obtained |
 |---|---|---|
 | DeepSeek V4 Flash 0731 | **$10.95** | measured against the OpenRouter credits endpoint |
-| Gemma 4 31B | **~$8–12** projected | 3 calls; 3,940 in / ~1,100 out at $0.09–0.15 / $0.34–0.40 |
+| Gemma 4 31B | **~$8–12** projected | 3 calls; 3,940 in / ~1,100 out at $0.09–0.15 / $0.34–0.40. The 2026-08-14/15 pass has now run — measure it against the credits endpoint and replace this row |
 | Gemini 3.5 Flash-Lite | **~$47** projected | retired from the panel 2026-08-14; 8 articles, `thinking_level=MEDIUM` |
 
 Gemma's projection is what moved it into the Google slot: it lands in the same
