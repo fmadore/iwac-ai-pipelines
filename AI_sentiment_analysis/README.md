@@ -83,8 +83,9 @@ is the only thing that can be, because Omeka does not index value annotations:
 | `iwac:mistralSmall2603*` | `mistral-small-2603` | 79614 | `mistral_small_2603_` |
 | `iwac:deepseekV4Flash0731*` | `deepseek/deepseek-v4-flash-0731` | 83261 | `deepseek_v4_flash_0731_` |
 
-**The Google slot became Gemma 4 31B on 2026-08-14**, and its first corpus pass
-ran the same day: **12,240 articles in 18.8 h**, live on the archive. It was
+**The Google slot became Gemma 4 31B on 2026-08-14**, and it annotated the corpus
+the same day: 18.8 h, then a short retry pass, ending **complete at 12,298
+articles — exact parity with the other three members**. It was
 `gemini-3.5-flash-lite` from 2026-07-31, but Flash-Lite never annotated
 anything: `iwac:gemini35FlashLiteCentralite` was verified at **0 items** on the
 live archive on the day of the swap, and `00 --verify` re-confirmed it as empty.
@@ -306,8 +307,10 @@ minutes at closer to 4, and the pass averaged 11.
 It ended with **58 model-call failures** out of 12,298 eligible articles (0.5%),
 all transient connection drops, plus a handful of `RemoteDisconnected` retries
 against Omeka that urllib3 absorbed (PATCH failures: 0). Failures are never
-cached — only valid results are — so re-running the same command retries exactly
-those and re-requests nothing else.
+cached — only valid results are — so re-running the same command retried exactly
+those: **61 items, 0 failures, 0 re-requested**, and the member came out complete.
+That resume path is the reason a 0.5% failure rate costs minutes rather than
+another pass.
 
 **Pass `--model-timeout 300` for any 0731 or Gemma run.** The 120 s default
 allots 37.3 s per attempt while both models take ~55–72 s per item, so normal
@@ -398,7 +401,13 @@ re-running the same command resumes.
 ### Language
 
 Only articles whose `dcterms:language` is **Français** or **Anglais** are
-annotated. On the article corpus that is 12,305 of 12,356; the 45 Ewé, Kabiyè and
+annotated. **The eligible ceiling moves with the corpus and is currently 12,298
+of 12,349** (verified live 2026-08-15) — it was 12,305 of 12,356 through the
+2026-08 campaigns, so figures of that size elsewhere in this file describe the
+corpus as it stood then, not a shortfall. Seven articles left the class between
+the two readings and every member's count dropped together, which is the
+signature to look for: a gap in one member alone is a failed run, a gap in all
+four is the corpus moving. The 45 Ewé, Kabiyè and
 Dendi articles and the 6 with no language value are skipped and counted
 separately in the summary.
 
