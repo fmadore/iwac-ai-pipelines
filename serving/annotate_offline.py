@@ -153,6 +153,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help=f"Registry key (default: {DEFAULT_MODEL})")
     parser.add_argument("--limit", type=int, default=None,
                         help="Stop after N articles (default: all)")
+    parser.add_argument("--shard-index", type=int, default=0,
+                        help="Which slice of the corpus this job takes (0-based)")
+    parser.add_argument("--num-shards", type=int, default=1,
+                        help="Total slices. Shards are disjoint, so several jobs "
+                             "can run at once on different partitions — which is "
+                             "what beats the queue when one node is contended. "
+                             "Give each shard its own --output")
     parser.add_argument("--reasoning-effort", default=None,
                         help="Override the panel's reasoning depth (e.g. low). "
                              "Annotations produced at a different depth are a "
@@ -176,6 +183,19 @@ def main() -> None:
     system_prompt = payload["system_prompt"]
     prompt_id = payload.get("prompt_fingerprint", "unknown")
     articles = payload["articles"]
+    if args.num_shards > 1:
+        if not 0 <= args.shard_index < args.num_shards:
+            raise SystemExit(
+                f"--shard-index must be in 0..{args.num_shards - 1}"
+            )
+        total = len(articles)
+        # Round-robin, not contiguous blocks: article length varies by an order
+        # of magnitude and is correlated with position (ingest order), so
+        # slicing by blocks would hand one shard the long ones and leave another
+        # idle. Deterministic, so a resumed shard takes the same slice.
+        articles = articles[args.shard_index::args.num_shards]
+        logger.info("shard %d/%d — %d of %d articles",
+                    args.shard_index, args.num_shards, len(articles), total)
     if args.limit:
         articles = articles[:args.limit]
 
