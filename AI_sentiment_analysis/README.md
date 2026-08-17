@@ -364,17 +364,46 @@ the panel's requested `medium` is a rung the model has rather than one it gets
 rounded up to. Weights load in ~150 s; guided decoding held, so no response
 needed unfencing.
 
-**The open question is not reasoning depth but validity.** Across the small
-2026-08-16 samples at `medium`, roughly **5 of 16** calls returned a
-*schema-valid but rule-invalid* answer — a null `subjectivite_score` beside a
-non-null centralité, which the schema's cross-field validator rejects — and they
-persisted through all three retries rather than clearing on one. Guided decoding
-constrains shape, never logic. `low` produced none in the same sampling, which
-hints the rate is depth-dependent, but two calls per level is far too little to
-conclude anything; the pilot has to count it properly. If it holds near 30% it
-is a serious mark against this model for this panel, because the affected
-articles are exactly the ones the panel cares about (`Très central`). Note also
-that `xhigh` exceeded the 300 s request timeout on one call in two on L40s.
+**The open question is not reasoning depth but validity**, and a 200-article
+offline pass on 2026-08-17 measured it (2× L40, `medium`, prompt `#d14ace9ac192`,
+70 min, 172 articles/hour):
+
+| Pass | Annotated | Failed |
+|---|---|---|
+| First | 175 / 200 | 25 (12.5%) — 24 rule-invalid, 1 timeout |
+| After one retry | 192 / 200 | **8 (4.0%)**, all rule-invalid |
+
+The failure is always the same: a null `subjectivite_score` beside a non-null
+centralité, which the schema's cross-field validator rejects. Guided decoding
+constrains shape, never logic. **Most of it is transient** — 17 of 25 cleared on
+a second pass, so the operational cost is a retry pass, not lost articles. When
+a call fails this way the whole result is replaced by `ERREUR_ANALYSE`
+placeholders, so a rejected article yields nothing at all, not a partial record.
+
+The valid annotations use the scales properly — centralité spread `Très central`
+110 / `Marginal` 23 / `Central` 19 / `Secondaire` 17 / `Non abordé` 6, and the
+six null subjectivité scores line up exactly with the six `Non abordé` articles,
+which is the rule being obeyed rather than broken. One thing for any write-up:
+polarité came out heavily positive-or-neutral (80 / 78) with only 6 `Négatif`
+out of 175, which should be checked against what the live panel assigned on the
+same articles before Qwen is trusted on that dimension.
+
+**Do not "fix" the residual by dropping to `low`.** Run on the 8 persistently
+failing articles, `low` returned valid output for 6 of them — but all six got
+*identical* `subjectivite_score` (`Très objectif`) and *identical* `polarite`
+(`Neutre`), where across 175 articles at `medium` those labels occur 11% and 45%
+of the time. Centralité did vary, so the model is not simply emitting a constant
+record; it is the two contested fields that flatten. On six articles that is
+suggestive rather than conclusive, but the shape of it is the failure this
+project has met before: an unusable answer that is indistinguishable from a real
+one once stored, which is why the 2026-07 `ocr_quality` column was reverted. A
+visible 4% loss is worth more than an invisible 4% of default answers. Mixing
+depths would also forfeit the comparability that made this candidate
+interesting, since a genuine `medium` rung was its main argument.
+
+Note also that `xhigh` exceeded the 300 s request timeout on one call in two on
+L40s, and that per-call latency at `medium` under `--concurrency 6` has a long
+tail: median 80 s, p90 281 s, max 483 s.
 
 **Unattended runs.** A queued job starts when the scheduler says so, and a
 tunnel cannot be held open for a 3 a.m. slot. The obvious fix — putting `.env`

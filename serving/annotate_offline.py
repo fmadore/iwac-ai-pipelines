@@ -53,7 +53,7 @@ import logging
 import threading
 import concurrent.futures
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.llm_provider import LLMConfig, build_llm_client, get_model_option
@@ -91,13 +91,17 @@ def configure_logging() -> logging.Logger:
     return logging.getLogger("annotate")
 
 
-def load_done(path: Path, prompt_id: str, logger: logging.Logger) -> set:
-    """Item ids already annotated *successfully* under this prompt.
+def load_done(path: Path, prompt_id: str, effort: Optional[str],
+              logger: logging.Logger) -> set:
+    """Item ids already annotated *successfully*, by this instrument.
 
-    Three things are deliberately not counted as done:
+    Four things are deliberately not counted as done:
 
     * a record written under a different prompt — resuming across a prompt edit
       would silently mix two instruments in one output file;
+    * a record produced at a different reasoning depth, for exactly the same
+      reason. Depth changes the answers, so ``medium`` and ``low`` results in
+      one file are two instruments wearing one name;
     * a torn final line, the expected shape of a job killed at its walltime;
     * **a record carrying an ``analysis_error``.** Failures are not results, so
       re-running retries exactly those, which is the same rule the main pipeline
@@ -105,7 +109,7 @@ def load_done(path: Path, prompt_id: str, logger: logging.Logger) -> set:
       timeout into a permanent hole in the corpus, and the hole would be
       invisible: the item id is present, just useless.
     """
-    done, stale, torn, errored = set(), 0, 0, 0
+    done, stale, torn, errored, other_depth = set(), 0, 0, 0, 0
     if not path.exists():
         return done
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -120,15 +124,19 @@ def load_done(path: Path, prompt_id: str, logger: logging.Logger) -> set:
         if record.get("prompt") != prompt_id:
             stale += 1
             continue
+        if record.get("reasoning_effort") != effort:
+            other_depth += 1
+            continue
         if (record.get("result") or {}).get("analysis_error"):
             errored += 1
             continue
         if record.get("item_id") is not None:
             done.add(record["item_id"])
-    if stale or torn or errored:
+    if stale or torn or errored or other_depth:
         logger.info(
-            "resume: %d record(s) from another prompt, %d torn, %d failed — "
-            "failed items will be retried", stale, torn, errored,
+            "resume: %d from another prompt, %d at another depth, %d torn, "
+            "%d failed — failed items will be retried",
+            stale, other_depth, torn, errored,
         )
     return done
 
@@ -145,6 +153,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help=f"Registry key (default: {DEFAULT_MODEL})")
     parser.add_argument("--limit", type=int, default=None,
                         help="Stop after N articles (default: all)")
+    parser.add_argument("--reasoning-effort", default=None,
+                        help="Override the panel's reasoning depth (e.g. low). "
+                             "Annotations produced at a different depth are a "
+                             "different instrument and are NOT comparable with "
+                             "the panel — use a separate output file")
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
                         help=f"Articles in flight at once (default: {DEFAULT_CONCURRENCY}). "
                              "A serial run wastes most of the GPU: vLLM batches "
@@ -168,10 +181,21 @@ def main() -> None:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    done = load_done(output, prompt_id, logger)
 
     option = get_model_option(args.model)
     reasoning = panel_reasoning(PANEL_MEMBER_KEY)
+    if args.reasoning_effort:
+        reasoning = {**reasoning, "reasoning_effort": args.reasoning_effort}
+        logger.warning(
+            "reasoning depth overridden to %r (panel uses %r) — these "
+            "annotations are NOT comparable with panel results, and records at "
+            "another depth in this file will be re-annotated",
+            args.reasoning_effort,
+            panel_reasoning(PANEL_MEMBER_KEY).get("reasoning_effort"),
+        )
+    # Resume is keyed on the instrument, so it has to know the depth first.
+    done = load_done(output, prompt_id, reasoning.get("reasoning_effort"), logger)
+
     # One attempt must fit inside the per-article budget with room for retries;
     # xhigh calls were measured past 300s on L40s, so this is not theoretical.
     client = build_llm_client(option, config=LLMConfig(
