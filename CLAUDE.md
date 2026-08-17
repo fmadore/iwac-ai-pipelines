@@ -4,7 +4,7 @@ AI document-processing pipelines for the Islam West Africa Collection (IWAC), a
 digital archive of 14,500+ items in Omeka S. Each pipeline automates one task —
 OCR extraction and correction, summarization, NER, transcription, HTR, sentiment —
 against Gemini, OpenAI, Mistral, or the open-weights models (Qwen, DeepSeek)
-reached through OpenRouter.
+reached through OpenRouter or served from your own GPU (`serving/`).
 
 ## Setup
 
@@ -33,6 +33,10 @@ Which architecture rules apply depends on the pipeline's category:
   `AI_video_summary`, `AI_summary_issue`, `AI_youtube_transcription`
 - **Agent-driven** — `AI_reference_indexing` (orchestrated by the
   `reference-indexing` skill rather than a numbered run)
+
+`serving/` is not a pipeline: it is the Slurm/vLLM setup for running an
+open-weights model on your own GPU and the probe that checks a route's reasoning
+levels are real before anything is judged on its output.
 
 Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provider`,
 `rate_limiter`, `retry` and `ffmpeg_utils` in depth; the rest are only described here:
@@ -113,6 +117,21 @@ pinned to `data_collection: "deny"` and `require_parameters` via
 archival documents to third-party backends, the second because `json_schema`
 support varies by backend. Add models in `common/llm_registry.py`, never by
 letting a pipeline pass an arbitrary `vendor/model` slug through.
+
+**A self-hosted endpoint is deployment state, not catalog state.** `PROVIDER_SELFHOSTED`
+covers any OpenAI-compatible server you run yourself; `SelfHostedClient` resolves
+`SELFHOSTED_LLM_BASE_URL` from the environment in `__init__`, exactly as every
+other adapter resolves its key, and raises when it is unset. Never add a base-URL
+field to `ModelOption` or `LLMConfig` and never let a pipeline pass one through —
+the registry entry says *which model*, the environment says *where it is today*,
+and on a cluster that answer changes with every job. The same rule is what keeps
+this public repo free of private hostnames. Failing loudly at construction is
+deliberate: `AI_sentiment_analysis/02` turns that into a *skipped* model rather
+than a dead run, and CI imports the catalog with no endpoint at all. Setup lives
+in `serving/`. Note that the same weights reached two ways are two registry keys
+(`qwen3.8-27b-selfhosted` / `qwen3.8-27b-openrouter`), as `gemma-4` /
+`gemma-4-openrouter` already are: the route is half of what a provenance record
+claims.
 
 **Multimodal pipelines are the exception** and call provider SDKs directly, because
 they need capabilities the shared provider does not expose. They must still use

@@ -75,6 +75,10 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 OMEKA_BASE_URL=https://your-omeka-instance.com/api
 OMEKA_KEY_IDENTITY=your_key_identity
 OMEKA_KEY_CREDENTIAL=your_key_credential
+
+# Optional: a model you serve yourself (see serving/README.md)
+SELFHOSTED_LLM_BASE_URL=http://localhost:8000/v1
+SELFHOSTED_LLM_API_KEY=sk-...
 ```
 
 ## Usage
@@ -103,6 +107,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
 | OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the shared text default (`DEFAULT_TEXT_MODEL_KEY`), used by NER, OCR correction and magazine consolidation. Summarization is the one exception and defaults to `gpt-5.6-luna` for throughput. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
+| Self-hosted | `qwen3.8-27b-selfhosted` | Any OpenAI-compatible endpoint you run yourself — vLLM on a GPU cluster, or llama.cpp / LM Studio / TGI locally. Text pipelines only. The address comes from `SELFHOSTED_LLM_BASE_URL`, so no model here is tied to one machine; a model on this route is simply reported as unavailable when the variable is unset. See [`serving/`](serving/README.md). |
 
 `deepseek-v4-flash-0731` is pinned to the dated OpenRouter slug
 `deepseek/deepseek-v4-flash-0731`; the generic aliases `deepseek` and
@@ -118,12 +123,14 @@ These tools were built for IWAC but can be modified for other collections:
 - **Prompts** are stored as `.md` files in each pipeline directory and can be edited for different contexts, languages, or document types
 - **Pipelines** are modular and can be used independently
 - **Shared utilities** (`common/`) centralize Omeka S API access (`omeka_client.py`), the model catalog (`llm_registry.py`), provider adapters (`llm_provider.py`), durable checkpoints (`checkpoint.py`), the page-by-page Gemini PDF loop (`gemini_page_processor.py`), and idempotent text/resource-link writes (`omeka_text_updater.py`, `omeka_link_updater.py`) — so a pipeline is mostly its prompts and its choice of model
+- **Serving** (`serving/`) is written to be site-agnostic: every cluster-specific value is an environment override, so pointing it at your own hardware — or at any OpenAI-compatible endpoint you already run — means editing one file of defaults, not the pipelines
 
 The approach assumes you have digitized materials and need to make them searchable. It is designed for institutions and researchers managing substantial digital collections with limited resources.
 
 ## Documentation
 
 - [Shared Utilities](common/README.md) — OmekaClient, LLM provider configuration, the Gemini page processor and the Omeka text updater
+- [Serving Your Own Models](serving/README.md) — running an open-weights model on your own GPU (Slurm + vLLM), the SSH tunnel, and the probe that checks a route's reasoning levels are real
 - [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini, Mistral, or Claude agent)
 - [YouTube Transcription](AI_youtube_transcription/README.md) — URL-based transcription with language detection, the measured token budget, and the public-video-only limit
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references

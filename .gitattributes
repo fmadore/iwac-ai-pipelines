@@ -1,0 +1,8 @@
+# Shell scripts must keep LF endings even in a Windows working copy.
+#
+# These are edited on Windows and run on Linux, and they are as likely to reach
+# the cluster by rsync from the working copy as by a fresh clone. A CRLF copy
+# fails at the shebang — `bad interpreter: /usr/bin/env bash^M` — which reads
+# like a broken cluster rather than a line-ending problem.
+*.sh text eol=lf
+*.sbatch text eol=lf

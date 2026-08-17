@@ -15,6 +15,14 @@ PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_MISTRAL = "mistral"
 PROVIDER_OPENROUTER = "openrouter"
+#: An OpenAI-compatible endpoint you run yourself — vLLM on a GPU cluster, or
+#: llama.cpp / LM Studio / TGI on anything smaller. Named for the *route*, as
+#: ``gemma-4-openrouter`` is: the weights may be identical to a hosted entry,
+#: but who sees the text is not, and that is what the provenance record has to
+#: say. Unlike every other provider here the endpoint is deployment state, not
+#: catalog state, so it is resolved from the environment by the adapter and
+#: never written down in this file. See ``serving/README.md``.
+PROVIDER_SELFHOSTED = "selfhosted"
 
 OPENAI_SOL_MODEL = "gpt-5.6-sol"
 OPENAI_TERRA_MODEL = "gpt-5.6-terra"
@@ -38,10 +46,17 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"
 OPENROUTER_QWEN_SMALL_MOE_MODEL = "qwen/qwen3.5-35b-a3b"
 OPENROUTER_QWEN_DENSE_MODEL = "qwen/qwen3.5-27b"
+OPENROUTER_QWEN38_DENSE_MODEL = "qwen/qwen3.8-27b"
 OPENROUTER_GEMMA_4_31B_MODEL = "google/gemma-4-31b-it"
 OPENROUTER_DEEPSEEK_FLASH_0731_MODEL = "deepseek/deepseek-v4-flash-0731"
 OPENROUTER_DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
 OPENROUTER_DEEPSEEK_PRO_MODEL = "deepseek/deepseek-v4-pro"
+
+#: What ``vllm serve Qwen/Qwen3.8-27B`` reports back from ``/v1/models``: the
+#: served name defaults to the model path it was launched with, so this is the
+#: Hugging Face repo id exactly. Serving under a different ``--served-model-name``
+#: means changing this string too.
+SELFHOSTED_QWEN38_MODEL = "Qwen/Qwen3.8-27B"
 
 DEFAULT_TEXT_MODEL_KEY = "deepseek-v4-flash-0731"
 # Deadline for one transport attempt. It exists to bound a hung socket, not to
@@ -253,6 +268,49 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort=None,
         supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
     ),
+    # Qwen3.8 27B, twice: once through an endpoint you run yourself, once
+    # through OpenRouter. Same weights, different route — the split
+    # ``gemma-4`` / ``gemma-4-openrouter`` already makes, for the same reason:
+    # the route is half of what a provenance record claims.
+    #
+    # Both carry temperature 1.0, which is Qwen's *thinking-mode* recipe
+    # (generation_config.json ships 1.0 / top_p 0.95 / top_k 20; the model card's
+    # 0.7 is the non-thinking recipe, and it is what the Qwen3.5 entries above
+    # inherited). Everything here runs thinking-on, so 1.0 is the applicable
+    # number — do not copy 0.7 down from the neighbours. ``top_p``/``top_k`` stay
+    # unset as always; a self-hosted vLLM applies the model's own
+    # generation_config server-side, which is a quiet bonus of this route.
+    #
+    # The ladder is genuinely graduated — low / medium / xhigh, verified on the
+    # model card — which is the whole reason this model is interesting for the
+    # sentiment panel: it would be the first member since GPT-5.6 Luna to sit at
+    # the requested middle rather than be rounded up to it. Whether the middle
+    # survives the *route* is a separate question, and the one Gemma failed
+    # (see ``AI_sentiment_analysis/sentiment_core.py``); ``serving/probe_reasoning.py``
+    # is what answers it. Default is ``low``, not the vendor's own ``xhigh``:
+    # an unconfigured bulk run reasoning as hard as it can, on GPU hours shared
+    # with a whole university, is the expensive accident to design against.
+    "qwen3.8-27b-selfhosted": ModelOption(
+        "qwen3.8-27b-selfhosted", PROVIDER_SELFHOSTED, SELFHOSTED_QWEN38_MODEL,
+        "Qwen3.8 27B (self-hosted)",
+        "Qwen3.8 27B dense — Apache-2.0, served from your own vLLM endpoint",
+        default_temperature=1.0,
+        default_reasoning_effort="low",
+        supported_reasoning_efforts=("low", "medium", "xhigh"),
+    ),
+    # The hosted twin, for measuring one route against the other on the same
+    # sample. In no tier on purpose: at $0.45/$3.20 per 1M it is roughly twice
+    # the sentiment panel's output-cost band, which is what sent the whole
+    # experiment to a GPU cluster in the first place. Reachable by its explicit
+    # key and slug alias, so a pilot can ask for it and nothing else will.
+    "qwen3.8-27b-openrouter": ModelOption(
+        "qwen3.8-27b-openrouter", PROVIDER_OPENROUTER, OPENROUTER_QWEN38_DENSE_MODEL,
+        "Qwen3.8 27B (OpenRouter)",
+        "Qwen3.8 27B dense — Apache-2.0, routed under data_collection: deny",
+        default_temperature=1.0,
+        default_reasoning_effort="low",
+        supported_reasoning_efforts=("low", "medium", "xhigh"),
+    ),
     "deepseek-v4-flash-0731": ModelOption(
         "deepseek-v4-flash-0731", PROVIDER_OPENROUTER,
         OPENROUTER_DEEPSEEK_FLASH_0731_MODEL,
@@ -345,6 +403,15 @@ MODEL_ALIASES = {
     "qwen/qwen3.5-35b-a3b": "qwen3.5-moe-small",
     "qwen3.5-27b": "qwen3.5-dense",
     "qwen/qwen3.5-27b": "qwen3.5-dense",
+    # Qwen3.8 27B resolves by route, and the two names collide once lowercased:
+    # the Hugging Face repo id ``Qwen/Qwen3.8-27B`` normalizes to exactly the
+    # OpenRouter slug ``qwen/qwen3.8-27b``. The vendor-prefixed form therefore
+    # means the hosted route, as it does for ``google/gemma-4-31b-it`` above,
+    # and the bare names mean the endpoint you run yourself. Ask for the
+    # self-hosted entry by a short name, never by pasting the HF id.
+    "qwen3.8": "qwen3.8-27b-selfhosted",
+    "qwen3.8-27b": "qwen3.8-27b-selfhosted",
+    "qwen/qwen3.8-27b": "qwen3.8-27b-openrouter",
     "deepseek": "deepseek-v4-flash-0731",
     "deepseek-flash": "deepseek-v4-flash-0731",
     "deepseek-flash-0731": "deepseek-v4-flash-0731",
@@ -366,6 +433,7 @@ TEXT_ECONOMY_MODELS: List[str] = [
 ]
 TEXT_OPEN_MODELS: List[str] = [
     "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
+    "qwen3.8-27b-selfhosted",
     "deepseek-v4-flash-0731", "deepseek-v4-pro",
 ]
 TEXT_EXTENDED_MODELS: List[str] = [

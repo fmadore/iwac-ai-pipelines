@@ -313,6 +313,51 @@ PANEL: Dict[str, PanelMember] = {
     )
 }
 
+#: Models under evaluation, which ``02_pilot_new_panel.py`` runs and nothing
+#: else does. Membership of :data:`PANEL` is what makes a model *writable* —
+#: ``01_sentiment_analysis.py`` iterates that dict alone — so a candidate parked
+#: here is one that cannot reach Omeka however it is invoked. That separation is
+#: the point: issue #12 defers the add-or-replace decision until the pilot
+#: report exists, and a candidate sitting in ``PANEL`` in the meantime would be a
+#: single ``--models`` flag away from writing six properties across 12,300 items.
+#:
+#: Everything else about a candidate is production: same ``PanelMember`` type,
+#: same prompt, same schema, same :func:`panel_reasoning`, same call path
+#: through ``analyze_with_all_models``. Only the membership is staged, so the
+#: pilot measures the model rather than a lookalike of the pipeline.
+#:
+#: :attr:`PanelMember.model_item_id` raises ``KeyError`` for a candidate until
+#: its Omeka authority item exists, and that is the correct order — the record
+#: comes first, then the code that cites it (see ``AI_MODEL_ITEMS``). Nothing in
+#: the pilot path asks for it; only the write path does.
+#:
+#: **Qwen3.8 27B appears twice, once per route.** The property prefix names the
+#: model and the registry key carries the route, exactly as ``gemma_4_31b_it``
+#: does for ``gemma-4-openrouter``. Running both on one sample is what turns
+#: "self-hosting is cheaper" into a measurement: same weights, same articles,
+#: with latency, structured-output reliability and reasoning depth read off each
+#: route rather than assumed to match. Cost is not comparable in one unit —
+#: OpenRouter bills tokens, a cluster bills GPU-hours and queue time — so record
+#: both rather than converting one into the other.
+#:
+#: Neither needs a :data:`PANEL_REASONING_OVERRIDES` entry. Qwen3.8's ladder is
+#: low/medium/xhigh, so the panel's requested ``medium`` is a rung the model
+#: actually has: it would be the first member since GPT-5.6 Luna to sit at the
+#: requested depth instead of being rounded up to it. Whether that survives the
+#: OpenRouter route is precisely what the twin is there to find out — Gemma's
+#: graduated levels collapsed to on/off when fanned across third-party backends
+#: (see :data:`PANEL_REASONING`), and a self-hosted server is the only route here
+#: where the depth can be read off the server's own logs.
+PILOT_CANDIDATES: Dict[str, PanelMember] = {
+    m.key: m
+    for m in (
+        PanelMember("qwen3_8_27b", "qwen3.8-27b-selfhosted",
+                    "Qwen3.8 27B (self-hosted)", "qwen3827b"),
+        PanelMember("qwen3_8_27b_openrouter", "qwen3.8-27b-openrouter",
+                    "Qwen3.8 27B (OpenRouter)", "qwen3827bOr"),
+    )
+}
+
 #: Reasoning depth requested of every panel member.
 #:
 #: The two knobs are sent together because the vendors split on naming: Gemini
@@ -369,8 +414,12 @@ _ROUNDED_UP_REASONING: Dict[str, str] = {
     "deepseek_v4_flash_0731": "high (API accepts only low|high|max; medium rounded up)",
     "gemma_4_31b_it": "high (model has only MINIMAL|HIGH; medium rounded up)",
 }
+#: Covers candidates too, so a pilot manifest records the same fact production
+#: does. Qwen3.8 is absent from ``_ROUNDED_UP_REASONING`` on purpose: its ladder
+#: has a real middle rung, which is most of why it is being piloted.
 PANEL_REASONING_EFFECTIVE: Dict[str, str] = {
-    key: _ROUNDED_UP_REASONING.get(key, "medium") for key in PANEL
+    key: _ROUNDED_UP_REASONING.get(key, "medium")
+    for key in {**PANEL, **PILOT_CANDIDATES}
 }
 
 #: Sentiment on Omeka is now generation 2 alone. Deleted from the archive on

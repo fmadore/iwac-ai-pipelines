@@ -36,6 +36,10 @@ Environment Variables
 OMEKA_BASE_URL / OMEKA_KEY_IDENTITY / OMEKA_KEY_CREDENTIAL   Omeka S API
 GEMINI_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY              first-party models
 OPENROUTER_API_KEY                                           Qwen + DeepSeek
+SELFHOSTED_LLM_BASE_URL / SELFHOSTED_LLM_API_KEY             self-hosted candidates
+
+A model whose credentials are missing is reported as skipped and the pilot runs
+without it, so no tunnel is needed to trial the hosted members.
 """
 import sys
 import json
@@ -64,6 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
     ANALYSABLE_LANGUAGES,
     PANEL,
+    PILOT_CANDIDATES,
     PANEL_REASONING_EFFECTIVE,
     analyze_with_all_models,
     get_item_content,
@@ -91,11 +96,17 @@ ARTICLE_CLASS_ID = 36
 #: vocabulary-import time, so a literal is a claim this file cannot check.
 PROBE_PROPERTY_TERM = "iwac:gpt56LunaCentralite"
 
-#: The candidate panel, its reasoning depth and the generation-1 property
-#: prefixes all come from ``sentiment_core`` — the same definitions production
-#: runs against. When this file carried its own copy, "the pilot" and "what
-#: shipped" were two different things that merely looked alike.
-V2_PANEL = PANEL
+#: The panel under test: everything production writes, plus whatever is
+#: currently under evaluation. Both halves, their reasoning depth and their
+#: property prefixes come from ``sentiment_core`` — the same definitions
+#: production runs against. When this file carried its own copy, "the pilot"
+#: and "what shipped" were two different things that merely looked alike.
+#:
+#: Running the live members alongside the candidates is what makes the report
+#: readable: agreement is only interesting against the annotators already in
+#: use, so ``03_pilot_report.py`` needs both in one payload. Candidates stay
+#: unwritable throughout — ``01`` iterates ``PANEL`` alone.
+V2_PANEL = {**PANEL, **PILOT_CANDIDATES}
 
 OUTPUT_DIR_NAME = "cache/pilot"
 DEFAULT_SAMPLE_SIZE = 200
@@ -346,8 +357,10 @@ def show_skipped_models(skipped: List[tuple[str, str, str]]) -> None:
     for _prefix, label, reason in skipped:
         console.print(f"[yellow]![/] Skipping [bold]{label}[/] — {reason}")
     console.print(
-        "[dim]  Qwen and DeepSeek both need OPENROUTER_API_KEY; the pilot "
-        "continues with whatever is reachable.[/]"
+        "[dim]  Qwen and DeepSeek both need OPENROUTER_API_KEY; a self-hosted "
+        "candidate needs SELFHOSTED_LLM_BASE_URL, i.e. a running server and an "
+        "open tunnel (see serving/README.md). The pilot continues with whatever "
+        "is reachable.[/]"
     )
 
 

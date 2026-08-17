@@ -397,6 +397,8 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `deepseek-v4-flash-0731` | OpenRouter | `deepseek/deepseek-v4-flash-0731` | DeepSeek V4 Flash 0731 | **Default text model**; official release, 284B/13B active, 1M context, from $0.09/$0.18 per 1M tokens |
 | `deepseek-v4-flash` | OpenRouter | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash Preview | **Archive only** — in no tier, so no pipeline offers it; see below |
 | `deepseek-v4-pro` | OpenRouter | `deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1.6T/49B active MoE flagship, $0.435/$0.87 per 1M tokens |
+| `qwen3.8-27b-selfhosted` | Self-hosted | `Qwen/Qwen3.8-27B` | Qwen3.8 27B (self-hosted) | Apache-2.0, dense 27.8B; served from your own vLLM endpoint — see [`serving/`](../serving/README.md). Reasoning `low`/`medium`/`xhigh` |
+| `qwen3.8-27b-openrouter` | OpenRouter | `qwen/qwen3.8-27b` | Qwen3.8 27B (OpenRouter) | The same weights, hosted. **In no tier** — it exists to measure one route against the other, at $0.45/$3.20 per 1M |
 
 ### Model Aliases
 
@@ -419,6 +421,12 @@ For convenience, these aliases are also supported:
 
 OpenRouter slugs resolve as-is too, so a model id copied off openrouter.ai
 (`qwen/qwen3.5-122b-a10b`) works without translation.
+
+Where the same weights are reachable two ways, the vendor-prefixed slug names
+the hosted route and the bare name the local one: `qwen3.8` is the self-hosted
+entry, `qwen/qwen3.8-27b` the OpenRouter one. Note that the Hugging Face repo id
+`Qwen/Qwen3.8-27B` lowercases to exactly that slug, so pasting it gets you the
+hosted route — ask for the self-hosted entry by its short name.
 
 The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-5.6-luna`, and
 `gpt-5.1` / `gpt-5` → `gpt-5.6-sol`. Their underlying snapshots shut down on
@@ -501,7 +509,7 @@ Each provider gets the Pydantic class itself, not `model_json_schema()`:
 | OpenAI | `responses.parse(text_format=Model)` |
 | Gemini | `GenerateContentConfig(response_schema=Model)` |
 | Mistral | `chat.parse(response_format=Model)` |
-| OpenRouter | `chat.completions.parse(response_format=Model)` |
+| OpenRouter / Self-hosted | `chat.completions.create(response_format=type_to_response_format_param(Model))` |
 
 This matters for OpenAI in particular. Its `strict` mode requires
 `additionalProperties: false` on every object and *every* property listed in
@@ -510,6 +518,16 @@ a default from `required`. Passing that raw schema with `strict: true` is reject
 by the API, and a caller's retry loop will report it as a generic failure.
 `responses.parse()` runs the SDK's own `to_strict_json_schema()` transform, so the
 schema is always valid.
+
+The two open-model clients run **the same transform** — via the SDK's
+`type_to_response_format_param`, so the request is byte-identical to what
+`parse()` sent — but issue it through `create()` and validate the response
+themselves. The reason is in the next paragraph, and it is not a style
+preference: `parse()` validates `message.content` and *raises* before returning,
+so a model that fences its JSON produced a `ValidationError` that no fallback
+could catch. Reintroducing `parse()` on these two clients silently removes the
+recovery below; `test_structured_output_never_delegates_parsing_to_the_sdk`
+guards against it.
 
 ### When to Use Structured vs. Text Output
 
@@ -641,11 +659,56 @@ these models too. An effort a model does not declare in
 because with `require_parameters` on, forwarding it could leave the request
 with no eligible backend.
 
-**Structured output has a fallback.** Unlike first-party OpenAI, `message.parsed`
-cannot be relied on: open models routinely return schema-valid JSON as a plain
-string, sometimes inside a ``` fence. `OpenRouterClient.generate_structured()`
-validates the raw content when `parsed` is empty, so a well-formed answer is not
-thrown away over its packaging.
+**Structured output has a fallback.** Open models routinely return schema-valid
+JSON as a plain string, sometimes inside a ``` fence or after a sentence of
+preamble. `OpenRouterClient.generate_structured()` extracts the JSON document
+from whatever packaging it arrives in and validates that, so a well-formed
+answer is not thrown away over its wrapping.
+
+This only works because the client parses the response itself. Delegating to the
+SDK's `parse()` helper — which it did until 2026-08-16 — meant the SDK validated
+`message.content` and raised a `ValidationError` first, making the fallback
+unreachable in production: a fenced answer consumed a retry and, once retries
+ran out, was recorded as an `analysis_error`. The unit tests did not catch it
+because mocking `parse()` returns content the real SDK would never hand back.
+If you add a provider that speaks the OpenAI wire format, parse the response
+yourself.
+
+### Self-hosted Parameters
+
+An OpenAI-compatible endpoint you run yourself — vLLM on a GPU cluster, or
+llama.cpp / LM Studio / TGI on anything smaller. `SelfHostedClient` subclasses
+`OpenRouterClient`, because open models behave the same way wherever they are
+served and the tolerant structured-output recovery above is worth strictly more
+here: there is no router in front filtering for backends that honour
+`response_format`.
+
+| Variable | Required | Description |
+|---|---|---|
+| `SELFHOSTED_LLM_BASE_URL` | yes | e.g. `http://localhost:8000/v1`, typically an SSH tunnel to a compute node |
+| `SELFHOSTED_LLM_API_KEY` | no | Matches the server's `--api-key`; falls back to vLLM's `EMPTY` convention |
+
+**The endpoint is not in the catalog.** A `MODEL_REGISTRY` entry describes a
+model; where it is served today is deployment state, and on a cluster it changes
+with every job. So the URL is read from the environment by the adapter, exactly
+as every other client reads its key, and no pipeline passes one through. A
+missing URL fails at client construction — which is what lets the sentiment
+pilot report the model as *skipped* on a machine with no tunnel open instead of
+aborting a run, and what lets CI import everything with no endpoint at all.
+
+**Nothing is sent about routing.** No `provider` preferences, no attribution
+headers. `data_collection: "deny"` is a contract with a third party, and on this
+route there is none — the text reaches a machine you control and stops there.
+The guarantee is physical rather than contractual, which is stronger, and a
+strict server may reject unknown body fields anyway.
+
+**Reasoning depth travels in `chat_template_kwargs`.** That is how vLLM passes
+arguments into a model's chat template: Qwen3.8 reads `reasoning_effort` there
+(`low`/`medium`/`xhigh`). The same clamping applies as for OpenRouter — a level
+the model does not declare degrades to its default rather than being forwarded.
+
+Setting one up, and the reasoning-depth probe that should precede trusting one,
+are documented in [`serving/README.md`](../serving/README.md).
 
 ## Recommended Configurations by Use Case
 

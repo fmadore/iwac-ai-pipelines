@@ -1,4 +1,5 @@
-"""Provider adapters for OpenAI, Gemini, Mistral, and OpenRouter.
+"""Provider adapters for OpenAI, Gemini, Mistral, OpenRouter, and self-hosted
+OpenAI-compatible endpoints.
 
 Model metadata and aliases live in :mod:`common.llm_registry`; this module
 re-exports that public catalog for compatibility and owns only SDK-backed calls.
@@ -9,7 +10,7 @@ import json
 import os
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, Type, TypeVar
 
 from dotenv import load_dotenv
 
@@ -21,6 +22,17 @@ try:  # pragma: no cover - optional dependency
     from openai import OpenAI  # type: ignore
 except Exception:  # pragma: no cover - import guard
     OpenAI = None  # type: ignore
+
+# The SDK's Pydantic-to-json_schema converter, used by ``chat.completions.parse``
+# on the way out. The open-model clients below need the same conversion — its
+# strict-mode rewriting (``additionalProperties: false``, every field required)
+# is what backends validate against — but must NOT hand it the incoming response
+# to parse; see ``OpenRouterClient.generate_structured``. A private path, so it
+# is imported defensively and falls back to a plain schema.
+try:  # pragma: no cover - optional dependency
+    from openai.lib._parsing import type_to_response_format_param  # type: ignore
+except Exception:  # pragma: no cover - import guard
+    type_to_response_format_param = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from google import genai  # type: ignore
@@ -60,6 +72,8 @@ from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     PROVIDER_MISTRAL,
     PROVIDER_OPENAI,
     PROVIDER_OPENROUTER,
+    PROVIDER_SELFHOSTED,
+    SELFHOSTED_QWEN38_MODEL,
     TEXT_ECONOMY_MODELS,
     TEXT_EXTENDED_MODELS,
     TEXT_FULL_MODELS,
@@ -586,6 +600,11 @@ class OpenRouterClient(BaseLLMClient):
       the OpenAI SDK's typed signature and travel in ``extra_body``.
     """
 
+    #: Names the route in errors and debug logs. ``SelfHostedClient`` inherits
+    #: everything below and would otherwise blame OpenRouter for a failure on a
+    #: machine down the hall.
+    _route_label = "OpenRouter"
+
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
         if OpenAI is None:
             raise RuntimeError("openai package is not installed")
@@ -632,23 +651,42 @@ class OpenRouterClient(BaseLLMClient):
             body["reasoning"] = {"effort": effort}
         return body
 
-    def _parse_endpoint(self) -> Callable[..., Any]:
-        """Resolve ``chat.completions.parse`` across supported SDK versions.
+    def _request_headers(self) -> Dict[str, str]:
+        """Extra headers for every request. Subclasses serving a different
+        endpoint override this — OpenRouter's attribution pair means nothing to
+        anyone else, and a strict server may reject what it does not know."""
+        return dict(OPENROUTER_HEADERS)
 
-        The helper moved out of ``client.beta`` during the openai 1.x line, and
-        pyproject allows anything from 1.60 up, so both homes must be tried.
+    def structured_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: Type[T],
+        effective_config: LLMConfig,
+    ) -> Any:
+        """Issue a structured request and return the RAW chat completion.
+
+        Separated from :meth:`generate_structured` so a diagnostic can read
+        ``usage`` and ``reasoning_content`` off the same request production
+        sends, instead of rebuilding it and measuring something else
+        (``serving/probe_reasoning.py``).
         """
-        parse = getattr(self._client.chat.completions, "parse", None)
-        if parse is not None:
-            return parse
-        beta_chat = getattr(getattr(self._client, "beta", None), "chat", None)
-        parse = getattr(getattr(beta_chat, "completions", None), "parse", None)
-        if parse is None:  # pragma: no cover - very old SDK
-            raise RuntimeError(
-                "Installed openai SDK exposes no chat.completions.parse; "
-                "upgrade to openai>=1.60 for structured outputs"
-            )
-        return parse
+        temp = effective_config.temperature
+        return self._client.chat.completions.create(
+            model=self.option.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format=_response_format_param(response_schema),
+            **({} if temp is None else {"temperature": temp}),
+            # Sent explicitly because ``parse()`` sent it: this method replaced
+            # that call, and a backend keying on the field's presence should see
+            # no difference between the two.
+            stream=False,
+            extra_body=self._extra_body(effective_config),
+            extra_headers=self._request_headers(),
+        )
 
     @staticmethod
     def _message_text(message: Any) -> str:
@@ -673,7 +711,9 @@ class OpenRouterClient(BaseLLMClient):
     def _first_message(self, response: Any) -> Any:
         choices = getattr(response, "choices", None) or []
         if not choices:
-            raise ValueError(f"No output received from OpenRouter ({self.option.model})")
+            raise ValueError(
+                f"No output received from {self._route_label} ({self.option.model})"
+            )
         return choices[0].message
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
@@ -681,8 +721,9 @@ class OpenRouterClient(BaseLLMClient):
         temp = effective_config.temperature
 
         LOGGER.debug(
-            "OpenRouter request model=%s temperature=%s reasoning_effort=%s",
-            self.option.model, temp, effective_config.reasoning_effort,
+            "%s request model=%s temperature=%s reasoning_effort=%s",
+            self._route_label, self.option.model, temp,
+            effective_config.reasoning_effort,
         )
 
         response = self._client.chat.completions.create(
@@ -693,7 +734,7 @@ class OpenRouterClient(BaseLLMClient):
             ],
             **({} if temp is None else {"temperature": temp}),
             extra_body=self._extra_body(effective_config),
-            extra_headers=OPENROUTER_HEADERS,
+            extra_headers=self._request_headers(),
         )
         return self._message_text(self._first_message(response)).strip()
 
@@ -705,17 +746,21 @@ class OpenRouterClient(BaseLLMClient):
         *,
         config: Optional[LLMConfig] = None
     ) -> T:
-        """Generate structured output via OpenRouter's ``json_schema`` support.
+        """Generate structured output via the endpoint's ``json_schema`` support.
 
-        Goes through the SDK's ``parse()`` helper for the same reason the OpenAI
-        client does: it runs ``to_strict_json_schema()``, and a hand-built
-        ``model_json_schema()`` is rejected under ``strict``.
+        The schema goes out exactly as the SDK's ``parse()`` helper would send
+        it — ``to_strict_json_schema()`` conversion included, because a plain
+        ``model_json_schema()`` is rejected under ``strict``. What is deliberately
+        NOT delegated is parsing the *response*.
 
-        Unlike first-party OpenAI, the parsed object cannot be relied on. Open
-        models reached through the router routinely return schema-valid JSON as
-        a plain string — sometimes inside a ``` fence — which leaves
-        ``message.parsed`` as None. Validating the raw content is the fallback,
-        so a well-formed answer is not thrown away over its packaging.
+        ``parse()`` validates ``message.content`` itself and raises before
+        returning, so a model that wraps schema-valid JSON in a ``` fence — which
+        open models do routinely, whether reached through a router or served
+        locally — produced a ``ValidationError`` no caller could recover from,
+        and the tolerant path below was unreachable. (It looked covered: mocking
+        ``parse()`` returns fenced content the real SDK would never hand back.)
+        Issuing the same request through ``create()`` keeps the recovery in this
+        method, where the raw text is still available.
         """
         if BaseModel is None:
             raise RuntimeError("pydantic package is required for structured outputs")
@@ -723,42 +768,125 @@ class OpenRouterClient(BaseLLMClient):
         effective_config = self._get_effective_config(config)
 
         LOGGER.debug(
-            "OpenRouter structured request model=%s schema=%s temperature=%s",
-            self.option.model, response_schema.__name__, effective_config.temperature,
+            "%s structured request model=%s schema=%s temperature=%s",
+            self._route_label, self.option.model, response_schema.__name__,
+            effective_config.temperature,
         )
 
-        response = self._parse_endpoint()(
-            model=self.option.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=response_schema,
-            **(
-                {}
-                if effective_config.temperature is None
-                else {"temperature": effective_config.temperature}
-            ),
-            extra_body=self._extra_body(effective_config),
-            extra_headers=OPENROUTER_HEADERS,
+        response = self.structured_response(
+            system_prompt, user_prompt, response_schema, effective_config
         )
 
         message = self._first_message(response)
 
-        parsed = getattr(message, "parsed", None)
-        if parsed is not None:
-            return parsed
-
         refusal = getattr(message, "refusal", None)
         if refusal:
-            raise ValueError(f"OpenRouter model refused the structured request: {refusal}")
+            raise ValueError(
+                f"Model refused the structured request via {self._route_label}: {refusal}"
+            )
 
         text = self._message_text(message).strip()
         if not text:
             raise ValueError(
-                f"No output received from OpenRouter structured response ({self.option.model})"
+                "No output received in the structured response from "
+                f"{self._route_label} ({self.option.model})"
             )
         return response_schema.model_validate_json(_extract_json_payload(text))
+
+
+class SelfHostedClient(OpenRouterClient):
+    """An OpenAI-compatible endpoint you run yourself — typically vLLM.
+
+    Inherits the OpenRouter transport wholesale, because the two face the same
+    problem: an open model behind ``response_format`` frequently answers with
+    schema-valid JSON as a plain string, sometimes fenced. The recovery path
+    (``_extract_json_payload``, the refusal check, the reasoning-trace-aware
+    ``_message_text``) is what makes that survivable, and it is worth strictly
+    more here — a self-hosted server has no router in front of it filtering for
+    backends that honour structured output.
+
+    Three things differ:
+
+    * **The endpoint comes from the environment, not the catalog.** A registry
+      entry describes a model; where it happens to be served today is deployment
+      state, and on a Slurm cluster it changes with every job. So
+      ``SELFHOSTED_LLM_BASE_URL`` is read here, the same way every other client
+      reads its key, and a pipeline never passes a URL through.
+    * **No routing preferences and no attribution headers.** There is no router
+      to instruct: ``data_collection: "deny"`` is a contract with a third party,
+      and here there is no third party — the text never leaves the tunnel. A
+      strict server may also reject body fields it does not recognise.
+    * **Reasoning depth rides in ``chat_template_kwargs``**, which is how vLLM
+      passes arguments into a model's chat template. Qwen3.8 reads
+      ``reasoning_effort`` there (low/medium/xhigh; xhigh is its own default).
+      Sending nothing leaves the server default in place.
+
+    Requires ``SELFHOSTED_LLM_BASE_URL``; ``SELFHOSTED_LLM_API_KEY`` matches the
+    server's ``--api-key`` and falls back to vLLM's ``EMPTY`` convention for a
+    server started without one. Construction fails loudly when the URL is unset,
+    which is what lets the sentiment pilot list this model as *skipped* on a
+    laptop with no tunnel open rather than abort the whole run.
+    """
+
+    _route_label = "the self-hosted endpoint"
+
+    def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
+        if OpenAI is None:
+            raise RuntimeError("openai package is not installed")
+        base_url = os.getenv("SELFHOSTED_LLM_BASE_URL")
+        if not base_url:
+            raise RuntimeError(
+                "SELFHOSTED_LLM_BASE_URL not set — start the server and open the "
+                "tunnel first (see serving/README.md)"
+            )
+        # Skips OpenRouterClient.__init__ deliberately: everything it does is
+        # wanted except its demand for an OPENROUTER_API_KEY, which this route
+        # has no use for.
+        BaseLLMClient.__init__(self, option, config)
+        client_kwargs: Dict[str, Any] = {
+            # vLLM requires a key only when started with --api-key, but the
+            # OpenAI SDK will not construct without one; "EMPTY" is the
+            # convention vLLM's own docs use for the unauthenticated case.
+            "api_key": os.getenv("SELFHOSTED_LLM_API_KEY") or "EMPTY",
+            "base_url": base_url,
+            "timeout": self.config.request_timeout_seconds,
+        }
+        if self.config.sdk_max_retries is not None:
+            client_kwargs["max_retries"] = self.config.sdk_max_retries
+        self._client = OpenAI(**client_kwargs)
+
+    def _extra_body(self, effective_config: LLMConfig) -> Dict[str, Any]:
+        """Reasoning depth only, and only when the model declares the level."""
+        effort = self._resolve_reasoning_effort(effective_config)
+        if not effort:
+            return {}
+        return {"chat_template_kwargs": {"reasoning_effort": effort}}
+
+    def _request_headers(self) -> Dict[str, str]:
+        return {}
+
+
+def _response_format_param(response_schema: Type[T]) -> Dict[str, Any]:
+    """Render a Pydantic model as an OpenAI ``response_format`` payload.
+
+    Uses the SDK's own converter so the request is byte-identical to what
+    ``chat.completions.parse`` would have sent: strict mode rewrites the schema
+    (``additionalProperties: false``, every field listed in ``required``), and
+    backends validate against that form. The hand-built fallback exists only for
+    an SDK that has moved the private helper; it omits the strict rewriting, so
+    a backend enforcing it may reject the request rather than silently answer
+    differently.
+    """
+    if type_to_response_format_param is not None:
+        return type_to_response_format_param(response_schema)  # type: ignore[misc]
+    return {  # pragma: no cover - only on an SDK without the helper
+        "type": "json_schema",
+        "json_schema": {
+            "name": response_schema.__name__,
+            "strict": True,
+            "schema": response_schema.model_json_schema(),  # type: ignore[attr-defined]
+        },
+    }
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
@@ -767,10 +895,11 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 def _extract_json_payload(text: str) -> str:
     """Pull the JSON document out of a model response.
 
-    Only needed for the OpenRouter path: several open models wrap their answer
+    Only needed where open models are served: several of them wrap their answer
     in a Markdown fence or prepend a sentence even when a JSON schema was
-    requested. Returns ``text`` unchanged when it already parses, so a
-    well-behaved response is never rewritten.
+    requested. That is true through OpenRouter and equally true of a vLLM
+    endpoint you run yourself. Returns ``text`` unchanged when it already
+    parses, so a well-behaved response is never rewritten.
     """
     candidate = text.strip()
     try:
@@ -841,4 +970,6 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None,
         return MistralClient(option, config)
     if option.provider == PROVIDER_OPENROUTER:
         return OpenRouterClient(option, config)
+    if option.provider == PROVIDER_SELFHOSTED:
+        return SelfHostedClient(option, config)
     raise ValueError(f"Unsupported provider: {option.provider}")

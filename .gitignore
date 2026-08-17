@@ -81,6 +81,12 @@ AI_youtube_transcription/backups/
 AI_youtube_transcription/Transcriptions*/
 AI_youtube_transcription/work/
 NotebookLM/extracted_articles/
+# Slurm job logs from serving/vllm_serve.sbatch — they carry node names and job
+# ids, and the *.log rule above does not match Slurm's .out naming. The
+# directory itself is kept: Slurm does not create the path in --output and the
+# job would die at submit time on a fresh clone.
+serving/logs/*
+!serving/logs/.gitkeep
 
 # Cache and temporary files
 *.tmp

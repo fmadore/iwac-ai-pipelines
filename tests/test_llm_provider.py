@@ -14,6 +14,9 @@ from common.llm_provider import (
     MODEL_REGISTRY,
     OpenAIResponsesClient,
     OpenRouterClient,
+    PROVIDER_SELFHOSTED,
+    SELFHOSTED_QWEN38_MODEL,
+    SelfHostedClient,
     TEXT_ECONOMY_MODELS,
     TEXT_EXTENDED_MODELS,
     TEXT_FULL_MODELS,
@@ -358,16 +361,47 @@ def test_openrouter_pro_reasons_by_default_and_clamps(monkeypatch):
     assert body["reasoning"] == {"effort": "high"}
 
 
-def test_openrouter_structured_prefers_parsed(monkeypatch):
-    expected = _Sample(required_field="ok")
-    client, stub = _openrouter_client_with_stub(
-        monkeypatch, message=_message(parsed=expected)
-    )
+def test_openrouter_structured_sends_the_strict_schema(monkeypatch):
+    """The schema must go out exactly as ``parse()`` would have sent it.
+
+    Strict mode rewrites a Pydantic schema — ``additionalProperties: false`` and
+    every field in ``required`` — and backends validate against that form, so
+    building the payload by hand from ``model_json_schema()`` is not equivalent.
+    """
+    content = '{"required_field": "ok", "optional_field": 3}'
+    client, stub = _openrouter_client_with_stub(monkeypatch, message=_message(content=content))
 
     result = client.generate_structured("system", "user", _Sample)
 
-    assert result is expected
-    assert stub.chat.completions.parse.call_args.kwargs["response_format"] is _Sample
+    assert result.required_field == "ok"
+    sent = stub.chat.completions.create.call_args.kwargs["response_format"]
+    assert sent["type"] == "json_schema"
+    assert sent["json_schema"]["strict"] is True
+    assert sent["json_schema"]["schema"]["additionalProperties"] is False
+    assert set(sent["json_schema"]["schema"]["required"]) == {
+        "required_field", "optional_field",
+    }
+    # parse() sent this explicitly; the switch to create() must not drop it.
+    assert stub.chat.completions.create.call_args.kwargs["stream"] is False
+
+
+def test_structured_output_never_delegates_parsing_to_the_sdk(monkeypatch):
+    """A regression guard, and the reason the recovery path exists at all.
+
+    ``chat.completions.parse`` validates ``message.content`` itself and raises
+    before returning, so fenced JSON became a ``ValidationError`` no caller could
+    recover from — while the fallback below looked well covered, because mocking
+    ``parse()`` hands back content the real SDK would never have returned. Any
+    reintroduction of ``parse()`` here silently kills that recovery again.
+    """
+    fenced = '```json\n{"required_field": "ok"}\n```'
+    for client, stub in (
+        _openrouter_client_with_stub(monkeypatch, message=_message(content=fenced)),
+        _selfhosted_client_with_stub(monkeypatch, message=_message(content=fenced)),
+    ):
+        assert client.generate_structured("s", "u", _Sample).required_field == "ok"
+        stub.chat.completions.parse.assert_not_called()
+        stub.chat.completions.create.assert_called_once()
 
 
 def test_openrouter_structured_falls_back_to_raw_content(monkeypatch):
@@ -397,17 +431,24 @@ def test_openrouter_structured_surfaces_refusal(monkeypatch):
         client.generate_structured("system", "user", _Sample)
 
 
-def test_openrouter_structured_falls_back_to_beta_parse(monkeypatch):
-    """pyproject allows openai>=1.60, where parse() still lives under .beta."""
-    expected = _Sample(required_field="ok")
-    client, stub = _openrouter_client_with_stub(monkeypatch, message=_message(parsed=expected))
-    del stub.chat.completions.parse  # older SDK layout
-    stub.beta.chat.completions.parse.return_value = MagicMock(
-        choices=[MagicMock(message=_message(parsed=expected))]
-    )
+def test_structured_schema_conversion_survives_an_sdk_without_the_helper(monkeypatch):
+    """``type_to_response_format_param`` is a private SDK path.
 
-    assert client.generate_structured("system", "user", _Sample) is expected
-    stub.beta.chat.completions.parse.assert_called_once()
+    pyproject allows openai>=1.60 through <3, so the helper may move. The
+    fallback must still produce a well-formed json_schema payload rather than
+    crash — it only loses the strict rewriting, which a backend may reject
+    outright but cannot mistake for a different request.
+    """
+    monkeypatch.setattr("common.llm_provider.type_to_response_format_param", None)
+    content = '{"required_field": "ok"}'
+    client, stub = _openrouter_client_with_stub(monkeypatch, message=_message(content=content))
+
+    assert client.generate_structured("s", "u", _Sample).required_field == "ok"
+
+    sent = stub.chat.completions.create.call_args.kwargs["response_format"]
+    assert sent["type"] == "json_schema"
+    assert sent["json_schema"]["name"] == "_Sample"
+    assert "required_field" in sent["json_schema"]["schema"]["properties"]
 
 
 def test_openrouter_ignores_reasoning_trace_in_content(monkeypatch):
@@ -415,6 +456,181 @@ def test_openrouter_ignores_reasoning_trace_in_content(monkeypatch):
     client, _ = _openrouter_client_with_stub(monkeypatch, message=_message(content="  answer  "))
 
     assert client.generate("system", "user") == "answer"
+
+
+# ---------------------------------------------------------------------------
+# Self-hosted endpoint
+# ---------------------------------------------------------------------------
+#
+# An OpenAI-compatible server you run yourself. It reuses the whole OpenRouter
+# transport, so the tests below cover only what differs: where the endpoint comes
+# from, and what must NOT be sent to it.
+
+
+def _selfhosted_client_with_stub(monkeypatch, key="qwen3.8-27b-selfhosted",
+                                 message=None, api_key="sk-test"):
+    monkeypatch.setenv("SELFHOSTED_LLM_BASE_URL", "http://localhost:8000/v1")
+    if api_key is None:
+        monkeypatch.delenv("SELFHOSTED_LLM_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("SELFHOSTED_LLM_API_KEY", api_key)
+    monkeypatch.setattr("common.llm_provider.OpenAI", MagicMock())
+
+    client = SelfHostedClient(MODEL_REGISTRY[key])
+    stub = MagicMock()
+    response = MagicMock(choices=[MagicMock(message=message)] if message is not None else [])
+    stub.chat.completions.create.return_value = response
+    stub.chat.completions.parse.return_value = response
+    client._client = stub
+    return client, stub
+
+
+def test_selfhosted_requires_a_base_url(monkeypatch):
+    """No endpoint, no client — and the error must name the variable to set.
+
+    Failing in the constructor is what lets the sentiment pilot report this
+    model as *skipped* on a laptop with no tunnel open, instead of dying
+    mid-corpus. CI has no endpoint either, which is the same case.
+    """
+    monkeypatch.delenv("SELFHOSTED_LLM_BASE_URL", raising=False)
+    monkeypatch.setattr("common.llm_provider.OpenAI", MagicMock())
+
+    with pytest.raises(RuntimeError, match="SELFHOSTED_LLM_BASE_URL"):
+        SelfHostedClient(MODEL_REGISTRY["qwen3.8-27b-selfhosted"])
+
+
+def test_selfhosted_reads_its_endpoint_from_the_environment(monkeypatch):
+    """The URL is deployment state: on a cluster it changes every job."""
+    monkeypatch.setenv("SELFHOSTED_LLM_BASE_URL", "http://localhost:8123/v1")
+    monkeypatch.setenv("SELFHOSTED_LLM_API_KEY", "sk-secret")
+    openai_cls = MagicMock()
+    monkeypatch.setattr("common.llm_provider.OpenAI", openai_cls)
+
+    SelfHostedClient(MODEL_REGISTRY["qwen3.8-27b-selfhosted"])
+
+    kwargs = openai_cls.call_args.kwargs
+    assert kwargs["base_url"] == "http://localhost:8123/v1"
+    assert kwargs["api_key"] == "sk-secret"
+    assert kwargs["timeout"] == DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+
+def test_selfhosted_tolerates_a_server_without_a_key(monkeypatch):
+    """vLLM only demands a key when started with --api-key, but the SDK always
+    wants one; "EMPTY" is the convention vLLM's own documentation uses."""
+    monkeypatch.setenv("SELFHOSTED_LLM_BASE_URL", "http://localhost:8000/v1")
+    monkeypatch.delenv("SELFHOSTED_LLM_API_KEY", raising=False)
+    openai_cls = MagicMock()
+    monkeypatch.setattr("common.llm_provider.OpenAI", openai_cls)
+
+    SelfHostedClient(MODEL_REGISTRY["qwen3.8-27b-selfhosted"])
+
+    assert openai_cls.call_args.kwargs["api_key"] == "EMPTY"
+
+
+def test_selfhosted_sends_no_routing_prefs_and_no_attribution_headers(monkeypatch):
+    """The counterpart to ``test_openrouter_denies_provider_data_collection``.
+
+    That test pins a *contract* with a third party: please do not retain this
+    archival article. Here there is no third party to ask — the text reaches a
+    machine the operator controls and goes no further, so the guarantee is
+    physical rather than contractual. Sending routing preferences anyway would
+    be meaningless at best, and a strict server may reject body fields it does
+    not recognise.
+    """
+    client, stub = _selfhosted_client_with_stub(monkeypatch, message=_message(content="ok"))
+
+    client.generate("system", "user")
+
+    kwargs = stub.chat.completions.create.call_args.kwargs
+    assert "provider" not in kwargs["extra_body"]
+    assert kwargs["extra_headers"] == {}
+
+
+def test_selfhosted_forwards_reasoning_via_chat_template_kwargs(monkeypatch):
+    """vLLM passes template arguments, not an OpenRouter-style reasoning block.
+
+    Qwen3.8 reads ``reasoning_effort`` out of its chat template, so the depth
+    has to travel there. Its own default is ``xhigh``; the registry asks for
+    ``low`` so an unconfigured bulk run does not reason as hard as it can on
+    shared GPU hours.
+    """
+    client, stub = _selfhosted_client_with_stub(monkeypatch, message=_message(content="ok"))
+
+    client.generate("system", "user", config=LLMConfig(reasoning_effort="medium"))
+
+    body = stub.chat.completions.create.call_args.kwargs["extra_body"]
+    assert body == {"chat_template_kwargs": {"reasoning_effort": "medium"}}
+
+
+def test_selfhosted_drops_an_undeclared_reasoning_level(monkeypatch):
+    """Qwen3.8's ladder is low/medium/xhigh — there is no ``high`` rung.
+
+    NER asks the whole pipeline for "medium" and other callers for "high"; an
+    effort this model does not declare degrades to its default rather than being
+    forwarded into a template that has no branch for it.
+    """
+    client, stub = _selfhosted_client_with_stub(monkeypatch, message=_message(content="ok"))
+
+    client.generate("system", "user", config=LLMConfig(reasoning_effort="high"))
+
+    body = stub.chat.completions.create.call_args.kwargs["extra_body"]
+    assert body == {"chat_template_kwargs": {"reasoning_effort": "low"}}
+
+
+def test_selfhosted_structured_falls_back_to_raw_content(monkeypatch):
+    """The recovery path matters more here, not less: there is no router
+    filtering for backends that honour ``response_format``."""
+    fenced = '```json\n{"required_field": "ok", "optional_field": 3}\n```'
+    client, _ = _selfhosted_client_with_stub(monkeypatch, message=_message(content=fenced))
+
+    result = client.generate_structured("system", "user", _Sample)
+
+    assert result.required_field == "ok"
+    assert result.optional_field == 3
+
+
+def test_selfhosted_errors_name_the_right_route(monkeypatch):
+    """A failure on a machine down the hall must not blame OpenRouter."""
+    client, _ = _selfhosted_client_with_stub(monkeypatch, message=_message(content=""))
+
+    with pytest.raises(ValueError, match="self-hosted"):
+        client.generate_structured("system", "user", _Sample)
+
+
+def test_qwen38_resolves_by_route():
+    """Same weights, two routes, and the two names collide once lowercased.
+
+    ``Qwen/Qwen3.8-27B`` (the Hugging Face id) normalizes to exactly the
+    OpenRouter slug ``qwen/qwen3.8-27b``, so the vendor-prefixed form is given
+    to the hosted route — as it is for ``google/gemma-4-31b-it`` — and the bare
+    names mean the endpoint you run yourself.
+    """
+    assert normalize_model_key("qwen3.8") == "qwen3.8-27b-selfhosted"
+    assert normalize_model_key("qwen3.8-27b") == "qwen3.8-27b-selfhosted"
+    assert normalize_model_key("qwen/qwen3.8-27b") == "qwen3.8-27b-openrouter"
+    assert normalize_model_key("Qwen/Qwen3.8-27B") == "qwen3.8-27b-openrouter"
+
+    selfhosted = MODEL_REGISTRY["qwen3.8-27b-selfhosted"]
+    assert selfhosted.provider == PROVIDER_SELFHOSTED
+    # The served name vLLM reports from /v1/models is the repo id it launched
+    # with; a different --served-model-name means changing this string too.
+    assert selfhosted.model == SELFHOSTED_QWEN38_MODEL == "Qwen/Qwen3.8-27B"
+    assert MODEL_REGISTRY["qwen3.8-27b-openrouter"].model == "qwen/qwen3.8-27b"
+
+
+def test_the_qwen38_openrouter_twin_is_comparison_only():
+    """It exists to measure one route against the other, not to be picked.
+
+    At $0.45/$3.20 per 1M it is roughly twice the sentiment panel's output-cost
+    band — the reason the experiment went to a GPU cluster at all. Tier
+    membership is what makes a model reachable from a pipeline's ``--model``,
+    so staying out of every tier is what keeps a full-corpus run off it.
+    """
+    for tier in (TEXT_ECONOMY_MODELS, TEXT_OPEN_MODELS,
+                 TEXT_EXTENDED_MODELS, TEXT_FULL_MODELS):
+        assert "qwen3.8-27b-openrouter" not in tier
+    assert "qwen3.8-27b-openrouter" in MODEL_REGISTRY
+    assert "qwen3.8-27b-selfhosted" in TEXT_OPEN_MODELS
 
 
 # --- Sampling temperature -------------------------------------------------
@@ -438,6 +654,13 @@ def test_vendor_temperature_defaults_match_published_guidance():
     assert MODEL_REGISTRY["deepseek-v4-pro"].default_temperature == 1.0
     # Qwen's published non-thinking recipe.
     assert MODEL_REGISTRY["qwen3.5-moe"].default_temperature == 0.7
+    # Qwen3.8 carries the *thinking-mode* recipe instead — 1.0 (with top_p 0.95,
+    # top_k 20, both left to the server), which is what generation_config.json
+    # ships. The 0.7 above is the same vendor's non-thinking figure, and these
+    # models always run thinking-on: inheriting 0.7 from the neighbouring entry
+    # would be a quiet misconfiguration, not a rounding.
+    for key in ("qwen3.8-27b-selfhosted", "qwen3.8-27b-openrouter"):
+        assert MODEL_REGISTRY[key].default_temperature == 1.0, key
     # Mistral is the one vendor recommending a low value (0.05-0.20).
     assert MODEL_REGISTRY["mistral-large"].default_temperature == 0.2
     assert MODEL_REGISTRY["ministral-14b"].default_temperature == 0.2

@@ -175,11 +175,19 @@ from commit `07fb007`.
 
 ## Adding a model to the panel
 
+A candidate is piloted **before** any of this, from `PILOT_CANDIDATES` in
+`sentiment_core.py` — a staging list `02` runs and `01` cannot see. Membership of
+`PANEL` is what makes a model writable, so a candidate parked in the staging list
+is one that cannot reach Omeka however the scripts are invoked, and no properties
+or authority items need to exist while it is being judged. Steps 1 and 3 below
+are what promotion means; step 2 is the record that has to exist first.
+
 1. Add it to `MODEL_REGISTRY` in `common/llm_registry.py`.
 2. Create its authority item in Omeka (class 244, template 3, item set 267,
    `dcterms:type` → "Notice d'autorité") and add it to `AI_MODEL_ITEMS` in
    `common/iwac_config.py`.
-3. Add a `PanelMember` to `PANEL` in `sentiment_core.py`.
+3. Move its `PanelMember` from `PILOT_CANDIDATES` into `PANEL` in
+   `sentiment_core.py`.
 4. Regenerate the ontology and update the vocabulary:
 
 ```bash
@@ -323,6 +331,92 @@ and they cleared immediately at the larger budget. Gemma's slowest probe call wa
 at a time — the normal mode — keeps requests in flight equal to the flag;
 running all four multiplies it by four.
 
+### Running a member on your own GPU
+
+A panel member does not have to be someone else's API. `serving/` sets up an
+open-weights model on your own hardware — a Slurm cluster with vLLM, or any
+OpenAI-compatible endpoint — and the registry reaches it exactly like a hosted
+one. Two reasons it matters here specifically, in the order they actually did:
+
+**Cost, for a corpus annotated repeatedly.** Every panel change re-runs ~12,300
+articles. Qwen3.8-27B is $0.45/$3.20 per 1M on OpenRouter, roughly twice the
+band that has already disqualified candidates. On university hardware the
+marginal cost of a pass is queue time.
+
+**Reasoning depth you can actually verify.** This is the bigger one. A router
+fans each request across third-party backends that disagree about what an effort
+means, which is how Gemma's documented levels collapsed to on/off — `medium` and
+`high` indistinguishable in latency and reasoning length. On your own server the
+request goes to one process whose logs you can read. `serving/probe_reasoning.py`
+measures it; run it before trusting a route's middle setting.
+
+Measured on Festus (University of Bayreuth) **2026-08-16**, Qwen3.8-27B bf16 on
+2× L40, one francophone article, two calls per level:
+
+| Level | Median | Completion tokens | Reasoning chars |
+|---|---|---|---|
+| `low` | 28.5 s | 714 | 2,370 |
+| `medium` | 37.0 s | 947 | 3,663 |
+| `xhigh` | 89.1 s | 2,299 | 8,249 |
+
+**The ladder is real**, and this is the first candidate since GPT-5.6 Luna where
+the panel's requested `medium` is a rung the model has rather than one it gets
+rounded up to. Weights load in ~150 s; guided decoding held, so no response
+needed unfencing.
+
+**The open question is not reasoning depth but validity.** Across the small
+2026-08-16 samples at `medium`, roughly **5 of 16** calls returned a
+*schema-valid but rule-invalid* answer — a null `subjectivite_score` beside a
+non-null centralité, which the schema's cross-field validator rejects — and they
+persisted through all three retries rather than clearing on one. Guided decoding
+constrains shape, never logic. `low` produced none in the same sampling, which
+hints the rate is depth-dependent, but two calls per level is far too little to
+conclude anything; the pilot has to count it properly. If it holds near 30% it
+is a serious mark against this model for this panel, because the affected
+articles are exactly the ones the panel cares about (`Très central`). Note also
+that `xhigh` exceeded the 300 s request timeout on one call in two on L40s.
+
+**Unattended runs.** A queued job starts when the scheduler says so, and a
+tunnel cannot be held open for a 3 a.m. slot. The obvious fix — putting `.env`
+on the cluster — means Omeka and provider keys on shared university storage.
+`serving/annotate_job.sbatch` avoids the trade by splitting the work where the
+secrets are: sample the corpus **on the machine that has the keys**, ship a plain
+JSON file of article ids and text, and let the job annotate it against
+`localhost` and write JSONL you collect afterwards. The cluster holds no
+credentials and contacts nothing but its own server. Results append per article
+and completed ids are skipped on restart, so a job killed at its walltime
+resumes rather than starting over — and records carrying a different prompt
+fingerprint are ignored, so resuming across a prompt edit cannot silently blend
+two instruments into one file.
+
+The payload carries the prompt and its fingerprint, so an offline pass is
+provably the same instrument as an online one. The 2026-08-16 pilot payload is
+`#d14ace9ac192` — what `gpt56Luna`, `deepseekV4Flash0731` and `gemma431bIt` all
+ran.
+
+Set `--concurrency` on the offline annotator as you would on `01`: a self-hosted
+server is not a rate limit, and serial annotation leaves most of the GPU idle.
+At one article at a time the measured 47 s/article would put a full corpus near
+160 h; vLLM keeps many sequences resident, which is what brings that back into
+range.
+
+**Every article is annotated independently, and concurrency is only sound
+because of that.** Each call sends the system prompt and one article — no
+conversation history, no running context, no batching of several articles into
+one request — and nothing mutable is shared between workers. Reordering,
+resuming, or re-running a subset cannot change any other article's answer, which
+is what lets per-item agreement statistics mean anything. The one honest caveat
+is numerical rather than semantic: a GPU server batches whatever requests happen
+to be in flight, and floating-point reduction order varies with batch shape, so
+a given article can sample slightly differently depending on what ran beside it.
+That is the same class of variation as temperature — which is 1.0 here, and
+dominates it — not one article influencing another. Re-annotation was never
+reproducible on this panel anyway: repairing 1,485 DeepSeek items returned a
+different centralité for 19 of them.
+
+Setup, tunnels, partition choice and what stays private are in
+[`serving/README.md`](../serving/README.md).
+
 ### Cost — measure it, never infer it from the tier name
 
 Measured full-corpus figures (12,305 articles):
@@ -430,10 +524,38 @@ interrupted; see below.
 python AI_sentiment_analysis/02_pilot_new_panel.py --sample-size 200 --seed 42
 ```
 
-Samples already-annotated articles, runs the candidate panel on them, and
-writes `cache/pilot/pilot_<timestamp>.json` containing both the new
-annotations and the generation-1 ones for the same articles. Nothing is written
-to Omeka.
+Samples already-annotated articles, runs the live panel plus everything in
+`PILOT_CANDIDATES` on them, and writes `cache/pilot/pilot_<timestamp>.json`.
+Nothing is written to Omeka — and a candidate could not write there anyway,
+since `01` iterates `PANEL` alone.
+
+Running both halves in one pass is what makes the report readable: agreement is
+only meaningful against the annotators already in use. To trial one candidate
+without paying for the rest, name it:
+
+```bash
+python AI_sentiment_analysis/02_pilot_new_panel.py --models qwen3_8_27b --sample-size 50
+```
+
+A model whose credentials are missing is listed as skipped and the pilot
+continues, so a candidate on a self-hosted endpoint costs nothing when the
+tunnel is closed.
+
+**Where the panel stands (2026-08-16).** All four live members are complete at
+12,298 — `gpt56Luna`, `mistralSmall2603`, `deepseekV4Flash0731` and
+`gemma431bIt`. Qwen3.8 27B is the only sentiment work outstanding, and it is
+still a *candidate*: staged in `PILOT_CANDIDATES`, unwritable by `01`, pending a
+pilot and an add-or-replace decision (issue #12). Nothing about it has touched
+Omeka, and no properties have been created for it.
+
+**Currently staged:** Qwen3.8 27B, twice — `qwen3_8_27b` on a self-hosted vLLM
+endpoint and `qwen3_8_27b_openrouter` on OpenRouter. Same weights, two routes,
+one sample. See [issue #12](https://github.com/fmadore/iwac-ai-pipelines/issues/12)
+for what the pilot has to establish, and [`serving/`](../serving/README.md) for
+the endpoint. Before judging either on agreement, run
+`python serving/probe_reasoning.py`: the panel asks every member for `medium`,
+Qwen3.8 is the first candidate since GPT-5.6 Luna whose ladder actually has that
+rung, and whether it survives each route is the thing worth knowing first.
 
 To measure self-consistency rather than just agreement:
 
@@ -677,6 +799,11 @@ MISTRAL_API_KEY=your_mistral_api_key
 # Open-weights models via OpenRouter (DeepSeek, Gemma) — required for two of the
 # four panel slots. Gemma must NOT be routed via GEMINI_API_KEY; see above.
 OPENROUTER_API_KEY=your_openrouter_api_key
+
+# Only for a candidate served from your own GPU (see serving/README.md).
+# No panel member needs these; leaving them unset skips the candidate.
+SELFHOSTED_LLM_BASE_URL=http://localhost:8000/v1
+SELFHOSTED_LLM_API_KEY=sk-...
 ```
 
 Scripts skip any model whose credentials are missing and say which, rather than

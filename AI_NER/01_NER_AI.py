@@ -92,6 +92,7 @@ from common.llm_provider import (  # noqa: E402
     PROVIDER_OPENAI,
     PROVIDER_MISTRAL,
     PROVIDER_OPENROUTER,
+    PROVIDER_SELFHOSTED,
 )
 from common.log_redaction import install_credential_redaction
 
@@ -148,6 +149,10 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Conf
         missing.append('MISTRAL_API_KEY')
     if model_option.provider == PROVIDER_OPENROUTER and not os.getenv('OPENROUTER_API_KEY'):
         missing.append('OPENROUTER_API_KEY')
+    # A self-hosted endpoint needs its address, not a key: the key is optional
+    # and defaults to vLLM's "EMPTY" when the server runs without --api-key.
+    if model_option.provider == PROVIDER_SELFHOSTED and not os.getenv('SELFHOSTED_LLM_BASE_URL'):
+        missing.append('SELFHOSTED_LLM_BASE_URL')
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
@@ -593,7 +598,7 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
         config_table.add_row("Reasoning Effort", config.llm_config.reasoning_effort or "default")
     elif model_option.provider == PROVIDER_GEMINI:
         config_table.add_row("Thinking Level", config.llm_config.thinking_level or "default")
-    elif model_option.provider == PROVIDER_OPENROUTER:
+    elif model_option.provider in (PROVIDER_OPENROUTER, PROVIDER_SELFHOSTED):
         # Show the effective value after the provider adapter clamps the
         # pipeline-wide request to this model's declared levels.
         requested = config.llm_config.reasoning_effort

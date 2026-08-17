@@ -20,11 +20,13 @@ import logging
 import pytest
 
 from common.iwac_config import AI_MODEL_ITEMS
+from common.llm_provider import MODEL_REGISTRY, PROVIDER_SELFHOSTED
 from sentiment_cache import CACHE_FORMAT_VERSION, SentimentCache
 from sentiment_core import (
     CENTRALITE_ITEM_IDS,
     ITEM_ID_TO_SUBJECTIVITE,
     PANEL,
+    PILOT_CANDIDATES,
     PANEL_REASONING_EFFECTIVE,
     POLARITE_ITEM_IDS,
     RESULT_FIELD_SUFFIXES,
@@ -135,11 +137,85 @@ def test_panel_does_not_reuse_an_abandoned_property():
 
 
 def test_every_member_has_a_declared_effective_reasoning_depth():
-    assert set(PANEL_REASONING_EFFECTIVE) == set(PANEL)
+    # Candidates included: a pilot manifest has to record the depth its numbers
+    # were produced at, exactly as a production manifest does.
+    assert set(PANEL_REASONING_EFFECTIVE) == set(PANEL) | set(PILOT_CANDIDATES)
     # Mistral has no middle setting; recording it as "medium" would misreport
     # the run rather than merely simplify it.
     assert PANEL_REASONING_EFFECTIVE["mistral_small_2603"].startswith("high")
     assert PANEL_REASONING_EFFECTIVE["deepseek_v4_flash_0731"].startswith("high")
+    # Qwen3.8's ladder has a real middle rung, so its "medium" is the requested
+    # depth rather than a rounding of it. That is most of the reason it is being
+    # piloted at all, and the manifest should not blur the distinction.
+    assert PANEL_REASONING_EFFECTIVE["qwen3_8_27b"] == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Pilot candidates
+# ---------------------------------------------------------------------------
+
+def test_pilot_candidates_cannot_be_written_to_omeka():
+    """Staging is the safety property, and it is structural.
+
+    ``01_sentiment_analysis.py`` iterates ``PANEL``, so a model absent from it
+    cannot be selected however the script is invoked. Promotion is a deliberate
+    edit that moves a member across — at which point
+    ``test_every_member_has_an_authority_item`` starts demanding the Omeka
+    record that makes the annotation citable.
+    """
+    assert not set(PILOT_CANDIDATES) & set(PANEL)
+    for key in PILOT_CANDIDATES:
+        assert key not in sentiment_run.PANEL, (
+            f"{key} is reachable from the write path; it would annotate live items"
+        )
+
+
+def test_pilot_candidate_terms_collide_with_nothing():
+    """A candidate's six properties must not shadow a live or abandoned slot.
+
+    Checked before promotion rather than after, because the failure mode is
+    silent: an overlapping term overwrites annotations instead of erroring.
+    """
+    live = {term for member in PANEL.values() for term in member.terms}
+    abandoned = {
+        f"{prefix}{suffix}"
+        for prefix in ABANDONED_PREFIXES
+        for suffix in RESULT_FIELD_SUFFIXES.values()
+    }
+    seen = {}
+    for member in PILOT_CANDIDATES.values():
+        for term in member.terms:
+            assert term not in live, f"{term} is already a live panel property"
+            assert term not in abandoned, f"{term} resurrects an abandoned slot"
+            assert term not in seen, f"{term} claimed by both {seen[term]} and {member.key}"
+            seen[term] = member.key
+
+
+def test_pilot_candidates_name_the_model_and_the_route():
+    """Two routes to one set of weights, told apart by registry key.
+
+    The property prefix names the model and the registry key names the route —
+    the split ``gemma_4_31b_it`` → ``gemma-4-openrouter`` already makes. Running
+    both is what turns "self-hosting is cheaper" into something measured on one
+    sample rather than assumed.
+    """
+    selfhosted = PILOT_CANDIDATES["qwen3_8_27b"]
+    hosted = PILOT_CANDIDATES["qwen3_8_27b_openrouter"]
+
+    assert selfhosted.registry_key == "qwen3.8-27b-selfhosted"
+    assert hosted.registry_key == "qwen3.8-27b-openrouter"
+    assert MODEL_REGISTRY[selfhosted.registry_key].provider == PROVIDER_SELFHOSTED
+    # Same weights on both routes: the comparison is only meaningful if the
+    # served model is the same one.
+    assert MODEL_REGISTRY[hosted.registry_key].model.lower() \
+        == MODEL_REGISTRY[selfhosted.registry_key].model.lower()
+
+
+def test_the_pilot_runs_candidates_alongside_the_live_panel():
+    """Agreement is only interesting against the annotators already in use, so
+    one payload has to carry both halves."""
+    assert set(pilot.V2_PANEL) == set(PANEL) | set(PILOT_CANDIDATES)
+    assert pilot.selected_models("qwen3_8_27b") == ["qwen3_8_27b"]
 
 
 def test_retry_attempts_fit_inside_model_timeout():
