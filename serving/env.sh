@@ -63,6 +63,16 @@ SERVE_PORT="${SERVE_PORT:-8000}"
 # move to a bigger card if you do.
 SERVE_MAX_LEN="${SERVE_MAX_LEN:-32768}"
 
+# Maximum concurrent sequences the server will hold. vLLM defaults to 1024,
+# which a hybrid model cannot honour on one GPU: Qwen3.8 interleaves Gated
+# DeltaNet layers, every decode sequence needs its own Mamba state block, and a
+# single H100 has room for ~336 of them. The server then refuses to start —
+# "max_num_seqs (1024) exceeds available Mamba cache blocks (336)" — rather than
+# quietly degrading, which cost a 24 h H100 slot on 2026-08-18. Two L40s in
+# tensor-parallel had enough aggregate memory to hide it. 256 is comfortably
+# above any --concurrency used here and works on both layouts.
+SERVE_MAX_SEQS="${SERVE_MAX_SEQS:-256}"
+
 # Anything else to hand `vllm serve`, e.g. --gpu-memory-utilization 0.92,
 # --tensor-parallel-size 2, --quantization fp8.
 SERVE_EXTRA_ARGS="${SERVE_EXTRA_ARGS:-}"

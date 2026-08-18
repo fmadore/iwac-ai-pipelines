@@ -72,5 +72,6 @@ exec vllm serve "$SERVE_MODEL" \
   --port "$SERVE_PORT" \
   --api-key "$SERVE_API_KEY" \
   --max-model-len "$SERVE_MAX_LEN" \
+  --max-num-seqs "$SERVE_MAX_SEQS" \
   --reasoning-parser qwen3 \
   ${SERVE_EXTRA_ARGS}
