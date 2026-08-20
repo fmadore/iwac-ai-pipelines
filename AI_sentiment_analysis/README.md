@@ -364,42 +364,50 @@ the panel's requested `medium` is a rung the model has rather than one it gets
 rounded up to. Weights load in ~150 s; guided decoding held, so no response
 needed unfencing.
 
-**The open question is not reasoning depth but validity**, and a 200-article
-offline pass on 2026-08-17 measured it (2× L40, `medium`, prompt `#d14ace9ac192`,
-70 min, 172 articles/hour):
+**The open question is not reasoning depth but validity.** A full-corpus pass
+ran 2026-08-17/18 — all 12,251 eligible articles, `medium`, prompt
+`#d14ace9ac192`, offline on Festus across three shards (one L40S, two H100).
 
-| Pass | Annotated | Failed |
-|---|---|---|
-| First | 175 / 200 | 25 (12.5%) — 24 rule-invalid, 1 timeout |
-| After one retry | 192 / 200 | **8 (4.0%)**, all rule-invalid |
+| | |
+|---|---|
+| Annotated, first pass | **10,975 / 12,251 (89.6%)** |
+| Rejected | 1,276 (10.4%) — ~99% one fault, ~1% timeouts |
+| Throughput | 361 articles/h on 2× L40S, 540–576 on one H100 |
+| Wall clock | ~7 h per 4,084-article shard on H100 |
 
-The failure is always the same: a null `subjectivite_score` beside a non-null
+The fault is always the same: a null `subjectivite_score` beside a non-null
 centralité, which the schema's cross-field validator rejects. Guided decoding
-constrains shape, never logic. **Most of it is transient** — 17 of 25 cleared on
-a second pass, so the operational cost is a retry pass, not lost articles. When
-a call fails this way the whole result is replaced by `ERREUR_ANALYSE`
-placeholders, so a rejected article yields nothing at all, not a partial record.
+constrains shape, never logic. The rate held at **10.6% / 9.9% / 10.8%** across
+three independent slices and two hardware configurations, so it is a property of
+the model on this task, not of the slice or the GPU. Most of it is transient —
+on the 200-article pilot one retry pass recovered two thirds, 12.5% to 4.0%.
 
-The valid annotations use the scales properly — centralité spread `Très central`
-110 / `Marginal` 23 / `Central` 19 / `Secondaire` 17 / `Non abordé` 6, and the
-six null subjectivité scores line up exactly with the six `Non abordé` articles,
-which is the rule being obeyed rather than broken. One thing for any write-up:
-polarité came out heavily positive-or-neutral (80 / 78) with only 6 `Négatif`
-out of 175, which should be checked against what the live panel assigned on the
-same articles before Qwen is trusted on that dimension.
+Distributions over the 10,975 valid annotations:
 
-**Do not "fix" the residual by dropping to `low`.** Run on the 8 persistently
-failing articles, `low` returned valid output for 6 of them — but all six got
-*identical* `subjectivite_score` (`Très objectif`) and *identical* `polarite`
-(`Neutre`), where across 175 articles at `medium` those labels occur 11% and 45%
-of the time. Centralité did vary, so the model is not simply emitting a constant
-record; it is the two contested fields that flatten. On six articles that is
-suggestive rather than conclusive, but the shape of it is the failure this
-project has met before: an unusable answer that is indistinguishable from a real
-one once stored, which is why the 2026-07 `ocr_quality` column was reverted. A
-visible 4% loss is worth more than an invisible 4% of default answers. Mixing
-depths would also forfeit the comparability that made this candidate
-interesting, since a genuine `medium` rung was its main argument.
+```
+centralité    Très central 7,137 · Central 1,613 · Marginal 1,011 · Secondaire 938 · Non abordé 276
+polarité      Neutre 5,350 · Positif 4,963 · Non applicable 277 · Négatif 214 · Très positif 167 · Très négatif 4
+subjectivité  Plutôt objectif 6,980 · Plutôt subjectif 1,803 · Très objectif 900 · Très subjectif 734 · Mixte 282 · null 276
+```
+
+Two things to weigh before promotion. **Polarité is barely negative** — 218 of
+10,975 (2.0%) across a press corpus spanning decades of contested public
+argument — and that needs checking against what the live panel assigned on the
+same articles before Qwen is trusted on the dimension. In its favour, the null
+subjectivité count (276) matches `Non abordé` (276) exactly: the cross-field
+rule obeyed perfectly where it *is* obeyed.
+
+**Do not "fix" the residual by dropping to `low`.** Run on the 8 articles that
+stayed stuck through two passes at `medium`, `low` returned valid output for 6 —
+but all six got *identical* `subjectivite_score` (`Très objectif`) and
+`polarite` (`Neutre`), labels occurring 8% and 49% of the time at `medium`.
+Centralité still varied, so it is the two contested fields flattening rather
+than a constant record. On six articles that is suggestive, not conclusive, but
+the shape is the failure this project has met before: an unusable answer
+indistinguishable from a real one once stored, which is why the 2026-07
+`ocr_quality` column was reverted. A visible residual beats invisible defaults,
+and mixing depths would forfeit the comparability that made a genuine `medium`
+rung this candidate's main argument.
 
 Note also that `xhigh` exceeded the 300 s request timeout on one call in two on
 L40s, and that per-call latency at `medium` under `--concurrency 6` has a long
