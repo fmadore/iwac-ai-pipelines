@@ -11,6 +11,7 @@ media articles, using several AI models concurrently as an annotator panel.
 | `01_sentiment_analysis.py` | Production run: annotate items and store results | **yes** |
 | `02_pilot_new_panel.py` | Trial a candidate panel on a sample of already-annotated articles | no |
 | `03_pilot_report.py` | Agreement report for a pilot run | no |
+| `04_import_offline_run.py` | Seed the cache from an offline run on your own GPU, so `01` writes those answers instead of re-asking | no |
 | `sentiment_core.py` | Shared panel, schema, prompt, vocabulary and analysis calls | no |
 | `sentiment_cache.py` | Resumable per-(item, model) result cache | no |
 
@@ -498,6 +499,30 @@ That is the same class of variation as temperature — which is 1.0 here, and
 dominates it — not one article influencing another. Re-annotation was never
 reproducible on this panel anyway: repairing 1,485 DeepSeek items returned a
 different centralité for 19 of them.
+
+**Getting the answers into Omeka is a separate step, and it must not be a
+re-run.** The cluster holds JSONL; the credentials are on your machine. Merge
+the shards with `serving/merge_shards.py`, then seed the cache with
+`04_import_offline_run.py` and run `01` for that member — every item is served
+from cache, so it becomes a write pass that asks the model nothing:
+
+```bash
+python serving/merge_shards.py --shards 'AI_sentiment_analysis/cache/qwen38_full/full-s*.jsonl' \
+    --output AI_sentiment_analysis/cache/qwen38_full/qwen38_merged.jsonl
+python AI_sentiment_analysis/04_import_offline_run.py \
+    --input cache/qwen38_full/qwen38_merged.jsonl --model qwen3_8_27b
+python AI_sentiment_analysis/01_sentiment_analysis.py --models qwen3_8_27b --dry-run
+```
+
+Letting `01` re-annotate instead would work, and on a self-hosted member it
+would even be free. It would also publish different labels: temperature is the
+vendor's and it is 1.0, so a second pass disagrees with the first on some
+articles — repairing 1,485 DeepSeek items returned a different centralité for 19
+of them. The answers that were measured and written up are the ones on the
+cluster, and the import is what carries exactly those. The importer refuses any
+record whose model id, reasoning level or prompt fingerprint disagrees with the
+live panel, because such a record is an answer to a different question rather
+than a cheaper copy of this one.
 
 Setup, tunnels, partition choice and what stays private are in
 [`serving/README.md`](../serving/README.md).
