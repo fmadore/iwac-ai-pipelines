@@ -43,6 +43,7 @@ contract with a third party; this is the same guarantee without the third party.
 | `vllm_serve.sbatch` | The Slurm job that runs the server, for interactive use over a tunnel |
 | `annotate_job.sbatch` | Unattended: serves, annotates a prepared corpus, stops |
 | `annotate_offline.py` | The annotator that job runs. Local files only, no credentials |
+| `merge_shards.py` | Merges the shards a run produced (last success per item) and writes the failure log — what never succeeded, after how many attempts, and why |
 | `probe_reasoning.py` | Measures whether reasoning levels differ through a route. Reads Omeka, writes nothing |
 
 There are two ways to use this, and which one fits depends on whether you will
@@ -212,6 +213,28 @@ failed item is written to the JSONL with its `analysis_error` and is **not**
 counted as done, so re-running retries exactly those — the same rule the main
 pipeline uses for its cache. Keep the failures: the rate is a finding about the
 model, not noise to be cleaned up.
+
+**Collect with `merge_shards.py`, not `cat`.** A run appends one record per
+*attempt*, so an item annotated on the third try appears three times and a
+concatenation of the shards is not a corpus. The script keys on `item_id`, keeps
+the last record without an `analysis_error`, and refuses to merge shards written
+under two different prompt fingerprints:
+
+```bash
+python serving/merge_shards.py --shards 'work/full-s*.jsonl' --dry-run   # report only
+python serving/merge_shards.py --shards 'work/full-s*.jsonl' --output merged.jsonl
+```
+
+It also writes `<output>_failures.json` — every item that never succeeded, how
+many times it was attempted, and the fault class of each attempt. That file is
+the point. "Keep the failures" only means something if the rate is written down
+somewhere other than three 6 MB shards, and a coverage gap that is documented is
+a finding, while the same gap undocumented reads later as a run that broke. The
+`--dry-run` summary also prints the retry convergence reconstructed from append
+order, which is how you tell a transient residual (rate stays flat, population
+drains) from a hard core (rate climbs each round) — on the Qwen3.8 full corpus
+it climbed 10.4% → 42% → 52% → 55%, and the 153 survivors were retired rather
+than retried a fourth time.
 
 ## What stays private
 

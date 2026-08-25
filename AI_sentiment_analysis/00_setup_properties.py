@@ -6,10 +6,14 @@
 Generate the generation-2 sentiment properties for the IWAC ontology, and check
 the live vocabulary against them.
 
-One run of the panel needs 31 properties: six per model for the five members of
-:data:`sentiment_core.PANEL`, plus the ``iwac:sentimentModel`` annotation
-property. They are generated from :data:`PANEL` rather than hand-written, so the
-``.ttl``, the live vocabulary and the pipeline cannot drift apart.
+One run of the panel needs six properties per member of
+:data:`sentiment_core.PANEL` — one per entry in :data:`RESULT_FIELD_SUFFIXES` —
+plus the ``iwac:sentimentModel`` annotation property, so four members is 25 and
+each promotion adds six. They are generated from :data:`PANEL` rather than
+hand-written, so the ``.ttl``, the live vocabulary and the pipeline cannot drift
+apart. The count is therefore computed, never asserted: a docstring stating a
+total is one promotion away from being wrong, which is what happened to the
+number that stood here until 2026-08-25.
 
 Why this script does not create them itself
 -------------------------------------------
@@ -32,7 +36,7 @@ Usage
     python AI_sentiment_analysis/00_setup_properties.py --verify     # pre-flight
     python AI_sentiment_analysis/00_setup_properties.py              # post-upload check
 
-The last form reports which of the 31 are live yet, and once all are, prints the
+The last form reports which of them are live yet, and once all are, prints the
 ``SENTIMENT_PROPERTY_IDS`` block to paste into ``common/iwac_config.py``.
 
 Environment Variables

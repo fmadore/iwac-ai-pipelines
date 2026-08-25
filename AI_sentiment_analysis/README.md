@@ -366,36 +366,84 @@ needed unfencing.
 
 **The open question is not reasoning depth but validity.** A full-corpus pass
 ran 2026-08-17/18 — all 12,251 eligible articles, `medium`, prompt
-`#d14ace9ac192`, offline on Festus across three shards (one L40S, two H100).
+`#d14ace9ac192`, offline on Festus across three shards (one L40S, two H100) —
+followed by three retry rounds that ended 2026-08-24.
 
 | | |
 |---|---|
-| Annotated, first pass | **10,975 / 12,251 (89.6%)** |
-| Rejected | 1,276 (10.4%) — ~99% one fault, ~1% timeouts |
+| Annotated, first pass | 10,975 / 12,251 (89.6%) |
+| Annotated, after 3 retries | **12,098 / 12,251 (98.75%)** |
+| Never annotated | 153 (1.25%), each attempted exactly 4 times |
 | Throughput | 361 articles/h on 2× L40S, 540–576 on one H100 |
-| Wall clock | ~7 h per 4,084-article shard on H100 |
+| Wall clock | ~7 h per 4,084-article shard on H100; retries 23–36 min per round |
 
 The fault is always the same: a null `subjectivite_score` beside a non-null
 centralité, which the schema's cross-field validator rejects. Guided decoding
-constrains shape, never logic. The rate held at **10.6% / 9.9% / 10.8%** across
-three independent slices and two hardware configurations, so it is a property of
-the model on this task, not of the slice or the GPU. Most of it is transient —
-on the 200-article pilot one retry pass recovered two thirds, 12.5% to 4.0%.
+constrains shape, never logic. The first-pass rate held at **10.6% / 9.9% /
+10.8%** across three independent slices and two hardware configurations, so it
+is a property of the model on this task, not of the slice or the GPU.
 
-Distributions over the 10,975 valid annotations:
+**Retrying converges, but not to zero.** Each round recovered slightly under
+half of what was left, and the per-round failure *rate* climbed as the
+population concentrated:
+
+| Round | Attempted | Failed | Failure rate |
+|---|---:|---:|---:|
+| First pass | 12,251 | 1,276 | 10.4% |
+| Retry 1 | 1,276 | 539 | 42.3% |
+| Retry 2 | 539 | 278 | 51.6% |
+| Retry 3 | 278 | 153 | 55.0% |
+
+That climb is the finding. If the residual were transient — a sampling accident,
+as the 200-article pilot suggested when one retry pass took 12.5% to 4.0% — the
+rate would stay flat and the population would drain. Instead the survivors get
+harder to annotate each round, which is what a hard core looks like: 145 of the
+153 are articles the model answers the same invalid way every time it is asked.
+
+**And the residual is not spread evenly across the corpus — it concentrates on
+low centrality.** Failure rate by the centralité the model was trying to assign:
+
+| Centralité | Annotated | Never annotated | Failure rate |
+|---|---:|---:|---:|
+| `Marginal` | 1,440 | 83 | **5.45%** |
+| `Secondaire` | 1,049 | 11 | 1.04% |
+| `Très central` | 7,576 | 42 | 0.55% |
+| `Central` | 1,746 | 9 | 0.51% |
+| `Non abordé` | 287 | 0 | **0.00%** |
+
+A tenfold enrichment on `Marginal`, and a clean zero on `Non abordé`. Read
+together those two rows say the same thing: the model wants to decline
+subjectivité whenever Islam is *peripheral* to an article, and the schema only
+licenses declining when Islam is **absent** from it. Where the rule permits a
+null it uses one correctly on every single item; where it does not, it tries
+anyway and is rejected. This is a disagreement about the instrument, not a
+formatting failure — the model is drawing the "nothing to judge" line one notch
+further up the centralité scale than the prompt does.
+
+Distributions over the 12,098 valid annotations:
 
 ```
-centralité    Très central 7,137 · Central 1,613 · Marginal 1,011 · Secondaire 938 · Non abordé 276
-polarité      Neutre 5,350 · Positif 4,963 · Non applicable 277 · Négatif 214 · Très positif 167 · Très négatif 4
-subjectivité  Plutôt objectif 6,980 · Plutôt subjectif 1,803 · Très objectif 900 · Très subjectif 734 · Mixte 282 · null 276
+centralité    Très central 7,576 · Central 1,746 · Marginal 1,440 · Secondaire 1,049 · Non abordé 287
+polarité      Neutre 6,298 · Positif 5,107 · Non applicable 288 · Négatif 224 · Très positif 176 · Très négatif 5
+subjectivité  Plutôt objectif 7,431 · Plutôt subjectif 1,815 · Très objectif 1,471 · Très subjectif 797 · Mixte 297 · null 287
 ```
 
-Two things to weigh before promotion. **Polarité is barely negative** — 218 of
-10,975 (2.0%) across a press corpus spanning decades of contested public
+Two things to weigh before promotion. **Polarité is barely negative** — 229 of
+12,098 (1.9%) across a press corpus spanning decades of contested public
 argument — and that needs checking against what the live panel assigned on the
 same articles before Qwen is trusted on the dimension. In its favour, the null
-subjectivité count (276) matches `Non abordé` (276) exactly: the cross-field
+subjectivité count (287) matches `Non abordé` (287) exactly: the cross-field
 rule obeyed perfectly where it *is* obeyed.
+
+**The 153 stay unannotated, and that is the decision.** A fourth retry round
+would be ~30 min of H100 time for perhaps 70 recovered items, and the trend says
+what it would leave behind. Dropping those items to `low` is ruled out below;
+relaxing the validator would let the model's own reading of "peripheral" enter
+the data as a null nobody chose. The gap is recorded instead:
+`serving/merge_shards.py` writes a failure log beside the merged JSONL listing
+every item, its attempt count and the fault it hit on each attempt, so the
+shortfall in this member's coverage is documented rather than mistaken later for
+a failed run to be repaired.
 
 **Do not "fix" the residual by dropping to `low`.** Run on the 8 articles that
 stayed stuck through two passes at `medium`, `low` returned valid output for 6 —
