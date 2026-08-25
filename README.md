@@ -25,7 +25,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **YouTube Transcription** | Transcribe YouTube-hosted items from their URLs — no download — detecting the spoken languages and correcting the catalogue record from them |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
-| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a four-model panel |
+| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a five-model panel |
 | **Reference Indexing** | Assign controlled subject and spatial keywords to scholarly references using Claude, with authority reconciliation |
 
 ## Limitations and Caveats
@@ -134,6 +134,7 @@ The approach assumes you have digitized materials and need to make them searchab
 - [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini, Mistral, or Claude agent)
 - [YouTube Transcription](AI_youtube_transcription/README.md) — URL-based transcription with language detection, the measured token budget, and the public-video-only limit
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
+- [Publication Extraction](AI_publication_extraction/README.md) — Structured OCR for journal articles, chapters, books and theses: footnotes and bibliography separated from the body, oversized scans split automatically
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Full dataset
 - Individual pipeline directories contain their own documentation
 

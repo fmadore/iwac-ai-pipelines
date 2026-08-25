@@ -83,6 +83,7 @@ is the only thing that can be, because Omeka does not index value annotations:
 | `iwac:gpt56Luna*` | `gpt-5.6-luna` | 79610 | `gpt_5_6_luna_` |
 | `iwac:mistralSmall2603*` | `mistral-small-2603` | 79614 | `mistral_small_2603_` |
 | `iwac:deepseekV4Flash0731*` | `deepseek/deepseek-v4-flash-0731` | 83261 | `deepseek_v4_flash_0731_` |
+| `iwac:qwen3827b*` | `Qwen/Qwen3.8-27B` (self-hosted) | 111933 | `qwen3_8_27b_` (not exported yet) |
 
 **The Google slot became Gemma 4 31B on 2026-08-14**, and it annotated the corpus
 the same day: 18.8 h, then a short retry pass, ending **complete at 12,298
@@ -94,13 +95,17 @@ So this filled an empty slot rather than mixing two models into one column —
 **generation 2 is unchanged**, and there is no mixed-column question to resolve
 and no re-run to pay for.
 
-The upload that added Gemma's six properties did **not** remove Flash-Lite's, or
-any of the other 42 empty declarations: vocabulary 10 went 74 → **80**, not
-74 → 32. Whatever its diff preview lists, the update flow adds on this instance
-and does not delete, so `00 --verify` proves a deletion *would* be safe rather
-than predicting one will happen. Harmless — all 48 are at 0 items and
-`resolve_property_ids` asks for the 25 terms the panel needs — but do not count
-annotators from the installed property list.
+**Omeka never removes a vocabulary property on update — it applies additions
+only.** Confirmed twice: the upload that added Gemma's six took vocabulary 10
+from 74 to **80** without touching Flash-Lite's or any of the other 42 empty
+declarations, and v1.4 on 2026-08-25 took it 80 → **86** by adding Qwen's six and
+removing none of the 48 the file omits. Whatever the diff preview lists, nothing
+is deleted, so `00 --verify` proves a deletion *would* be safe rather than
+predicting one will happen — which is still the check worth running, because it
+is what would catch a member dropped from `PANEL` while it still held values.
+Harmless in practice — all 48 are at 0 items and `resolve_property_ids` asks only
+for the 31 terms the panel needs — but never count annotators from the installed
+property list.
 
 The April preview's `iwac:deepseekV4Flash*` values (11,482 items) were deleted
 on 2026-08-07. They were never exported to Hugging Face, so that reading is
@@ -125,7 +130,7 @@ unreachable second copy of what the property name already says, written six
 times per model per item.
 
 That same finding is why the panel keeps six model-keyed properties per member —
-twenty-four across the four — rather than six multi-valued ones. The tidier design — one `iwac:polarite` holding a
+thirty across the five — rather than six multi-valued ones. The tidier design — one `iwac:polarite` holding a
 value per model — would need no vocabulary change to add a model, but it puts
 the only thing distinguishing those values in the unsearchable layer, so
 *"polarité = Négatif according to DeepSeek"* stops being answerable by query.
@@ -330,7 +335,7 @@ and they cleared immediately at the larger budget. Gemma's slowest probe call wa
 
 `--concurrency` multiplies with the per-item model fan-out. Running one member
 at a time — the normal mode — keeps requests in flight equal to the flag;
-running all four multiplies it by four.
+running the whole panel multiplies it by five.
 
 ### Running a member on your own GPU
 
@@ -751,12 +756,13 @@ there.
 | `gpt_5_6_luna` | `gpt-5.6-luna` | `iwac:gpt56Luna*` | closed | $1.00 / $6.00 |
 | `mistral_small_2603` | `mistral-small-2603` | `iwac:mistralSmall2603*` | **6.5B / 119B** | $0.15 / $0.60 |
 | `deepseek_v4_flash_0731` | `deepseek/deepseek-v4-flash-0731` | `iwac:deepseekV4Flash0731*` | **13B / 284B** | from $0.09 / $0.18 |
+| `qwen3_8_27b` | `Qwen/Qwen3.8-27B` (self-hosted) | `iwac:qwen3827b*` | **27B dense** | GPU-hours, not tokens |
 
 Property prefixes are the camelCase fold of the column prefix, so the Omeka→HF
 mapping is mechanical. Every property also records its exact model id in
 `rdfs:comment`.
 
-### Why these four
+### Why these five
 
 Every member is its vendor's **high-volume tier**, which is what makes the panel
 a panel rather than a quality ladder. The slot Google occupies was
@@ -850,8 +856,9 @@ manifest records a decision instead of an accident.
 
 **The Gemma swap made this worse and the write-up must say so.** With Flash-Lite
 — which did have a real `MEDIUM` — the four-model panel split evenly, two members
-at a middle setting and two rounded up. It is now **3 of 4 rounded up**, and no
-Google model sits at a middle setting at all. That is a genuine cost of the swap,
+at a middle setting and two rounded up. Swapping it for Gemma took that to 3 of 4
+rounded up, with no Google model at a middle setting at all; adding Qwen3.8 —
+whose ladder is genuinely low/medium/xhigh — brings it back to **3 of 5**. That is a genuine cost of the swap,
 accepted for the cost, open-weights and data-handling reasons above.
 
 **Gemma's `high` is also the least legible of the three**, because OpenRouter
