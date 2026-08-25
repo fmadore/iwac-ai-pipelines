@@ -5,7 +5,7 @@
 
 AI Sentiment Analysis Pipeline for IWAC Omeka S Items — generation 2.
 
-Annotates items with the four-model panel defined in ``sentiment_core.PANEL``
+Annotates items with the five-model panel defined in ``sentiment_core.PANEL``
 and writes the results to Omeka, each model into its own six properties named
 for that model.
 
@@ -43,7 +43,7 @@ concurrent structured requests without one rejection, so the parallelism is free
 
 Concurrency multiplies with the per-item model fan-out. Running the panel one
 member at a time — the normal mode — keeps in-flight requests equal to
-``--concurrency``; running all four multiplies it by four.
+``--concurrency``; running the whole panel multiplies it by five.
 
 Resuming
 --------
@@ -54,6 +54,11 @@ A run over the full corpus is long, so it is built to be interrupted:
 - Results are cached per (item, model) as they are produced, so a resume asks
   each model only for what it has not already answered.
 - Only successful results are cached; errors are retried on the next run.
+- ``--from-cache`` writes what is cached and contacts no model at all, for a
+  member annotated elsewhere — on your own GPU, typically, where the answers
+  arrive as JSONL and ``04_import_offline_run.py`` seeds them. It needs no API
+  key and no endpoint, because publishing answers that exist should not require
+  the ability to produce answers that do not.
 
 So the safe response to any failure is to run the same command again.
 
@@ -78,6 +83,8 @@ Usage
         --models deepseek_v4_flash_0731 --model-timeout 300
     python AI_sentiment_analysis/01_sentiment_analysis.py \
         --item-ids @repair_ids.txt --models deepseek_v4_flash_0731 --force-reanalyze
+    python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 \
+        --models qwen3_8_27b --from-cache
 
 Environment Variables
 ---------------------
@@ -595,10 +602,15 @@ class SentimentRunner:
                 self.bump("already_done")
                 continue
 
-            pending = (
-                list(self.clients)
-                if self.args.force_reanalyze
-                else [
+            # ``--from-cache`` never annotates: an item with no cached answer is
+            # left alone rather than requested, which is the whole point of a
+            # run that holds no clients.
+            if self.args.from_cache:
+                pending: List[str] = []
+            elif self.args.force_reanalyze:
+                pending = list(self.clients)
+            else:
+                pending = [
                     key
                     for key in self.clients
                     if key not in written
@@ -608,7 +620,6 @@ class SentimentRunner:
                         **self.expected_provenance[key],
                     )
                 ]
-            )
             yield item_id, content, pending
             produced += 1
 
@@ -656,12 +667,15 @@ class SentimentRunner:
         if self.args.skip_update:
             return
 
+        # Membership of the run is ``labels``, not ``clients``: the two are the
+        # same set on an ordinary run, and under --from-cache there are no
+        # clients at all.
         results = {
             key: result
             for key, result in self.cache.results_for(
                 item_id, expected=self.expected_provenance
             ).items()
-            if key in self.clients
+            if key in self.labels
         }
         if not results:
             return
@@ -818,6 +832,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Re-PATCH items that already carry values, reusing answers whose "
              "cached provenance still matches",
     )
+    behaviour.add_argument(
+        "--from-cache", action="store_true",
+        help="Write cached answers only; contact no model and build no client. "
+             "For a member annotated offline on your own GPU (see "
+             "04_import_offline_run.py) — items with no cached answer are left "
+             "alone rather than requested",
+    )
     behaviour.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
     behaviour.add_argument(
         "--verbose", action="store_true", help="Log per-model failures as they happen"
@@ -835,6 +856,19 @@ def validate_arguments(args: argparse.Namespace) -> List[int]:
         )
     if args.limit is not None and args.limit < 1:
         raise ValueError("--limit must be at least 1")
+    if args.from_cache:
+        # Both of these ask for annotation, which is the one thing this mode
+        # cannot do. Failing here beats a run that silently writes nothing.
+        if args.force_reanalyze:
+            raise ValueError(
+                "--from-cache contacts no model, so --force-reanalyze has "
+                "nothing to re-analyze with"
+            )
+        if args.skip_update:
+            raise ValueError(
+                "--from-cache and --skip-update together would do nothing: one "
+                "forbids annotating, the other forbids writing"
+            )
     if args.item_ids:
         if args.item_set_id or args.resource_class_id is not None:
             raise ValueError(
@@ -868,6 +902,30 @@ def selected_model_keys(raw_models: Optional[str]) -> List[str]:
     return selected
 
 
+def catalog_members(selected: List[str]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Labels and model ids for a run that will call no model at all.
+
+    A member's answers can be complete in the cache without its endpoint being
+    reachable — imported from an offline run on your own GPU, typically, where
+    the model ran on a cluster and the write happens here. ``build_clients``
+    refuses such a member outright, which is correct when the run may need to
+    annotate and wrong when every answer is already in hand: it makes the write
+    path depend on the annotate path, so publishing answers that exist requires
+    the ability to produce answers that do not.
+
+    Raises rather than skipping, because ``--from-cache`` names its members
+    explicitly and a member that cannot even be looked up in the registry is a
+    typo, not an unreachable server.
+    """
+    labels: Dict[str, str] = {}
+    model_ids: Dict[str, str] = {}
+    for key in selected:
+        member = PANEL[key]
+        labels[key] = member.label
+        model_ids[key] = get_model_option(member.registry_key).model
+    return labels, model_ids
+
+
 def available_clients(
     selected: List[str], model_timeout: float
 ) -> Tuple[Dict[str, BaseLLMClient], Dict[str, str], Dict[str, str]]:
@@ -877,6 +935,8 @@ def available_clients(
         for label, reason in skipped:
             console.print(f"[yellow]![/] Skipping [bold]{label}[/] — {reason}")
         console.print("[dim]  Qwen and DeepSeek both need OPENROUTER_API_KEY.[/]")
+        console.print("[dim]  A member whose answers are already cached can be "
+                      "written with --from-cache, which needs no endpoint.[/]")
     if not clients:
         raise RuntimeError("No models available — nothing to run")
     return clients, labels, model_ids
@@ -926,16 +986,22 @@ def show_configuration(
         "\n".join(
             f"{labels[key]}  [dim]{model_ids[key]}  →  "
             f"iwac:{PANEL[key].property_prefix}*[/]"
-            for key in clients
+            for key in labels
         ),
     )
     table.add_row(
         "Reasoning",
         ", ".join(
             f"{labels[key]}={PANEL_REASONING_EFFECTIVE[key].split(' ')[0]}"
-            for key in clients
+            for key in labels
         ),
     )
+    if args.from_cache:
+        table.add_row(
+            "Source of answers",
+            "[bold yellow]cache only[/] — no model is contacted; items with no "
+            "cached answer are left alone",
+        )
     table.add_row(
         "Model timeout",
         f"{args.model_timeout:g}s total / "
@@ -989,10 +1055,13 @@ def prepare_run(
     item_set_ids: List[int],
 ) -> PreparedSentimentRun:
     client = OmekaClient.from_env()
-    clients, labels, model_ids = available_clients(
-        selected_model_keys(args.models), args.model_timeout
-    )
-    members = [PANEL[key] for key in clients]
+    selected = selected_model_keys(args.models)
+    if args.from_cache:
+        clients: Dict[str, BaseLLMClient] = {}
+        labels, model_ids = catalog_members(selected)
+    else:
+        clients, labels, model_ids = available_clients(selected, args.model_timeout)
+    members = [PANEL[key] for key in labels]
     property_ids = panel_property_ids(client, members, skip_update=args.skip_update)
     system_prompt = load_system_prompt()
     prompt_id = prompt_fingerprint(system_prompt)
@@ -1002,7 +1071,7 @@ def prepare_run(
             "reasoning": PANEL_REASONING_EFFECTIVE[key],
             "prompt": prompt_id,
         }
-        for key in clients
+        for key in labels
     }
     explicit_ids = parse_item_ids(args.item_ids) if args.item_ids else None
     if explicit_ids is not None:

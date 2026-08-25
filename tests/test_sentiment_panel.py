@@ -16,6 +16,7 @@ Three things here are worth guarding, all of them lessons from generation 1:
 
 import json
 import logging
+import os
 
 import pytest
 
@@ -725,6 +726,45 @@ def test_item_ids_may_not_be_combined_with_a_listing():
 
     ok = parser.parse_args(["--item-ids", "2233"])
     assert sentiment_run.validate_arguments(ok) == []
+
+
+def test_from_cache_needs_no_endpoint_to_name_its_members():
+    """Writing cached answers must not require the ability to produce more.
+
+    ``build_clients`` refuses a member whose endpoint is unset, which is right
+    when the run may annotate and wrong when every answer is already in hand —
+    the self-hosted member is annotated on a cluster and written from here, with
+    no tunnel open. ``catalog_members`` is the half that only names them.
+    """
+    labels, model_ids = sentiment_run.catalog_members(["qwen3_8_27b"])
+    assert labels == {"qwen3_8_27b": PANEL["qwen3_8_27b"].label}
+    assert model_ids == {"qwen3_8_27b": "Qwen/Qwen3.8-27B"}
+
+    # ...and the ordinary path still refuses it without an endpoint, so the two
+    # modes are genuinely different rather than one quietly becoming the other.
+    monkey = os.environ.pop("SELFHOSTED_LLM_BASE_URL", None)
+    try:
+        clients, _, _, skipped = sentiment_run.build_clients(["qwen3_8_27b"])
+        assert clients == {}
+        assert [label for label, _ in skipped] == [PANEL["qwen3_8_27b"].label]
+    finally:
+        if monkey is not None:
+            os.environ["SELFHOSTED_LLM_BASE_URL"] = monkey
+
+
+@pytest.mark.parametrize("conflicting", ["--force-reanalyze", "--skip-update"])
+def test_from_cache_rejects_flags_that_ask_for_annotation(conflicting):
+    """Both would make the run a no-op, and silently.
+
+    ``--force-reanalyze`` has nothing to re-analyze with when no client exists,
+    and ``--skip-update`` forbids the only thing this mode does.
+    """
+    parser = sentiment_run.build_argument_parser()
+    args = parser.parse_args(
+        ["--resource-class-id", "36", "--from-cache", conflicting]
+    )
+    with pytest.raises(ValueError):
+        sentiment_run.validate_arguments(args)
 
 
 def test_validator_does_not_change_the_wire_schema():
