@@ -243,11 +243,15 @@ class PanelMember:
 #: for the model, never for its vendor: reusing a vendor slot is what made
 #: generation 1 impossible to attribute without a git archaeology session.
 #:
-#: Three of the four are open-weights releases (Mistral Small 4 and Gemma 4
-#: under Apache-2.0, DeepSeek V4 Flash under MIT), so those annotations can be
-#: regenerated from weights that are archivable alongside them. Their active
-#: parameter counts — 6.5B, 13B and 31B (Gemma is dense, so all of it) — sit
-#: inside a factor of five, wider than the pair that preceded them.
+#: Four of the five are open-weights releases (Mistral Small 4, Gemma 4 and
+#: Qwen3.8 under Apache-2.0, DeepSeek V4 Flash under MIT), so those annotations
+#: can be regenerated from weights that are archivable alongside them. Their
+#: active parameter counts — 6.5B, 13B, 27B and 31B (Gemma is dense, so all of
+#: it) — sit inside a factor of five, wider than the pair that preceded them.
+#: Only GPT-5.6 Luna is a model that could be withdrawn out from under its own
+#: annotations, and Qwen3.8 goes further than the other three: its answers were
+#: produced on hardware in the building, so the run is reproducible without a
+#: third party consenting to serve the weights at all.
 #:
 #: Every member is its vendor's high-volume tier. That is the property that
 #: makes this a panel rather than a quality ladder, and it is why the Gemini
@@ -310,8 +314,37 @@ PANEL: Dict[str, PanelMember] = {
                     "mistralSmall2603"),
         PanelMember("deepseek_v4_flash_0731", "deepseek-v4-flash-0731",
                     "DeepSeek V4 Flash 0731", "deepseekV4Flash0731"),
+        PanelMember("qwen3_8_27b", "qwen3.8-27b-selfhosted",
+                    "Qwen3.8 27B (self-hosted)", "qwen3827b"),
     )
 }
+
+#: **Qwen3.8 27B joined as a fifth voice on 2026-08-25**, annotated on
+#: university hardware rather than through anyone's API — the first member whose
+#: answers cost queue time instead of tokens, and the first whose requested
+#: ``medium`` is a rung the model actually has rather than one it is rounded up
+#: to (see :data:`PANEL_REASONING`). It joins rather than replaces: it shares no
+#: lab or pretraining family with the other four, so it does not carry the
+#: correlated-error problem that kept Gemma from being added beside Gemini.
+#:
+#: Its registry key names the *route*, not just the weights. The OpenRouter twin
+#: stays in :data:`PILOT_CANDIDATES` and must not be promoted alongside it: the
+#: same weights reached two ways would look like two annotators in the panel
+#: while being one reading of the construct, which is the correlated-error
+#: failure again in its purest form.
+#:
+#: **Its coverage is 12,098 of 12,251 and is expected to stay there.** 153
+#: articles were attempted four times each — a full-corpus pass plus three retry
+#: rounds — and retired. 145 of them fail the schema's cross-field rule the same
+#: way every time, and the failures concentrate on low centrality (5.45% of
+#: ``Marginal`` against 0.00% of ``Non abordé``): the model declines subjectivité
+#: when Islam is *peripheral* to an article where the prompt licenses declining
+#: only when it is *absent*. That is a disagreement about the instrument, so it
+#: is recorded rather than repaired — ``serving/merge_shards.py`` writes the
+#: failure log, and the README explains why relaxing the validator would be
+#: worse than the gap. **Do not "fix" this member's shortfall by re-running it.**
+#: The consequence for analysis is that its missing subjectivité is not missing
+#: at random.
 
 #: Models under evaluation, which ``02_pilot_new_panel.py`` runs and nothing
 #: else does. Membership of :data:`PANEL` is what makes a model *writable* —
@@ -331,28 +364,32 @@ PANEL: Dict[str, PanelMember] = {
 #: comes first, then the code that cites it (see ``AI_MODEL_ITEMS``). Nothing in
 #: the pilot path asks for it; only the write path does.
 #:
-#: **Qwen3.8 27B appears twice, once per route.** The property prefix names the
-#: model and the registry key carries the route, exactly as ``gemma_4_31b_it``
-#: does for ``gemma-4-openrouter``. Running both on one sample is what turns
-#: "self-hosting is cheaper" into a measurement: same weights, same articles,
-#: with latency, structured-output reliability and reasoning depth read off each
-#: route rather than assumed to match. Cost is not comparable in one unit —
-#: OpenRouter bills tokens, a cluster bills GPU-hours and queue time — so record
-#: both rather than converting one into the other.
+#: **The remaining candidate is Qwen3.8 27B's OpenRouter twin, and it stays a
+#: candidate even though the same weights are now in :data:`PANEL`.** The
+#: property prefix names the model and the registry key carries the route,
+#: exactly as ``gemma_4_31b_it`` does for ``gemma-4-openrouter``. Running both on
+#: one sample is what turns "self-hosting is cheaper" into a measurement: same
+#: weights, same articles, with latency, structured-output reliability and
+#: reasoning depth read off each route rather than assumed to match. Cost is not
+#: comparable in one unit — OpenRouter bills tokens, a cluster bills GPU-hours
+#: and queue time — so record both rather than converting one into the other.
 #:
-#: Neither needs a :data:`PANEL_REASONING_OVERRIDES` entry. Qwen3.8's ladder is
+#: What it must never become is a fifth-and-a-half voice. Promoting it beside the
+#: self-hosted member would put one model in the panel twice, and a panel that
+#: counts one reading as two is measuring its own routing rather than the
+#: construct.
+#:
+#: It needs no :data:`PANEL_REASONING_OVERRIDES` entry. Qwen3.8's ladder is
 #: low/medium/xhigh, so the panel's requested ``medium`` is a rung the model
-#: actually has: it would be the first member since GPT-5.6 Luna to sit at the
-#: requested depth instead of being rounded up to it. Whether that survives the
-#: OpenRouter route is precisely what the twin is there to find out — Gemma's
+#: actually has — verified on the self-hosted route, where reasoning length grew
+#: ~3.5× from ``low`` to ``xhigh`` with the middle rung cleanly between. Whether
+#: that survives the OpenRouter route is precisely what this twin is for: Gemma's
 #: graduated levels collapsed to on/off when fanned across third-party backends
-#: (see :data:`PANEL_REASONING`), and a self-hosted server is the only route here
-#: where the depth can be read off the server's own logs.
+#: (see :data:`PANEL_REASONING`), and a server you run yourself is the only route
+#: here where the depth can be read off the server's own logs.
 PILOT_CANDIDATES: Dict[str, PanelMember] = {
     m.key: m
     for m in (
-        PanelMember("qwen3_8_27b", "qwen3.8-27b-selfhosted",
-                    "Qwen3.8 27B (self-hosted)", "qwen3827b"),
         PanelMember("qwen3_8_27b_openrouter", "qwen3.8-27b-openrouter",
                     "Qwen3.8 27B (OpenRouter)", "qwen3827bOr"),
     )

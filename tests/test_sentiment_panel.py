@@ -191,15 +191,20 @@ def test_pilot_candidate_terms_collide_with_nothing():
             seen[term] = member.key
 
 
-def test_pilot_candidates_name_the_model_and_the_route():
+def test_the_two_qwen_routes_stay_on_opposite_sides_of_the_panel():
     """Two routes to one set of weights, told apart by registry key.
 
     The property prefix names the model and the registry key names the route —
     the split ``gemma_4_31b_it`` → ``gemma-4-openrouter`` already makes. Running
     both is what turns "self-hosting is cheaper" into something measured on one
     sample rather than assumed.
+
+    Since 2026-08-25 the self-hosted route is a panel member and the OpenRouter
+    twin is still a candidate, which is the arrangement this pins. Promoting the
+    twin as well would put one model in the panel twice — a panel that counts
+    one reading of the construct as two is measuring its own routing.
     """
-    selfhosted = PILOT_CANDIDATES["qwen3_8_27b"]
+    selfhosted = PANEL["qwen3_8_27b"]
     hosted = PILOT_CANDIDATES["qwen3_8_27b_openrouter"]
 
     assert selfhosted.registry_key == "qwen3.8-27b-selfhosted"
@@ -209,6 +214,9 @@ def test_pilot_candidates_name_the_model_and_the_route():
     # served model is the same one.
     assert MODEL_REGISTRY[hosted.registry_key].model.lower() \
         == MODEL_REGISTRY[selfhosted.registry_key].model.lower()
+    # ...which is exactly why only one of them may be writable.
+    assert "qwen3_8_27b_openrouter" not in PANEL
+    assert selfhosted.property_prefix != hosted.property_prefix
 
 
 def test_the_pilot_runs_candidates_alongside_the_live_panel():
@@ -442,7 +450,7 @@ def test_cache_round_trips(tmp_path, good_result):
 
 
 def test_cache_is_granular_to_the_model(tmp_path, good_result):
-    """One model failing must not force re-running the other four."""
+    """One model failing must not force re-running the rest of the panel."""
     path = tmp_path / "c.jsonl"
     with SentimentCache(path=path) as cache:
         for key in ("gemma_4_31b_it", "gpt_5_6_luna"):
@@ -451,7 +459,7 @@ def test_cache_is_granular_to_the_model(tmp_path, good_result):
     reloaded = SentimentCache(path=path)
     reloaded.load()
     assert reloaded.missing_models(1, PANEL) == [
-        "mistral_small_2603", "deepseek_v4_flash_0731",
+        "mistral_small_2603", "deepseek_v4_flash_0731", "qwen3_8_27b",
     ]
 
 

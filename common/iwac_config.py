@@ -147,6 +147,13 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     "mistral-small": {"item_id": 79614, "display_title": "Mistral Small 4"},
     "qwen3.5-moe": {"item_id": 79616, "display_title": "Qwen3.5 122B-A10B"},
     "qwen3.5-moe-small": {"item_id": 79612, "display_title": "Qwen3.5 35B-A3B"},
+    # Keyed on the self-hosted route, which is the one that produced the
+    # annotations: they were generated on university hardware, and the OpenRouter
+    # twin (``qwen3.8-27b-openrouter``) is deliberately absent because it has
+    # written nothing. The route is half of what the provenance record claims,
+    # so the day the twin annotates anything it needs its own authority item
+    # rather than a share of this one. Created 2026-08-25.
+    "qwen3.8-27b-selfhosted": {"item_id": 111933, "display_title": "Qwen3.8 27B"},
     "deepseek-v4-flash-0731": {
         "item_id": 83261,
         "display_title": "DeepSeek V4 Flash 0731",

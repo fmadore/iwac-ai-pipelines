@@ -228,13 +228,20 @@ def _ttl_block(definition: PropertyDef) -> str:
 def emit_ttl() -> str:
     """The Turtle to append to ``iwac-vocabulary.ttl``.
 
-    Emits the active panel, and only it. **Omeka deletes any installed property
-    the uploaded file omits, along with every value stored under it**, so this
-    function decides what survives the next vocabulary upload: a member dropped
-    from ``PANEL`` while still holding annotations would have them destroyed
-    silently. Every retired member has now been emptied deliberately, so there
-    is nothing left for an omission to take — but check that before removing the
-    next one, not after.
+    Emits the active panel, and only it — so a member dropped from ``PANEL``
+    disappears from the file, and the file stops describing the live vocabulary
+    rather than pruning it. **Omeka applies additions only**: a vocabulary
+    update never removes an installed property, so the archive holds a superset
+    of this file (80 properties against 38, measured 2026-08-25) and omitting a
+    member destroys nothing.
+
+    That is worth stating precisely because the opposite was believed here for
+    months, and it is the more dangerous belief to hold backwards in either
+    direction. Fearing a deletion that cannot happen means keeping retired
+    members in the file forever; assuming one that *could* happen means an
+    omission silently taking values with it. ``--verify`` resolves it by
+    measurement rather than by either assumption: it counts what every omitted
+    property holds and refuses the upload if any of them holds anything.
     """
     out: List[str] = [
         "# ============================================",
@@ -333,17 +340,17 @@ def verify_ttl_is_superset(client: OmekaClient, ttl_path: Path) -> bool:
     table.add_column("Count", justify="right")
     table.add_row("Installed in Omeka", str(len(installed_names)))
     table.add_row("Declared in the .ttl", str(len(declared)))
-    table.add_row("Would be added", f"[green]{len(would_add)}[/]")
+    table.add_row("Will be added", f"[green]{len(would_add)}[/]")
     table.add_row(
-        "Would be DELETED",
-        f"[bold red]{len(would_delete)}[/]" if would_delete else "[dim]0[/]",
+        "Omitted by the .ttl",
+        f"[bold]{len(would_delete)}[/]" if would_delete else "[dim]0[/]",
     )
     console.print(table)
 
     populated: Dict[str, int] = {}
     if would_delete:
         console.print("\n[yellow]The .ttl omits properties that are installed. "
-                      "Checking what would be lost:[/]")
+                      "Checking what each holds:[/]")
         for name in would_delete:
             count = count_values(client, installed_names[name])
             if count:
@@ -353,7 +360,7 @@ def verify_ttl_is_superset(client: OmekaClient, ttl_path: Path) -> bool:
 
     if populated:
         console.print(Panel(
-            "These carry values that the upload would destroy:\n\n  "
+            "These are omitted by the .ttl and still carry values:\n\n  "
             + "\n  ".join(f"{VOCABULARY_PREFIX}:{n} — {c:,} item(s)"
                           for n, c in sorted(populated.items()))
             + "\n\nDo not upload. Add them back to the .ttl, or export the "
@@ -364,13 +371,24 @@ def verify_ttl_is_superset(client: OmekaClient, ttl_path: Path) -> bool:
 
     summary = f"{len(would_add)} additions"
     if would_delete:
-        summary += f", {len(would_delete)} deletions — all verified empty"
-    else:
-        summary += ", 0 deletions"
+        summary += f", {len(would_delete)} omitted — all verified empty"
     console.print(f"\n[green]✓[/] Safe to upload — {summary}.")
     console.print("[dim]  Admin → Vocabularies → IWAC Ontology → Update. "
-                  "Omeka shows the same diff before committing; if its list "
-                  "differs from the one above, stop.[/]")
+                  "Omeka shows its own diff before committing; if its list of "
+                  "additions differs from the one above, stop.[/]")
+    if would_delete:
+        console.print(Panel(
+            f"The {len(would_delete)} omitted properties will stay installed. "
+            "Omeka does not remove a vocabulary property on update — it applies "
+            "additions only — so the live vocabulary is a superset of this file "
+            "and stays one.\n\n"
+            "The check above still has to run, because it is the only thing "
+            "standing between an omission and a silent loss if that behaviour "
+            "ever changes, or if the properties are removed by hand later. It "
+            "answers \"is anything omitted still holding values\", not \"will "
+            "Omeka delete these\" — the answer to the second is no.",
+            title="Omitted ≠ deleted", border_style="dim",
+        ))
     return True
 
 
