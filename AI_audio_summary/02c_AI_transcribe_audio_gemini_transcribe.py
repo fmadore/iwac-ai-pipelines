@@ -23,6 +23,17 @@ of ``02_AI_transcribe_audio.py``:
   ``400``. Longer files are therefore split before upload, not after failure —
   see ``_segment_paths``.
 
+  **Verbatim is the default**, and the reason is worth recording because the
+  obvious experiment gets it backwards. On one 6-minute chunk of item 15894,
+  smart looked decisively better — punctuated where verbatim was not, ~10% more
+  words. Across the whole 65-minute recording the difference reverses and
+  shrinks to nothing: 3.8 punctuation marks per 100 words for verbatim against
+  2.8 for smart, 10,133 words against 10,120. Roughly 40% of segments come back
+  with no punctuation *in either mode* — it varies segment to segment, not by
+  mode. So verbatim is the default because it costs nothing measurable and adds
+  word timings and speaker turns that smart cannot produce at all. Judge this
+  pair on a whole recording or not at all.
+
 * **Its locale list is not this archive's.** The API accepts any BCP-47 string
   without validating it, so ``--language mos-BF`` returns a confident, fluent,
   wrong transcript rather than an error. Five of the thirteen languages
@@ -77,6 +88,24 @@ MODEL = "gemini-3.5-transcribe"
 MAX_SECONDS_PLAIN = 60 * 60
 MAX_SECONDS_ANNOTATED = 30 * 60
 
+#: What the meter actually counts. Measured 2026-08-27: a 20-minute segment
+#: billed 30,000 audio input tokens, so runtime costs ~1,500 tokens a minute,
+#: and the preview tier allows 10,000 input tokens per minute
+#: (``generate_content_paid_tier_input_token_count``). A request larger than one
+#: minute's budget is throttled on arrival — which is a wait, not a failure, but
+#: a wait every segment after the first will take. Recompute
+#: ``DEFAULT_SEGMENT_MINUTES`` from these if your tier differs.
+AUDIO_TOKENS_PER_MINUTE = 1500
+INPUT_TOKEN_BUDGET_PER_MINUTE = 10_000
+
+#: Sized to the per-request cap, *not* to the token budget. The budget is a rate
+#: limit, not a request limit: a 20-minute segment is 30,000 tokens — three
+#: minutes of allowance — and the API accepts it, then makes the next request
+#: wait. Throughput is 10,000 tokens a minute however the audio is chopped, so
+#: smaller segments buy nothing and cost real quality: speaker identity does not
+#: survive a boundary, and an 11-segment split of one 65-minute sermon produced
+#: 16 unlinkable speaker sets where a 4-segment split produces 4. Split only as
+#: often as the cap requires.
 DEFAULT_SEGMENT_MINUTES = 20
 
 #: The BCP-47 locales the model documents. Transcribed from the supported-language
@@ -198,7 +227,8 @@ class GeminiTranscribeTranscriber(TranscriberBase):
         Args:
             api_key: Gemini API key. If None, uses GEMINI_API_KEY env var.
             language_codes: BCP-47 locales to assert, or None to auto-detect.
-            smart: Use smart mode (clean prose, 1 h cap, no timestamps/speakers).
+            smart: Smart mode — clean prose, 1 h cap, no timestamps or speakers.
+                Not the default; see the module docstring for why.
             timestamps: Request word-level timestamps (verbatim mode only).
             diarize: Request speaker labels (verbatim mode only).
             segment_minutes: Segment length for recordings over the cap.
@@ -272,6 +302,11 @@ class GeminiTranscribeTranscriber(TranscriberBase):
     def _segment_paths(self, audio_path: Path) -> Tuple[List[Path], Optional[float]]:
         """Return the request-sized pieces of *audio_path*, and its duration.
 
+        Keyed on the per-request cap, which is the only hard limit. The token
+        budget is a *rate*: an oversized request is accepted and the next one
+        waits, so splitting below the cap trades speaker continuity for no
+        throughput at all. Each boundary is a place diarization restarts.
+
         A file of unknown duration is split rather than gambled with: when
         ffprobe is unavailable, ``split_audio_file`` reads the length itself and
         returns the original path untouched if it fits in one segment.
@@ -282,8 +317,8 @@ class GeminiTranscribeTranscriber(TranscriberBase):
 
         if duration is None:
             console.print(
-                f"[dim]ffprobe unavailable for '{audio_path.name}'; splitting to stay "
-                f"inside the {self.cap_seconds // 60}-minute cap.[/]"
+                f"[dim]ffprobe unavailable for '{audio_path.name}'; splitting into "
+                f"{self.segment_minutes}-minute segments.[/]"
             )
         else:
             console.print(
@@ -660,18 +695,19 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         action="store_true",
         help=(
             "Smart mode: disfluencies removed and text auto-formatted, 1 h per "
-            "request. Rejects timestamps and diarization."
+            "request. Rejects timestamps and diarization, and measured no better "
+            "than the default on a whole recording."
         ),
     )
     parser.add_argument(
         "--no-timestamps",
         action="store_true",
-        help="Disable word-level timestamps (raises accuracy; keeps the 30-min cap if diarizing)",
+        help="Omit word-level timestamps",
     )
     parser.add_argument(
         "--no-diarize",
         action="store_true",
-        help="Disable speaker diarization",
+        help="Omit speaker diarization",
     )
     parser.add_argument(
         "--timestamps-in-text",

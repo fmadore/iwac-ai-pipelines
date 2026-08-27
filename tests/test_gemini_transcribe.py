@@ -32,9 +32,18 @@ transcribe = load_script(
 
 
 def build(**kwargs):
-    """Construct a transcriber with the network client stubbed out."""
+    """Construct a transcriber with the network client stubbed out.
+
+    Mirrors ``main()``: verbatim with timings and speakers unless told otherwise,
+    since that is the default an operator gets.
+    """
     with patch.object(transcribe, "build_gemini_client", return_value=MagicMock()):
         return transcribe.GeminiTranscribeTranscriber(api_key="test-key", **kwargs)
+
+
+def smart(**kwargs):
+    """A transcriber in --smart mode: clean prose, no timings or speakers."""
+    return build(smart=True, timestamps=False, diarize=False, **kwargs)
 
 
 def bare(**attrs):
@@ -141,15 +150,27 @@ def test_smart_mode_with_timestamps_is_refused_before_the_request():
         build(smart=True, diarize=True)
 
 
+def test_verbatim_with_timings_is_the_default_mode():
+    """Briefly flipped to smart on 2026-08-27 and flipped back the same day: the
+    evidence for smart came from one 6-minute chunk and reversed over the whole
+    65-minute recording (3.8 punctuation marks per 100 words for verbatim against
+    2.8, 10,133 words against 10,120). Verbatim costs nothing measurable and adds
+    word timings smart cannot produce.
+    """
+    worker = build()
+    assert worker.smart is False
+    assert worker.timestamps is True and worker.diarize is True
+
+
 def test_verbatim_config_nests_timestamps_and_diarization_inside_mode():
-    config = build(diarize=True, timestamps=True)._transcription_config()
+    config = build()._transcription_config()
     assert config["mode"]["type"] == "verbatim"
     assert config["mode"]["timestamp_granularities"] == ["word"]
     assert config["mode"]["diarization_mode"] == "speaker"
 
 
 def test_smart_config_carries_no_annotation_options():
-    config = build(smart=True, timestamps=False, diarize=False)._transcription_config()
+    config = smart()._transcription_config()
     assert config["mode"] == {"type": "smart"}
 
 
@@ -172,8 +193,8 @@ def test_no_temperature_or_thinking_level_is_sent():
 # ---------------------------------------------------------------------------
 
 def test_annotations_halve_the_request_cap():
-    assert build(diarize=True, timestamps=True).cap_seconds == 30 * 60
-    assert build(smart=True, timestamps=False, diarize=False).cap_seconds == 60 * 60
+    assert build().cap_seconds == 30 * 60
+    assert smart().cap_seconds == 60 * 60
 
 
 def test_segment_length_is_clamped_to_the_cap():
@@ -181,25 +202,50 @@ def test_segment_length_is_clamped_to_the_cap():
     accepting it would fail after the upload rather than before it.
     """
     assert build(segment_minutes=45).segment_minutes == 30
-    assert build(smart=True, timestamps=False, diarize=False, segment_minutes=45).segment_minutes == 45
+    assert smart(segment_minutes=45).segment_minutes == 45
 
 
-def test_short_file_is_not_split():
+def test_the_default_segment_is_not_sized_to_the_token_budget():
+    """Briefly it was, and that was a misreading: the 10,000-tokens-per-minute
+    cap is a rate limit, not a request limit. A 20-minute segment is 30,000
+    tokens and the API takes it, then makes the next request wait — so
+    throughput is the same however the audio is chopped, while every extra
+    boundary costs speaker continuity. Splitting one 65-minute sermon 11 ways
+    produced 16 unlinkable speaker sets against 4 for a 4-way split.
+    """
+    budget_sized = transcribe.INPUT_TOKEN_BUDGET_PER_MINUTE // transcribe.AUDIO_TOKENS_PER_MINUTE
+    assert transcribe.DEFAULT_SEGMENT_MINUTES > budget_sized
+    assert build().segment_minutes == transcribe.DEFAULT_SEGMENT_MINUTES
+
+
+def test_file_inside_the_cap_is_not_split():
+    """Under the cap, one request beats several: no boundary, no restarted
+    diarization, and the same tokens either way.
+    """
     worker = build()
-    with patch.object(transcribe, "probe_duration_seconds", return_value=600.0):
+    with patch.object(transcribe, "probe_duration_seconds", return_value=25 * 60.0):
         paths, duration = worker._segment_paths(Path("short.mp3"))
     assert paths == [Path("short.mp3")]
-    assert duration == 600.0
+    assert duration == 25 * 60.0
 
 
-def test_file_over_the_cap_is_split():
-    worker = build()
-    with patch.object(transcribe, "probe_duration_seconds", return_value=3600.0), \
+def test_a_file_over_the_cap_is_split_into_segment_sized_pieces():
+    """The cap is the trigger, not the token budget. A 40-minute file inside
+    smart mode's 1-hour cap goes whole: splitting it would cost two speaker
+    namespaces and save nothing, because the same 60,000 tokens are metered
+    either way.
+    """
+    worker = smart(segment_minutes=20)
+    assert 40 * 60 < worker.cap_seconds
+    with patch.object(transcribe, "probe_duration_seconds", return_value=40 * 60.0):
+        paths, _ = worker._segment_paths(Path("long.mp3"))
+    assert paths == [Path("long.mp3")]
+
+    with patch.object(transcribe, "probe_duration_seconds", return_value=90 * 60.0), \
             patch.object(transcribe, "split_audio_file", return_value=[Path("a"), Path("b")]) as split:
-        paths, duration = worker._segment_paths(Path("long.mp3"))
+        paths, _ = worker._segment_paths(Path("longer.mp3"))
     assert paths == [Path("a"), Path("b")]
-    assert duration == 3600.0
-    assert split.call_args[0][2] == worker.segment_minutes
+    assert split.call_args[0][2] == 20
 
 
 def test_unknown_duration_is_split_rather_than_gambled_with():
@@ -315,7 +361,7 @@ def test_a_failed_segment_yields_nothing_rather_than_a_partial_transcript():
 
 
 def test_multi_segment_output_carries_positional_headers():
-    worker = build(diarize=False)
+    worker = build()
     results = [interaction_with([], "part one"), interaction_with([], "part two")]
     with patch.object(worker, "_segment_paths", return_value=([Path("a"), Path("b")], 2400.0)), \
             patch.object(worker, "_create_interaction", side_effect=results), \
@@ -329,7 +375,7 @@ def test_multi_segment_output_carries_positional_headers():
 
 
 def test_empty_transcription_is_not_saved():
-    worker = build(diarize=False)
+    worker = build()
     with patch.object(worker, "_segment_paths", return_value=([Path("a")], 60.0)), \
             patch.object(worker, "_create_interaction", return_value=interaction_with([], "   ")), \
             patch.object(transcribe, "cleanup_temp_segments"):
@@ -401,3 +447,9 @@ def test_no_prompt_is_accepted_anywhere_in_the_cli():
     """
     parser_args = vars(transcribe.parse_args([]))
     assert "prompt" not in parser_args
+
+
+def test_the_cli_defaults_to_verbatim_and_opts_into_smart():
+    assert transcribe.parse_args([]).smart is False
+    assert transcribe.parse_args(["--smart"]).smart is True
+    assert not hasattr(transcribe.parse_args([]), "verbatim")

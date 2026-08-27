@@ -55,12 +55,12 @@ Or process local files by placing them in `Audio/` and running step 2.
 | **Language selection** | 82 BCP-47 locales, validated locally | Via prompt (any language) | `--language` flag (en, fr, de, ha, sw) |
 | **Max audio length** | 30 min with timestamps, 1 h without | Up to 9.5 h per request (Files API); 20-min segments by default | Up to 3 hours per request |
 | **Audio splitting** | Automatic above the cap | Optional (`--split`, 20-min segments) | Not needed |
-| **Transcription modes** | Verbatim or smart | Multiple prompts (verbatim, translation, segmentation) | Single mode (verbatim) |
+| **Transcription modes** | Verbatim (default) or `--smart` | Multiple prompts (verbatim, translation, segmentation) | Single mode (verbatim) |
 | **Output files** | `.txt` + `.json` (word timings) | `.txt` only | `.txt` + `.json` (with timestamps) |
 | **Cost** | $0.003/min in + $0.002/min out (~$0.30/hour) | ~$0.50-15/hour depending on model | $0.003/min (~$0.18/hour) |
 
-**Use Gemini 3.5 Transcribe** for verbatim transcription of French, Hausa, Arabic
-or English. It is the only route here that gives word-level timings, and its
+**Use Gemini 3.5 Transcribe** for transcription of French, Hausa, Arabic or
+English. It is the only route here that gives word-level timings, and its
 speaker labels come from a diarizer rather than from asking a chat model to
 notice speaker changes.
 
@@ -109,30 +109,28 @@ switches when speakers code-switch.
 The two are mutually exclusive at the API, so `--smart` combined with either
 option fails at start-up rather than after the upload.
 
-**The accuracy cost of timestamps is not small on this material.** Measured on
-item 15894 — an 82-minute Hausa sermon, 11 segments of 6 minutes:
+**Compare these two on a whole recording, not on a sample.** The obvious
+experiment gets it backwards. One 6-minute chunk of item 15894 made smart look
+decisive — 7.5 punctuation marks per 100 words against 0.0, ~10% more words, and
+it kept an English code-switch ("no going back") the verbatim pass dropped. Run
+both over the full 65 minutes and the difference reverses and shrinks to nothing:
 
-| | verbatim + timestamps | smart |
+| item 15894, full recording | verbatim (default) | smart |
 |---|---:|---:|
-| Punctuation marks per 100 words | **0.0** on segments 1, 4, 5 and 11 | 7.5 |
-| Words returned (same 6-min audio) | 953 | 1,048 |
-| English code-switch *"no going back"* | dropped | kept |
+| Words | 10,133 | 10,120 |
+| Punctuation marks per 100 words | **3.8** | 2.8 |
+| Segments with no punctuation at all | 4 of 11 | 6 of 14 |
 
-Four of eleven segments came back as an unbroken wall of text with no sentence
-boundary anywhere, and Hausa's hooked characters (ƙ ɗ ɓ ƴ) appeared in only
-three. Re-running the worst segment in smart mode punctuated it correctly,
-recovered ~10% more words, and caught a code-switch the verbatim pass lost
-entirely — on byte-identical audio.
+So verbatim stays the default: it costs nothing measurable and adds word timings
+and speaker turns that smart cannot produce at all.
 
-So the choice is real, and it is not "timestamps are free":
-
-- **`--smart`** gives the better *text* — which is what reaches `bibo:content`
-  and what full-text search indexes.
-- **the default** gives word timings and speaker turns, which nothing else here
-  produces, at the cost of punctuation that varies segment to segment.
-
-For a reading or search copy, prefer smart. For anything that needs to point at
-a moment in the recording, accept the default and expect to clean up the prose.
+**Neither mode punctuates reliably on this material.** Roughly 40% of segments
+come back as an unbroken wall of text with no sentence boundary anywhere, in
+both modes, varying segment to segment rather than by mode; Hausa's hooked
+characters (ƙ ɗ ɓ ƴ) appear just as unevenly. The words are right where the
+punctuation is missing — this is a transcript, not an edition — but a reader or
+a search index gets less from it than the word count suggests. Known limitation,
+not diagnosed.
 
 ## Transcription Modes (Gemini only)
 
@@ -173,17 +171,22 @@ Not requests. Measured against the live API on 2026-08-27:
 | So one request should stay under | **~6.5 minutes of audio** |
 | And throughput tops out around | **6.7 audio-minutes per wall-clock minute** |
 
-A default 20-minute segment spends three minutes of budget in a single request,
-so every segment after the first is throttled *by design*. `--rpm` cannot help:
-it meters requests, and the cap counts tokens. **Size the segment instead:**
+**This is a rate limit, not a request limit, and the difference matters.** A
+20-minute segment is 30,000 tokens — three minutes of allowance — and the API
+takes it, then makes the *next* request wait. So chopping the audio finer buys
+nothing: throughput is 10,000 tokens a minute however it is split, and on the
+152-hour deposited corpus that ceiling implies roughly **23 hours of API time**
+whatever the segment size.
 
-```bash
-python 02c_AI_transcribe_audio_gemini_transcribe.py --segment-minutes 6 --rpm 1
-```
+Smaller segments do cost something. Speaker identity does not survive a
+boundary, so an 11-way split of one 65-minute sermon produced **16 unlinkable
+speaker sets** where a 4-way split produces 4. Segments are therefore sized to
+the per-request cap, not to the token budget, and splitting triggers on the cap:
+under it, one request always beats several.
 
-At that size each request fits inside one minute's budget and the run paces
-itself. On the 152-hour deposited corpus the ceiling implies roughly **23 hours
-of API time** whatever the segment size — worth knowing before starting a batch.
+What handles the throttle is `common/rate_limiter.retry_delay_seconds()` — the
+429 names its own wait, and `02c` sleeps it. `--rpm` cannot help: it meters
+requests, and the cap counts tokens.
 
 The 429 that reports this says *"You exceeded your current quota, please check
 your plan and billing details"* — word for word what an exhausted daily quota
