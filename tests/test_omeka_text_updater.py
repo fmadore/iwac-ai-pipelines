@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 from rich.console import Console
 
 from common.omeka_text_updater import (
+    apply_text_value,
     PropertyTarget,
     TextUpdate,
     run_text_updates,
@@ -304,3 +305,91 @@ def test_unchanged_items_are_not_backed_up(tmp_path):
     )
 
     assert _backup_lines(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# is_public — per-value visibility
+# ---------------------------------------------------------------------------
+#
+# Omeka's ``is_public`` sits on the value, not the item, and the Hugging Face
+# export reads it as ``OCR_is_public`` to decide whether to mask a row's full
+# text. A pipeline whose sources are copyrighted has to state it: a value
+# created without one defaults to public.
+
+
+def test_new_value_is_public_by_default():
+    """The historical behaviour every pipeline had before the flag existed."""
+    item = {"o:id": 1}
+    apply_text_value(item, TARGET, "texte")
+    assert item["bibo:content"][0]["is_public"] is True
+
+
+def test_new_value_honours_an_explicit_private_target():
+    item = {"o:id": 1}
+    target = PropertyTarget(
+        term="bibo:content", property_id=91, property_label="content", is_public=False
+    )
+    apply_text_value(item, target, "texte de thèse sous droits")
+    assert item["bibo:content"][0]["is_public"] is False
+
+
+def test_existing_public_value_is_made_private_when_the_target_says_so():
+    item = {
+        "o:id": 1,
+        "bibo:content": [
+            {"type": "literal", "property_id": 91, "@value": "ancien", "is_public": True}
+        ],
+    }
+    target = PropertyTarget(
+        term="bibo:content", property_id=91, property_label="content", is_public=False
+    )
+    assert apply_text_value(item, target, "nouveau")
+    assert item["bibo:content"][0]["is_public"] is False
+
+
+def test_a_visibility_change_alone_counts_as_a_change():
+    """Otherwise a re-run would report 'unchanged' and leave the text public."""
+    item = {
+        "o:id": 1,
+        "bibo:content": [
+            {"type": "literal", "property_id": 91, "@value": "texte", "is_public": True}
+        ],
+    }
+    target = PropertyTarget(
+        term="bibo:content", property_id=91, property_label="content", is_public=False
+    )
+    assert apply_text_value(item, target, "texte") is True
+
+
+def test_default_target_never_republishes_a_private_value():
+    """A curator's decision to hide a value outranks a pipeline with no opinion.
+
+    This is the reason the field is ``Optional[bool]`` rather than ``bool``:
+    defaulting to ``True`` would have every existing pipeline quietly publish
+    the values it touches.
+    """
+    item = {
+        "o:id": 1,
+        "bibo:content": [
+            {"type": "literal", "property_id": 91, "@value": "ancien", "is_public": False}
+        ],
+    }
+    apply_text_value(item, TARGET, "nouveau")
+    assert item["bibo:content"][0]["is_public"] is False
+
+
+def test_private_write_keeps_every_other_property():
+    """The PATCH carries the whole item; nothing outside the target is touched."""
+    item = {
+        "o:id": 1,
+        "dcterms:title": [{"type": "literal", "property_id": 1, "@value": "Titre"}],
+        "dcterms:subject": [{"type": "resource:item", "property_id": 3, "value_resource_id": 42}],
+        "o:item_set": [{"o:id": 2212}],
+    }
+    target = PropertyTarget(
+        term="bibo:content", property_id=91, property_label="content", is_public=False
+    )
+    apply_text_value(item, target, "texte")
+    assert item["dcterms:title"][0]["@value"] == "Titre"
+    assert item["dcterms:subject"][0]["value_resource_id"] == 42
+    assert item["o:item_set"] == [{"o:id": 2212}]

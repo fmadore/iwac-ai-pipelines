@@ -66,6 +66,11 @@ AI_ocr_correction/Corrected_TXT/
 AI_ocr_correction/TXT/
 AI_ocr_extraction/OCR_Results/
 AI_ocr_extraction/PDF/
+# Scholarly PDFs are large (one thesis is 276 MB) and under copyright; the JSON
+# sidecars carry the full extracted text, so they stay local too.
+AI_publication_extraction/OCR_Results/
+AI_publication_extraction/output/
+AI_publication_extraction/PDF/
 AI_reference_indexing/output/
 AI_summary/backups/
 AI_summary/Summaries_EN_TXT/

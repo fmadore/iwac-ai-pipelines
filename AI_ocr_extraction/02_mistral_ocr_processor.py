@@ -31,7 +31,6 @@ Requirements:
 """
 
 import os
-import re
 import sys
 import time
 import logging
@@ -53,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted
 from common.retry import retry_with_backoff
 from common.console_utils import standard_progress
+from common.mistral_ocr import markdown_to_plain_text
 from common.log_redaction import install_credential_redaction
 
 try:
@@ -113,95 +113,9 @@ def _is_retryable(error: Exception) -> bool:
     return True
 
 
-# --- Markdown -> plain text normalisation ---------------------------------
-# Mistral OCR returns Markdown (headings, emphasis, tables, and image
-# placeholders such as ``![img-0.jpeg](img-0.jpeg)``). For an archival
-# full-text field consumed by search / NER / embeddings, that formatting is
-# noise, so we strip the syntax while preserving the underlying text.
-
-_IMG_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")          # ![alt](url)  -> removed
-_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")        # [text](url)  -> text
-_BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1")             # **t** / __t__ -> t
-_ITALIC_RE = re.compile(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])")  # *t* -> t
-_CODE_RE = re.compile(r"`([^`]+)`")                    # `t`          -> t
-_HEADER_RE = re.compile(r"^\s{0,3}#{1,6}\s+")          # ## Heading   -> Heading
-_HR_RE = re.compile(r"^\s*([-*_])\1{2,}\s*$")          # --- *** ___  -> removed
-_BLOCKQUOTE_RE = re.compile(r"^\s{0,3}>\s?")           # > quote      -> quote
-_TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$")
-_MULTI_BLANK_RE = re.compile(r"\n{3,}")
-
-# Mistral OCR sometimes renders footnote superscripts / math as inline LaTeX
-# (e.g. ``$^{7}$``, ``XX$^{e}$``, ``$_{2}$``). Convert these to Unicode
-# super/subscripts so they match the document's other footnote markers
-# (¹ ² ³ …). Only ``$…$`` spans containing \, ^ or _ are treated as math, so
-# literal text (and stray dollar signs) is left untouched.
-_AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")          # <https://x> -> https://x
-_INLINE_MATH_RE = re.compile(r"\$([^$\n]*[\\^_][^$\n]*)\$")
-_SUP_MAP = str.maketrans("0123456789e+-()n", "⁰¹²³⁴⁵⁶⁷⁸⁹ᵉ⁺⁻⁽⁾ⁿ")
-_SUB_MAP = str.maketrans("0123456789+-()", "₀₁₂₃₄₅₆₇₈₉₊₋₍₎")
-
-
-def _delatex(match) -> str:
-    """Render an inline-LaTeX span (``$…$`` content) as readable plain text."""
-    inner = match.group(1)
-    inner = re.sub(r"\^\{([^}]*)\}", lambda m: m.group(1).translate(_SUP_MAP), inner)
-    inner = re.sub(r"_\{([^}]*)\}", lambda m: m.group(1).translate(_SUB_MAP), inner)
-    inner = re.sub(r"\\[a-zA-Z]+\s*", "", inner)            # drop \mathrm, \text, …
-    return inner.replace("^", "").replace("_", "").replace("{", "").replace("}", "")
-
-
-def markdown_to_plain_text(md: str) -> str:
-    """Convert Mistral OCR Markdown to clean plain text.
-
-    Strips headings, emphasis, inline code, links, horizontal rules and image
-    placeholders; flattens Markdown tables to tab-separated rows. The result
-    matches the plain-text convention used by the Gemini OCR path.
-    """
-    if not md:
-        return ""
-
-    out_lines: List[str] = []
-    in_code_fence = False
-    for raw_line in md.splitlines():
-        line = raw_line
-
-        # Fenced code blocks (```): drop the fences, keep the inner text.
-        if line.lstrip().startswith("```"):
-            in_code_fence = not in_code_fence
-            continue
-
-        # Drop horizontal rules and Markdown table separator rows.
-        if _HR_RE.match(line) or _TABLE_SEP_RE.match(line):
-            continue
-
-        # Strip heading and blockquote markers (keep the text).
-        line = _HEADER_RE.sub("", line)
-        line = _BLOCKQUOTE_RE.sub("", line)
-
-        # Table content row -> tab-separated cells.
-        stripped = line.strip()
-        if stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2:
-            cells = [c.strip() for c in stripped.strip("|").split("|")]
-            line = "\t".join(cells)
-
-        out_lines.append(line)
-
-    text = "\n".join(out_lines)
-
-    # Inline elements (images first, so links don't eat the alt text of ![]()).
-    text = _IMG_RE.sub("", text)
-    text = _LINK_RE.sub(r"\1", text)
-    text = _BOLD_RE.sub(r"\2", text)
-    text = _ITALIC_RE.sub(r"\1", text)
-    text = _CODE_RE.sub(r"\1", text)
-    text = _AUTOLINK_RE.sub(r"\1", text)   # unwrap <https://…> autolinks
-    text = _INLINE_MATH_RE.sub(_delatex, text)  # $^{7}$ -> ⁷, XX$^{e}$ -> XXᵉ
-
-    # Normalise whitespace: trim trailing spaces, collapse 3+ blank lines.
-    text = "\n".join(line.rstrip() for line in text.split("\n"))
-    text = _MULTI_BLANK_RE.sub("\n\n", text)
-
-    return text.strip()
+# Markdown -> plain text normalisation now lives in ``common/mistral_ocr.py``,
+# shared with ``AI_publication_extraction``, which needs the identical rules so
+# that ``bibo:content`` reads the same whichever pipeline produced it.
 
 
 class MistralOCRProcessor:

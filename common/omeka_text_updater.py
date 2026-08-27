@@ -73,6 +73,21 @@ class PropertyTarget:
     #: IWAC's ~12,300 French summaries predate the tag — so a bilingual run
     #: upgrades them instead of appending a second French value beside them.
     adopt_untagged: bool = False
+    #: Visibility of the value written, as Omeka's per-value ``is_public`` flag.
+    #:
+    #: ``None`` — the default — means "do not decide": a value that already
+    #: exists keeps whatever visibility a curator gave it, and a new one is
+    #: created public, which is what every pipeline did before this field
+    #: existed. Set it explicitly only where visibility is part of the
+    #: pipeline's contract rather than a curatorial choice.
+    #:
+    #: ``AI_publication_extraction`` sets ``False``: its sources are
+    #: copyrighted books, theses and journal articles, and a newly created
+    #: ``bibo:content`` would otherwise default to public and publish a whole
+    #: monograph. The flag is also what the Hugging Face export reads as
+    #: ``OCR_is_public`` to decide whether to mask a row's full text, so it is
+    #: load-bearing well beyond the archive's own UI.
+    is_public: Optional[bool] = None
 
     def describe(self) -> str:
         suffix = f" @{self.language}" if self.language else ""
@@ -159,7 +174,7 @@ def apply_text_value(item_data: Dict[str, Any], target: PropertyTarget, text: st
             "type": "literal",
             "property_id": target.property_id,
             "property_label": target.property_label or target.term.split(":")[-1],
-            "is_public": True,
+            "is_public": True if target.is_public is None else target.is_public,
             "@value": text,
         }
         if target.language:
@@ -174,6 +189,11 @@ def apply_text_value(item_data: Dict[str, Any], target: PropertyTarget, text: st
         # Tags a legacy untagged literal claimed via ``adopt_untagged``.
         if target.language and value.get("@language") != target.language:
             value["@language"] = target.language
+            changed = True
+        # Only when the target states a visibility: a ``None`` target must not
+        # republish a value a curator deliberately made private.
+        if target.is_public is not None and value.get("is_public") != target.is_public:
+            value["is_public"] = target.is_public
             changed = True
 
     if not target.annotation_term or target.annotation_value is None:
