@@ -289,6 +289,86 @@ def test_a_headerless_transcript_counts_as_unrecorded(tmp_path):
     assert counts == Counter({updater.UNRECORDED_GENERATOR: 1})
 
 
+# --- And what of it reaches bibo:content ------------------------------------
+#
+# The header is read for the annotation and then left behind: bibo:content is
+# the archive's full text, exported to Hugging Face as OCR and indexed for
+# search, so a header inside it is indexed as though a speaker had said it.
+
+def joined(folder, identifier):
+    """Run 03's grouping and joining, as resolve_updates() would."""
+    processor = updater.TranscriptionProcessor(folder)
+    return processor.read_and_join_transcriptions(processor.get_transcription_groups()[identifier])
+
+
+def test_the_uploaded_text_carries_no_provenance_header(tmp_path):
+    make_transcript(
+        tmp_path, "iwac-audio-0001-1", "Google gemini-3.7-flash",
+        body="[00:00:01] Speaker 1: Bismillah.",
+    )
+
+    text = joined(tmp_path, "iwac-audio-0001")
+
+    assert text == "[00:00:01] Speaker 1: Bismillah."
+    assert GENERATOR_FIELD not in text
+    assert "Transcription of" not in text
+    assert "=" * 50 not in text
+
+
+def test_voxtral_extra_header_fields_are_stripped_too(tmp_path):
+    """02b adds Language/Diarization lines; they are header, not transcript."""
+    write_transcription(
+        "Speaker 1: Salaam.", Path("iwac-audio-0002-1.mp3"), tmp_path,
+        generator="Mistral voxtral-mini-2602",
+        extra_fields=[("Language", "Auto-detect"), ("Diarization", "ON")],
+    )
+
+    text = joined(tmp_path, "iwac-audio-0002")
+
+    assert text == "Speaker 1: Salaam."
+    assert "Diarization" not in text
+
+
+def test_every_joined_segment_is_stripped_not_only_the_first(tmp_path):
+    """One header per segment file, so stripping once leaves the rest inline."""
+    for segment in (1, 2, 3):
+        make_transcript(
+            tmp_path, f"iwac-audio-0003-{segment}", "Google gemini-3.7-flash",
+            body=f"Segment {segment} speech.",
+        )
+
+    text = joined(tmp_path, "iwac-audio-0003")
+
+    assert GENERATOR_FIELD not in text
+    assert "Transcription of" not in text
+    for segment in (1, 2, 3):
+        assert f"[Part {segment}]" in text
+        assert f"Segment {segment} speech." in text
+
+
+def test_a_file_without_a_separator_is_uploaded_whole(tmp_path):
+    """The same refusal to guess that leaves it unattributed keeps its text.
+
+    Dropping the first lines of a headerless file would silently truncate a
+    transcript — the mirror of reading them as a provenance claim.
+    """
+    body = "Speaker 1: no header here.\nSpeaker 2: none at all."
+    (tmp_path / "iwac-audio-0004-1_transcription.txt").write_text(
+        body + "\n", encoding="utf-8",
+    )
+
+    assert joined(tmp_path, "iwac-audio-0004") == body
+
+
+def test_the_header_the_annotation_was_read_from_stays_on_disk(tmp_path):
+    """Stripped from the upload, not deleted: the file stays auditable."""
+    path = make_transcript(tmp_path, "iwac-audio-0005-1", "Google gemini-3.7-flash")
+
+    assert read_header(path)[GENERATOR_FIELD] == "Google gemini-3.7-flash"
+    assert GENERATOR_FIELD in path.read_text(encoding="utf-8")
+    assert GENERATOR_FIELD not in joined(tmp_path, "iwac-audio-0005")
+
+
 # --- What gets annotated, and what stops the run ----------------------------
 
 def test_a_pinned_header_annotates_itself_without_being_asked():

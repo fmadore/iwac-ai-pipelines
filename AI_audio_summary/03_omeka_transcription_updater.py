@@ -12,6 +12,19 @@ File naming convention:
 
 The script will automatically detect and join segments in numerical order.
 
+Only the *body* of each file is uploaded. Every transcription file opens with the
+metadata header ``segments.write_transcription()`` writes — ``Transcription of:``,
+``Generated using:``, Voxtral's ``Language:``/``Diarization:`` lines and the
+``=`` * 50 separator — and ``bibo:content`` is the archive's full-text field,
+exported to Hugging Face as ``OCR`` and indexed for search, so a header left
+inside it is indexed as though a speaker had said it. ``segments.read_body()``
+splits it off, per file rather than once: a recording that arrived as several
+media files is several transcription files, each with its own header, and this
+step joins them under one identifier.
+
+The header is not lost by being stripped — it is where the
+``iwac:transcriptionModel`` annotation below is read from, and it stays on disk.
+
 Each value written carries an ``iwac:transcriptionModel`` annotation naming the
 model that produced it, so a transcript's provenance survives outside the file
 header on disk. ``--model`` is deliberately optional: three of the four models
@@ -70,7 +83,7 @@ from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
 from common.log_redaction import install_credential_redaction
 
-from segments import GENERATOR_FIELD, read_header
+from segments import GENERATOR_FIELD, read_body, read_header
 
 CONTENT_TERM = 'bibo:content'
 TRANSCRIPTION_MODEL_TERM = 'iwac:transcriptionModel'
@@ -295,7 +308,11 @@ class TranscriptionProcessor:
 
     def read_and_join_transcriptions(self, files: List[Tuple[Path, Optional[int]]]) -> str:
         """
-        Read and join multiple transcription files.
+        Read and join multiple transcription files, header stripped.
+
+        Only the body of each file is kept (see the module docstring), and every
+        file in the group is split, not just the first — one header per segment
+        file, so stripping once would leave the rest inline.
 
         Args:
             files: List of (file_path, segment_number) tuples, sorted by segment
@@ -307,8 +324,7 @@ class TranscriptionProcessor:
 
         for file_path, segment in files:
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
+                content = read_body(file_path)
 
                 if content:
                     if len(files) > 1 and segment is not None:

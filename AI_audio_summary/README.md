@@ -17,7 +17,9 @@ Omeka S or local files → Download media → AI transcription → Update databa
    - `02_AI_transcribe_audio.py` — Google Gemini (prompt-based, multimodal)
    - `02b_AI_transcribe_audio_voxtral.py` — Mistral Voxtral (dedicated transcription model with diarization)
 3. **Update** (`03_omeka_transcription_updater.py`): Store transcripts in Omeka S
-   as `bibo:content`, annotated with the model that produced them
+   as `bibo:content`, annotated with the model that produced them. Only the
+   transcript is uploaded — each file's metadata header stays on disk, because
+   `bibo:content` is the archive's indexed full text
 
 ## Quick Start
 

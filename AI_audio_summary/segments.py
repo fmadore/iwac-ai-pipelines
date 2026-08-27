@@ -164,6 +164,29 @@ def write_transcription(
 # Parsing
 # ---------------------------------------------------------------------------
 
+def _split(text: str) -> Tuple[Dict[str, str], str]:
+    """Split raw file text into ``(header fields, body)`` at the separator.
+
+    One definition, because the two halves leave for different places and must
+    agree on where the line between them falls: the header is provenance that
+    ``03`` reads to name a model, the body is the transcript it uploads.
+
+    A file with no separator has no header and is body in full. Never guess
+    which leading lines were metadata: a wrong guess would both let transcript
+    text be read as a provenance claim and silently truncate the transcript.
+    """
+    if _HEADER_SEPARATOR not in text:
+        return {}, text.strip()
+
+    header: Dict[str, str] = {}
+    head, _, body = text.partition(_HEADER_SEPARATOR)
+    for line in head.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip():
+            header[name.strip()] = value.strip()
+    return header, body.strip()
+
+
 def read_header(path: Path) -> Dict[str, str]:
     """Parse the metadata header of a transcription file.
 
@@ -180,16 +203,25 @@ def read_header(path: Path) -> Dict[str, str]:
         console.print(f"[yellow]⚠[/] Warning: Could not read transcription header: {e}")
         return {}
 
-    if _HEADER_SEPARATOR not in text:
-        return {}
+    return _split(text)[0]
 
-    header: Dict[str, str] = {}
-    head, _, _ = text.partition(_HEADER_SEPARATOR)
-    for line in head.splitlines():
-        name, separator, value = line.partition(":")
-        if separator and name.strip():
-            header[name.strip()] = value.strip()
-    return header
+
+def read_body(path: Path) -> str:
+    """Return the transcript alone — everything below the header separator.
+
+    This is what ``03`` uploads. ``bibo:content`` is the archive's full-text
+    field, exported to Hugging Face as ``OCR`` and indexed for search, so a
+    header left inside it puts "Generated using: Google gemini-3.7-flash" in the
+    index as though a speaker had said it. The header stays on disk, where it is
+    auditable, and reaches Omeka as an ``iwac:transcriptionModel`` annotation
+    instead. ``AI_youtube_transcription`` splits its own files for the same
+    reason.
+
+    Unlike :func:`read_header`, a read failure is raised rather than swallowed:
+    a header that cannot be read costs an annotation, a body that cannot be read
+    would upload an empty transcript over a real one.
+    """
+    return _split(Path(path).read_text(encoding="utf-8"))[1]
 
 
 def check_existing_transcription(
