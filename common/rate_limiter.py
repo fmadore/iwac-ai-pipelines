@@ -15,9 +15,38 @@ Usage:
 """
 
 import logging
+import re
 import threading
 import time
 from typing import Optional
+
+
+#: Google states a wait on a throttle: "Please retry in 23.339472825s". A daily
+#: or billing quota does not clear in seconds, so a stated delay this short is
+#: positive evidence of the transient case — and it is the *only* evidence the
+#: message carries, because the prose is identical either way.
+_RETRY_DELAY_RE = re.compile(r"please retry in ([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
+
+#: Above this, a stated delay is not a throttle to sleep through: a quota that
+#: needs an hour is one the run should stop and report rather than sit on.
+TRANSIENT_RETRY_DELAY_CEILING_SECONDS = 300.0
+
+
+def retry_delay_seconds(error: Exception) -> Optional[float]:
+    """The wait an API error asked for, in seconds, or ``None`` if it named none.
+
+    Callers should prefer this over their own backoff when it is present: a
+    server that says how long it needs knows better than an exponential guess,
+    and guessing short turns one throttle into three.
+    """
+    message = str(getattr(error, "message", "") or "") or str(error)
+    match = _RETRY_DELAY_RE.search(message)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
 
 
 class QuotaExhaustedError(Exception):
@@ -42,6 +71,10 @@ def is_quota_exhausted(error: Exception) -> bool:
     - message contains "exceeded your current quota"
     - message contains "requests_per_model_per_day"
 
+    Those signatures are necessary but not sufficient, because Google words a
+    per-minute throttle in exactly the same prose. A stated retry delay is
+    checked first and wins: see ``retry_delay_seconds``.
+
     Note: the ``status`` field alone is deliberately NOT used — Gemini returns
     ``RESOURCE_EXHAUSTED`` for *every* 429, including transient per-minute
     rate limits that should be retried, not treated as daily exhaustion.
@@ -60,6 +93,17 @@ def is_quota_exhausted(error: Exception) -> bool:
     if 402 in (code, status):
         return True
     if code != 429 and status != 429:
+        return False
+
+    # A stated short delay settles it before the prose gets a vote. Google
+    # words a per-minute throttle exactly like an exhausted quota — "You
+    # exceeded your current quota, please check your plan and billing details"
+    # — so the indicators below match a throttle too, and did: a 10,000
+    # input-tokens-per-minute cap on gemini-3.5-transcribe stopped an
+    # 82-minute transcription dead at its second segment, twice, reported as
+    # "API quota exhausted" when the server had asked for 23 seconds.
+    delay = retry_delay_seconds(error)
+    if delay is not None and delay <= TRANSIENT_RETRY_DELAY_CEILING_SECONDS:
         return False
 
     message = str(getattr(error, "message", "") or str(error)).lower()

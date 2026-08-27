@@ -107,10 +107,32 @@ switches when speakers code-switch.
 | Cap per request | 30 min | 1 hour |
 
 The two are mutually exclusive at the API, so `--smart` combined with either
-option fails at start-up rather than after the upload. Timestamps also cost a
-little accuracy, as the vendor documentation warns: on a test clip, verbatim
-with timestamps rendered *Aujourd'hui* as *Aujourd'*, which smart and plain
-verbatim both got right.
+option fails at start-up rather than after the upload.
+
+**The accuracy cost of timestamps is not small on this material.** Measured on
+item 15894 — an 82-minute Hausa sermon, 11 segments of 6 minutes:
+
+| | verbatim + timestamps | smart |
+|---|---:|---:|
+| Punctuation marks per 100 words | **0.0** on segments 1, 4, 5 and 11 | 7.5 |
+| Words returned (same 6-min audio) | 953 | 1,048 |
+| English code-switch *"no going back"* | dropped | kept |
+
+Four of eleven segments came back as an unbroken wall of text with no sentence
+boundary anywhere, and Hausa's hooked characters (ƙ ɗ ɓ ƴ) appeared in only
+three. Re-running the worst segment in smart mode punctuated it correctly,
+recovered ~10% more words, and caught a code-switch the verbatim pass lost
+entirely — on byte-identical audio.
+
+So the choice is real, and it is not "timestamps are free":
+
+- **`--smart`** gives the better *text* — which is what reaches `bibo:content`
+  and what full-text search indexes.
+- **the default** gives word timings and speaker turns, which nothing else here
+  produces, at the cost of punctuation that varies segment to segment.
+
+For a reading or search copy, prefer smart. For anything that needs to point at
+a moment in the recording, accept the default and expect to clean up the prose.
 
 ## Transcription Modes (Gemini only)
 
@@ -140,8 +162,36 @@ Speaker attribution beyond two voices is documented as experimental. The model
 id is pinned rather than rolling, which is what lets step 03 stamp it: authority
 item 113077, registered in `AI_MODEL_ITEMS` as `gemini-3.5-transcribe`.
 
-`--rpm` throttles proactively; a daily quota raises `QuotaExhaustedError`, which
-saves what completed and stops instead of retrying a limit that will not clear.
+#### The limit that actually binds is tokens per minute
+
+Not requests. Measured against the live API on 2026-08-27:
+
+| | |
+|---|---|
+| Audio input rate | **~1,500 tokens per minute of runtime** (a 20-min segment = 30,000 tokens) |
+| Preview-tier cap | **10,000 input tokens per minute** (`generate_content_paid_tier_input_token_count`) |
+| So one request should stay under | **~6.5 minutes of audio** |
+| And throughput tops out around | **6.7 audio-minutes per wall-clock minute** |
+
+A default 20-minute segment spends three minutes of budget in a single request,
+so every segment after the first is throttled *by design*. `--rpm` cannot help:
+it meters requests, and the cap counts tokens. **Size the segment instead:**
+
+```bash
+python 02c_AI_transcribe_audio_gemini_transcribe.py --segment-minutes 6 --rpm 1
+```
+
+At that size each request fits inside one minute's budget and the run paces
+itself. On the 152-hour deposited corpus the ceiling implies roughly **23 hours
+of API time** whatever the segment size — worth knowing before starting a batch.
+
+The 429 that reports this says *"You exceeded your current quota, please check
+your plan and billing details"* — word for word what an exhausted daily quota
+says — and differs only by carrying `Please retry in 23.3s`. That delay is what
+`common/rate_limiter.retry_delay_seconds()` reads, and why a throttle no longer
+stops a run: before it existed, this failure killed an 82-minute transcription
+at its second segment and reported it as quota exhaustion. A genuine daily quota
+still stops the run and saves what completed.
 
 ### Gemini
 

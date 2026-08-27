@@ -50,7 +50,7 @@ from common.gemini_utils import (
     delete_uploaded_file,
     upload_and_wait_active,
 )
-from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
+from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted, retry_delay_seconds
 from common.ffmpeg_utils import get_mime_type, probe_duration_seconds
 from common.log_redaction import install_credential_redaction
 
@@ -293,8 +293,18 @@ class GeminiTranscribeTranscriber(TranscriberBase):
             )
         return split_audio_file(audio_path, SCRIPT_DIR / "temp_segments", self.segment_minutes), duration
 
-    def _create_interaction(self, audio_path: Path, max_retries: int = 3):
-        """Upload one audio file and transcribe it, with backoff. ``None`` on failure."""
+    def _create_interaction(self, audio_path: Path, max_retries: int = 5):
+        """Upload one audio file and transcribe it, with backoff. ``None`` on failure.
+
+        Retries generously and on the server's terms. This model meters *input
+        tokens per minute* — 10,000 on the preview tier — while audio costs
+        ~1,500 tokens per minute of runtime, so a 20-minute segment is 30,000
+        tokens and spends three minutes of budget in one request. Every segment
+        after the first is therefore throttled by design, not by accident, and
+        the 429 arrives with the wait Google wants. Sleeping that stated delay
+        is the difference between a run that paces itself and one that burns
+        its retries guessing four seconds at a time.
+        """
         mime_type = get_mime_type(audio_path)
         last_error: Optional[Exception] = None
 
@@ -319,9 +329,21 @@ class GeminiTranscribeTranscriber(TranscriberBase):
                     raise QuotaExhaustedError(str(e)) from e
                 last_error = e
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+                    stated = retry_delay_seconds(e)
+                    if stated is not None:
+                        # Pad it: the server names when the budget *starts* to
+                        # clear, and a 30,000-token request needs more of it
+                        # back than a small one.
+                        wait_time = stated + 5 + random.uniform(0, 2)
+                        reason = f"throttled, server asked for {stated:.0f}s"
+                    else:
+                        wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+                        reason = "backing off"
                     console.print(f"[red]✗[/] Error transcribing [cyan]{audio_path.name}[/]: {e}")
-                    console.print(f"[yellow]⏳[/] Retrying in {wait_time:.1f}s... (attempt {attempt + 1}/{max_retries})")
+                    console.print(
+                        f"[yellow]⏳[/] {reason}; retrying in {wait_time:.1f}s... "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
                     time.sleep(wait_time)
                 else:
                     console.print(
