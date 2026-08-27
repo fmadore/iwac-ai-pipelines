@@ -35,7 +35,7 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 
-# Last verified green on 2026-08-03 against: google-genai 2.16.0, openai 2.52.0,
+# Last verified green on 2026-08-27 against: google-genai 2.20.0, openai 2.52.0,
 # mistralai 2.8.0, pydantic 2.13.4, pypdf 6.14.2, requests 2.34.2,
 # python-dotenv 1.2.2, tqdm 4.70.0, rich 15.0.0, pytest 9.1.1, ruff 0.16.1.
 # Upgrade with `pip install --upgrade <names>`, not `--upgrade-strategy eager`:
@@ -43,7 +43,11 @@ classifiers = [
 dependencies = [
     # AI provider SDKs — pinned to a major version: these break routinely
     # 2.x broke only the Interactions API; generate_content is unchanged.
-    "google-genai>=1.59,<3",
+    # The floor is 2.20 because AI_audio_summary/02c needs the transcription
+    # mode types (VerbatimTranscriptionMode, SmartTranscriptionMode): 2.16 has
+    # interactions but no `mode` field on TranscriptionConfig, so the request
+    # builds and the model silently ignores timestamps and diarization.
+    "google-genai>=2.20,<3",
     "openai>=1.60,<3",
     "mistralai>=2.5,<3", # 2.x layout: import from mistralai.client and mistralai.client.errors
     "pydantic>=2.5,<3",

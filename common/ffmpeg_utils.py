@@ -241,6 +241,36 @@ def get_mime_type(file_path: Path) -> Optional[str]:
 # Conversion & splitting
 # ---------------------------------------------------------------------------
 
+def probe_duration_seconds(file_path: Path, timeout: int = 60) -> Optional[float]:
+    """Return a media file's duration in seconds via ffprobe, or ``None``.
+
+    Returns ``None`` — never raises — when ffprobe is unavailable, the file is
+    unreadable, or the output does not parse. Callers decide whether an unknown
+    duration is a warning or a gate; for a provider with a hard per-request
+    limit it is the latter, since sending a file of unknown length past the cap
+    fails after the upload rather than before it.
+    """
+    paths = get_ffmpeg_paths()
+    if not paths:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                paths.ffprobe, "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode != 0:
+            return None
+        return float(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+
 def convert_video_to_audio(
     video_path: Path,
     output_dir: Path,

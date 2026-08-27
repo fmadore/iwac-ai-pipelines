@@ -22,6 +22,30 @@ SUBJECT_AUTHORITY_ITEM_SETS: List[str] = ["854", "2", "266"]
 TOPIC_AUTHORITY_ITEM_SETS: List[str] = ["1"]
 
 # ---------------------------------------------------------------------------
+# Scholarly references
+# ---------------------------------------------------------------------------
+
+#: The nine resource classes that make up the "references" population — the
+#: scholarly literature *about* the collection's subject, as opposed to the
+#: archival material itself. Counts verified live on 2026-08-18 (867 items).
+#:
+#: Class, not template, is the key. These nine classes share templates in both
+#: directions — template 10 carries both ``Book`` (40) and ``EditedBook`` (52) —
+#: so a template filter would both over- and under-select. The same rule governs
+#: the ``references`` subset of the Hugging Face export.
+REFERENCE_RESOURCE_CLASSES: Dict[int, str] = {
+    35: "Academic Article",
+    43: "Chapter",
+    88: "Thesis",
+    40: "Book",
+    82: "Report",
+    178: "Book review",
+    52: "Edited Book",
+    77: "Personal Communication",
+    305: "Blog post",
+}
+
+# ---------------------------------------------------------------------------
 # YouTube-hosted audiovisual items
 # ---------------------------------------------------------------------------
 
@@ -49,6 +73,11 @@ DCTERMS_LANGUAGE_PROPERTY_ID = 12
 DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID = 18
 DCTERMS_SPATIAL_PROPERTY_ID = 40
 BIBO_CONTENT_PROPERTY_ID = 91
+#: bibo:cites ("cites"). Declared on all four reference templates — Thesis (14),
+#: Journal article (18), Book chapter (11) and Book (10) — and populated on zero
+#: items until ``AI_publication_extraction/04`` started writing the works a
+#: publication cites. Verified live 2026-08-18.
+BIBO_CITES_PROPERTY_ID = 60
 FABIO_HAS_URL_PROPERTY_ID = 278       # fabio:hasURL — a ``uri`` value, read from ``@id``
 IWAC_OCR_MODEL_PROPERTY_ID = 312      # iwac:ocrModel ("AI Model - OCR")
 IWAC_SUMMARY_MODEL_PROPERTY_ID = 313  # iwac:summaryModel ("AI Model - Summary")
@@ -161,6 +190,22 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
         "item_id": 83261,
         "display_title": "DeepSeek V4 Flash 0731",
     },
+    # Not an LLM registry key: Mistral's OCR endpoint is a dedicated model with
+    # no ``MODEL_REGISTRY`` entry, and the key is the pinned API id rather than
+    # ``mistral-ocr-latest``, which is a rolling alias — see
+    # ``common/mistral_ocr.py``. Created 2026-08-18 for
+    # ``AI_publication_extraction``; the 425 ``bibo:content`` values already on
+    # the reference corpus carry no provenance annotation at all.
+    "mistral-ocr-4-1": {"item_id": 111889, "display_title": "Mistral OCR 4.1"},
+    # Also not an LLM registry key, and for the same reason as Mistral's OCR
+    # endpoint: ``gemini-3.5-transcribe`` is a dedicated speech-to-text model
+    # reached through the Interactions API, not a chat model — it rejects a
+    # system instruction outright ("Developer instruction is not enabled for
+    # this model"), so there is nothing for ``llm_provider`` to route. The key
+    # mirrors the item's ``dcterms:alternative``. Created 2026-08-27 for
+    # ``AI_audio_summary/02c``; the audio pipeline stamped no transcription
+    # provenance at all before it.
+    "gemini-3.5-transcribe": {"item_id": 113077, "display_title": "Gemini 3.5 Transcribe"},
 }
 
 #: Superseded authority items, kept only so this file records why an id that

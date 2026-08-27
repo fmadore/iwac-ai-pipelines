@@ -9,7 +9,7 @@
 # understand. Keep this file in sync with [project.dependencies].
 
 # --- AI provider APIs --------------------------------------------------------
-google-genai>=1.59,<3       # Google Gemini API. 2.x broke only the Interactions API; generate_content is unchanged
+google-genai>=2.20,<3       # Google Gemini API. 2.20 floor: 02c needs the Interactions transcription mode types, absent in 2.16
 openai>=1.60,<3             # OpenAI GPT API (Responses API)
 mistralai>=2.5,<3           # Mistral AI API (Large 3, OCR 4). 2.x layout: import from mistralai.client and mistralai.client.errors
 pydantic>=2.5,<3            # Data validation and structured outputs

@@ -30,7 +30,8 @@ Which architecture rules apply depends on the pipeline's category:
 - **Text-only** — `AI_summary`, `AI_NER`, `AI_ocr_correction`,
   `AI_sentiment_analysis`, `NotebookLM`
 - **Multimodal** — `AI_audio_summary`, `AI_htr_extraction`, `AI_ocr_extraction`,
-  `AI_video_summary`, `AI_summary_issue`, `AI_youtube_transcription`
+  `AI_publication_extraction`, `AI_video_summary`, `AI_summary_issue`,
+  `AI_youtube_transcription`
 - **Agent-driven** — `AI_reference_indexing` (orchestrated by the
   `reference-indexing` skill rather than a numbered run)
 
@@ -53,6 +54,7 @@ Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provide
 | `console_utils.py` | `standard_progress()`, `key_value_table()`, `count_table()` — one definition of the rich furniture every pipeline prints |
 | `downloader.py` | `stream_download()` — streaming download via a `.part` temp file, used by the PDF and media downloaders |
 | `prompt_loader.py` | Discovery and interactive selection for pipelines holding several `prompts/*.md` |
+| `mistral_ocr.py` | Mistral Document AI: the pinned OCR model id, Markdown→plain-text normalisation, block classification (body / apparatus / furniture) and the >50 MB split. Shared by `AI_ocr_extraction/02` and `AI_publication_extraction/02` |
 | `pdf_downloader.py` | Shared Omeka PDF download step (`AI_ocr_extraction/01`, `AI_summary_issue/01`) |
 | `pdf_utils.py` | `PdfPageSource` (parse once, serve many pages) plus one-off page extraction and page counts |
 | `reconciliation.py` | Fuzzy matching of extracted entities against authority records |
@@ -140,6 +142,23 @@ deadline, plus `common/rate_limiter.py`: call `wait()` before each request, and 
 errors with `is_quota_exhausted()` so daily-quota exhaustion raises
 `QuotaExhaustedError` (save partial results, stop) instead of being retried like a
 transient 429.
+
+**A dedicated ASR model is not a small chat model, and its guardrails are yours.**
+`gemini-3.5-transcribe` (`AI_audio_summary/02c`) is reached through the
+Interactions API — `client.interactions.create()`, not `generate_content()` — and
+three of its properties are only discoverable by asking it. It rejects a system
+instruction outright (`400 Developer instruction is not enabled for this model`),
+so no `prompts/` mode applies to it and none should be offered. It rejects the
+`minimal` thinking level every other pipeline here asks for (`Allowed values are:
+low, high`), which is one more reason to send no `thinking_level` at all rather
+than to branch on a model name. And it **accepts any BCP-47 code in
+`language_codes` without validating it** — `mos-BF` and `dyu-CI` were both
+accepted and answered normally — so asserting a language the model cannot hear
+returns a fluent transcript rather than an error. The supported-locale list is
+therefore checked client-side in `02c`, and that check is load-bearing: the
+output of a wrong one goes into `bibo:content` as archive full text and nothing
+downstream can distinguish it from a real transcript. Verify such a claim against
+the live API before writing it down, as `serving/`'s reasoning-level probe does.
 
 ## Omeka gotchas
 

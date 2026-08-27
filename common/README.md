@@ -142,6 +142,7 @@ mime = get_mime_type(Path("file.mp3"))  # "audio/mpeg"
 | `setup_pydub()` | Import pydub and configure it with discovered paths; returns `bool` |
 | `is_video_file(path)` | Check extension against `VIDEO_FORMATS` + mimetypes fallback |
 | `get_mime_type(path)` | Lookup in `AUDIO_FORMATS` + `VIDEO_FORMATS` + mimetypes fallback |
+| `probe_duration_seconds(path)` | Media duration via ffprobe; `None` (never raises) when unavailable |
 | `convert_video_to_audio(video, out_dir)` | ffmpeg subprocess call; returns output `Path` or `None` |
 | `split_audio(audio, out_dir, minutes)` | pydub-based splitting; returns `[audio]` on failure |
 | `cleanup_files(paths, remove_parents)` | Delete files and optionally empty parent directories |

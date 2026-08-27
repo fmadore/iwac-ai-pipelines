@@ -20,7 +20,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **OCR Correction** | Fix errors in machine-generated text, including ALTO XML with coordinate preservation |
 | **Named Entity Recognition** | Extract people, places, organizations with authority reconciliation |
 | **Summarization** | Generate bilingual French/English summaries for document discovery |
-| **Audio Transcription** | Transcribe interviews and oral histories using Gemini or Voxtral (with speaker diarization) |
+| **Audio Transcription** | Transcribe interviews and oral histories using Gemini 3.5 Transcribe (word timestamps + diarization), Gemini, or Voxtral |
 | **Video Processing** | Summarize or transcribe video with visual descriptions |
 | **YouTube Transcription** | Transcribe YouTube-hosted items from their URLs — no download — detecting the spoken languages and correcting the catalogue record from them |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
@@ -104,6 +104,7 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash
 |----------|-----|-------|
 | OpenAI | `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol` | Text pipelines only. GPT-5.6 tiers: Luna (cheapest), Terra (balanced), Sol (flagship). Legacy `gpt-5-mini` / `gpt-5.1` keys still resolve to Luna / Sol. |
 | Gemini | `gemini-3.7-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
+| Gemini (speech) | `gemini-3.5-transcribe` | Dedicated speech-to-text via the Interactions API, not the model registry: word-level timestamps and speaker diarization, 82 locales including Hausa but none of Mooré, Dioula, Ewé, Kabyè or Dendi. Takes no prompt. Used by `AI_audio_summary/02c`. |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
 | OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the shared text default (`DEFAULT_TEXT_MODEL_KEY`), used by NER, OCR correction and magazine consolidation. Summarization is the one exception and defaults to `gpt-5.6-luna` for throughput. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
@@ -132,6 +133,7 @@ The approach assumes you have digitized materials and need to make them searchab
 - [Shared Utilities](common/README.md) — OmekaClient, LLM provider configuration, the Gemini page processor and the Omeka text updater
 - [Serving Your Own Models](serving/README.md) — running an open-weights model on your own GPU (Slurm + vLLM), the SSH tunnel, and the probe that checks a route's reasoning levels are real
 - [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini, Mistral, or Claude agent)
+- [Audio Transcription](AI_audio_summary/README.md) — three transcribers compared, which languages Gemini 3.5 Transcribe actually covers, and why splitting is mandatory once timestamps are on
 - [YouTube Transcription](AI_youtube_transcription/README.md) — URL-based transcription with language detection, the measured token budget, and the public-video-only limit
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [Publication Extraction](AI_publication_extraction/README.md) — Structured OCR for journal articles, chapters, books and theses: footnotes and bibliography separated from the body, oversized scans split automatically
