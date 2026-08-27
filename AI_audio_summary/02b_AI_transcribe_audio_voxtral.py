@@ -12,7 +12,6 @@ import argparse
 import json
 import os
 import random
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -24,7 +23,7 @@ from mistralai.client import Mistral
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.rate_limiter import QuotaExhaustedError, is_mistral_quota_exhausted
-from common.ffmpeg_utils import get_ffmpeg_paths
+from common.ffmpeg_utils import probe_duration_seconds
 from common.log_redaction import install_credential_redaction
 
 # Credentials ride in Omeka query strings and provider headers; keep them
@@ -55,32 +54,6 @@ LANGUAGES = [
     ("ha", "Hausa"),
     ("sw", "Swahili"),
 ]
-
-
-def probe_duration_seconds(audio_path: Path) -> Optional[float]:
-    """Return the media duration in seconds via ffprobe, or ``None``.
-
-    Silently returns ``None`` when ffprobe is unavailable or fails — the
-    duration check is a best-effort warning, not a gate.
-    """
-    paths = get_ffmpeg_paths()
-    if not paths:
-        return None
-    try:
-        result = subprocess.run(
-            [
-                paths.ffprobe, "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                str(audio_path),
-            ],
-            capture_output=True, text=True, timeout=60,
-        )
-        if result.returncode != 0:
-            return None
-        return float(result.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
 
 
 class VoxtralTranscriber(TranscriberBase):

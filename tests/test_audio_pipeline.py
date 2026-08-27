@@ -1,6 +1,6 @@
-"""Audio media discovery, Gemini transcription orchestration, and what step 03
-writes back — including which model an ``iwac:transcriptionModel`` annotation is
-allowed to name."""
+"""Audio media discovery, the Gemini and Voxtral transcription steps, and what
+step 03 writes back — including which model an ``iwac:transcriptionModel``
+annotation is allowed to name."""
 
 import importlib.util
 import io
@@ -29,6 +29,7 @@ def load_script(name, filename):
 
 downloader_module = load_script("audio_media_downloader", "01_omeka_media_downloader.py")
 transcription_module = load_script("gemini_audio_transcriber", "02_AI_transcribe_audio.py")
+voxtral_module = load_script("voxtral_audio_transcriber", "02b_AI_transcribe_audio_voxtral.py")
 
 
 def bare_transcriber():
@@ -511,3 +512,53 @@ def test_an_unannotated_write_still_writes_the_transcript():
     (written,) = item["bibo:content"]
     assert written["@value"] == "transcript"
     assert "@annotation" not in written
+
+
+def bare_voxtral():
+    """A Voxtral transcriber with no API key resolved and no network client."""
+    return voxtral_module.VoxtralTranscriber.__new__(voxtral_module.VoxtralTranscriber)
+
+
+def warnings_for(duration):
+    """Run the length check against a stubbed ffprobe and return what it printed.
+
+    Patching the name on the module is also the assertion that the helper is
+    imported from ``common.ffmpeg_utils`` rather than redefined here: a stale
+    local copy would be the object patched, and a missing import would raise.
+    """
+    with patch.object(voxtral_module, "probe_duration_seconds", return_value=duration), \
+            patch.object(voxtral_module, "console") as console:
+        bare_voxtral()._warn_if_too_long(Path("interview.mp3"))
+    return [call.args[0] for call in console.print.call_args_list]
+
+
+def test_file_over_the_three_hour_cap_is_flagged():
+    warnings = warnings_for(4 * 3600.0)
+    assert len(warnings) == 1
+    assert "4.0 h" in warnings[0]
+
+
+def test_file_within_the_cap_is_not_flagged():
+    assert warnings_for(2 * 3600.0) == []
+
+
+def test_unknown_duration_is_not_flagged():
+    """Without ffprobe the length is unknown. Voxtral's cap is a soft warning,
+    not a gate, so an unmeasurable file is sent rather than pre-emptively
+    scolded — the ``duration and`` short-circuit is what keeps ``None`` quiet.
+    """
+    assert warnings_for(None) == []
+
+
+def test_the_transcribe_header_resolves_to_its_authority_item():
+    """``02c``'s transcripts must be annotatable without ``--model``.
+
+    The two workstreams landed in parallel — step 03 learned to read the
+    ``Generated using:`` header while ``02c`` learned to write one — so nothing
+    covered the seam between them. ``gemini-3.5-transcribe`` is pinned and has
+    item 113077, which is exactly the case the resolver is meant to catch.
+    """
+    from common.iwac_config import AI_MODEL_ITEMS
+
+    assert updater.annotation_key_for("Google gemini-3.5-transcribe") == "gemini-3.5-transcribe"
+    assert AI_MODEL_ITEMS["gemini-3.5-transcribe"]["item_id"] == 113077
