@@ -53,6 +53,19 @@ from segments import (
 # Load environment variables from .env file FIRST
 load_dotenv()
 
+#: The models this script offers, in menu order, with the note shown beside each.
+#: Two of them are rolling aliases, so ``03`` cannot annotate their output: an
+#: annotation naming "Gemini Pro Latest" asserts a release the run never
+#: confirmed, which is why ``AI_MODEL_ITEMS`` deliberately holds no entry for
+#: either. Any *pinned* id added here needs an Omeka authority item, or ``03``
+#: will refuse the folder it fills — ``tests/test_audio_pipeline.py`` guards that.
+ALLOWED_MODELS = {
+    "gemini-pro-latest": "Higher quality, slower",
+    "gemini-3.7-flash": "Faster, good quality",
+    "gemini-flash-lite-latest": "Fastest, cheapest, lowest latency",
+}
+DEFAULT_MODEL = "gemini-pro-latest"
+
 # Default transcription prompt (fallback when no prompt file is selected)
 DEFAULT_PROMPT = """
         Please transcribe the audio content accurately.
@@ -94,7 +107,7 @@ class AudioTranscriber(TranscriberBase):
     def __init__(
         self,
         api_key=None,
-        model="gemini-pro-latest",
+        model=DEFAULT_MODEL,
         requests_per_minute: Optional[int] = None,
         transcription_prompt: Optional[str] = None,
         auto_split: bool = False,
@@ -718,7 +731,7 @@ def parse_args():
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-pro-latest", "gemini-3.7-flash", "gemini-flash-lite-latest"],
+        choices=list(ALLOWED_MODELS),
         default=None,
         help="Model to use for transcription (default: interactive selection)"
     )
@@ -759,20 +772,19 @@ def select_model_interactive():
     models_table.add_column("#", style="cyan", justify="right")
     models_table.add_column("Model", style="green")
     models_table.add_column("Description", style="dim")
-    models_table.add_row("1", "gemini-pro-latest", "Higher quality, slower")
-    models_table.add_row("2", "gemini-3.7-flash", "Faster, good quality")
-    models_table.add_row("3", "gemini-flash-lite-latest", "Fastest, cheapest, lowest latency")
+    keys = list(ALLOWED_MODELS)
+    for number, model in enumerate(keys, start=1):
+        models_table.add_row(str(number), model, ALLOWED_MODELS[model])
     console.print(models_table)
 
     model_choice = console.input(
-        "\n[bold]Select a model (1-3) or press Enter for default (gemini-pro-latest):[/] "
+        f"\n[bold]Select a model (1-{len(keys)}) or press Enter for default "
+        f"({DEFAULT_MODEL}):[/] "
     ).strip()
 
-    if model_choice == '2':
-        return 'gemini-3.7-flash'
-    if model_choice == '3':
-        return 'gemini-flash-lite-latest'
-    return 'gemini-pro-latest'
+    if model_choice.isdigit() and 1 <= int(model_choice) <= len(keys):
+        return keys[int(model_choice) - 1]
+    return DEFAULT_MODEL
 
 
 def choose_split_mode(args, transcriber: AudioTranscriber, ffmpeg_ready: bool) -> bool:

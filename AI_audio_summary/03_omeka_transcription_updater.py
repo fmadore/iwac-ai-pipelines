@@ -12,9 +12,22 @@ File naming convention:
 
 The script will automatically detect and join segments in numerical order.
 
+Each value written carries an ``iwac:transcriptionModel`` annotation naming the
+model that produced it, so a transcript's provenance survives outside the file
+header on disk. ``--model`` is deliberately optional: three of the four models
+that can fill ``Transcriptions/`` have no Omeka authority item to point at —
+``voxtral-mini-2602`` has none yet, and ``gemini-pro-latest`` /
+``gemini-flash-lite-latest`` are rolling aliases which deliberately have none,
+because a run through one cannot state which release answered it. Requiring
+``--model`` would make this step unusable for all three. Silence does not mean
+"no provenance" either, though: with neither flag the model is read off the
+transcripts' own ``Generated using:`` header, and the run stops when that header
+names something no annotation can cite.
+
 Usage:
-    python 03_omeka_transcription_updater.py
     python 03_omeka_transcription_updater.py --dry-run
+    python 03_omeka_transcription_updater.py --model gemini-3.7-flash
+    python 03_omeka_transcription_updater.py --no-model-annotation --yes
 
 Requirements:
     - Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
@@ -27,7 +40,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from rich.console import Console
 from rich.panel import Panel
@@ -40,18 +53,160 @@ console = Console()
 # Script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
-# Shared Omeka client
+# Shared Omeka client, then this pipeline's own directory for the sibling
+# format module. The latter is implicit only while this file is the entry point;
+# importing it any other way — a test — would fail on `segments`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common.iwac_config import BIBO_CONTENT_PROPERTY_ID, DCTERMS_IDENTIFIER_PROPERTY_ID
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.iwac_config import (
+    AI_MODEL_ITEMS,
+    BIBO_CONTENT_PROPERTY_ID,
+    DCTERMS_IDENTIFIER_PROPERTY_ID,
+    IWAC_TRANSCRIPTION_MODEL_PROPERTY_ID,
+    model_annotation_value,
+    select_model_key,
+)
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
 from common.log_redaction import install_credential_redaction
 
-CONTENT_TARGET = PropertyTarget(
-    term='bibo:content',
-    property_id=BIBO_CONTENT_PROPERTY_ID,
-    property_label='content',
-)
+from segments import GENERATOR_FIELD, read_header
+
+CONTENT_TERM = 'bibo:content'
+TRANSCRIPTION_MODEL_TERM = 'iwac:transcriptionModel'
+
+#: Stands in for a transcription file whose header records no generator — one
+#: written before the field existed, or hand-edited.
+UNRECORDED_GENERATOR = 'unrecorded'
+
+
+def content_target(annotation_value: Optional[Dict] = None) -> PropertyTarget:
+    """The ``bibo:content`` target, carrying provenance when one was asserted."""
+    return PropertyTarget(
+        term=CONTENT_TERM,
+        property_id=BIBO_CONTENT_PROPERTY_ID,
+        property_label='content',
+        annotation_term=TRANSCRIPTION_MODEL_TERM if annotation_value else None,
+        annotation_value=annotation_value,
+    )
+
+
+def annotation_key_for(generator: str) -> Optional[str]:
+    """The ``AI_MODEL_ITEMS`` key a ``Generated using:`` header names, if any.
+
+    Headers are written as ``"<vendor> <model id>"`` — ``"Google
+    gemini-3.7-flash"``, ``"Mistral voxtral-mini-2602"`` — and for every model
+    that has an authority item the id *is* the annotation key. Returns ``None``
+    for the ones that do not, which is most of what this pipeline can produce.
+    """
+    model_id = generator.split(' ')[-1].strip() if generator else ''
+    return model_id if model_id in AI_MODEL_ITEMS else None
+
+
+def count_generators(
+    groups: Dict[str, List[Tuple[Path, Optional[int]]]],
+) -> "Counter[str]":
+    """Tally the ``Generated using:`` header across every transcription file.
+
+    Every file is read, not one per identifier: a recording that arrived as
+    several media files is several transcription files, and nothing stops 02
+    having produced one of them and 02b another.
+    """
+    counts: "Counter[str]" = Counter()
+    for files in groups.values():
+        for file_path, _ in files:
+            generator = read_header(file_path).get(GENERATOR_FIELD, '').strip()
+            counts[generator or UNRECORDED_GENERATOR] += 1
+    return counts
+
+
+def resolve_model_key(
+    counts: "Counter[str]",
+    *,
+    requested: Optional[str],
+    skip: bool,
+    assume_yes: bool,
+) -> Tuple[Optional[str], bool]:
+    """Decide which model this batch's ``iwac:transcriptionModel`` names.
+
+    Returns ``(model_key, ok)``. A *model_key* of ``None`` with *ok* true is a
+    run that writes content and no provenance — all this step can do for a model
+    with no authority item. *ok* false means the operator has to say something
+    more explicit before anything is written.
+    """
+    if skip:
+        console.print(
+            f"[dim]Writing bibo:content with no {TRANSCRIPTION_MODEL_TERM} "
+            "annotation (--no-model-annotation).[/]"
+        )
+        return None, True
+
+    if len(counts) > 1:
+        # Stricter than AI_youtube_transcription/03, which only warns. One
+        # annotation is written for the whole batch, so a mixed folder
+        # attributes every transcript to whichever model is chosen — and --yes
+        # skips the confirmation panel the warning would have been read on. This
+        # folder accumulates across 02 and 02b runs, so mixing is not exotic.
+        console.print("[red]✗[/] Transcripts in this folder came from more than one model:")
+        for generator, count in counts.most_common():
+            console.print(f"    [dim]{count:>4} × {generator}[/]")
+        console.print(
+            "[red]  One annotation is written for the whole batch, so uploading them "
+            "together would attribute all of them to one model.[/]"
+        )
+        console.print(
+            "[dim]  Move each model's transcripts into their own folder and run this step "
+            "once per folder, or pass --no-model-annotation to write no provenance.[/]"
+        )
+        return None, False
+
+    generator = next(iter(counts))
+    inferred = annotation_key_for(generator)
+
+    if requested:
+        expected = AI_MODEL_ITEMS[requested]['display_title']
+        if inferred and inferred != requested:
+            console.print(
+                f"[yellow]⚠[/] Transcripts record [cyan]{generator}[/] but the annotation "
+                f"will name [cyan]{expected}[/]."
+            )
+        elif inferred is None:
+            # The expected shape for a rolling alias, and the reason a mismatch
+            # is a warning rather than a refusal: only the operator can say
+            # which release answered "gemini-pro-latest" on the day it ran.
+            console.print(
+                f"[dim]Transcripts record {generator}, which no annotation can name; "
+                f"asserting {expected} as asked.[/]"
+            )
+        return requested, True
+
+    if inferred is None:
+        console.print(
+            f"[red]✗[/] Transcripts record [cyan]{generator}[/], which has no entry in "
+            "AI_MODEL_ITEMS, so no annotation can name it."
+        )
+        console.print(
+            "[dim]  Pass --no-model-annotation to upload the text without provenance, or "
+            "--model <key> to assert the pinned release behind a rolling alias.[/]"
+        )
+        return None, False
+
+    if assume_yes:
+        # Not a guess: the transcriber wrote this header itself, which is better
+        # evidence than an unattended run has any other way of getting.
+        console.print(
+            f"[green]✓[/] Annotating as [cyan]{AI_MODEL_ITEMS[inferred]['display_title']}[/], "
+            f"read from the transcripts' header ([dim]{generator}[/])."
+        )
+        return inferred, True
+
+    console.print(f"[dim]Transcripts record {generator}.[/]")
+    try:
+        chosen = select_model_key(default=inferred)
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]No answer on stdin — aborted, nothing written.[/]")
+        return None, False
+    return chosen, chosen is not None
 
 
 def search_item_by_identifier(client: OmekaClient, identifier: str) -> Optional[Dict]:
@@ -222,6 +377,17 @@ def main() -> int:
         description="Update Omeka S items with audio transcriptions (bibo:content)."
     )
     parser.add_argument(
+        "--model", choices=list(AI_MODEL_ITEMS),
+        help="AI model that produced the transcriptions. Read from the "
+             "transcripts' header when omitted; pass it to assert the pinned "
+             "release behind a rolling alias such as gemini-pro-latest.",
+    )
+    parser.add_argument(
+        "--no-model-annotation", action="store_true",
+        help="Upload the text with no iwac:transcriptionModel annotation. The "
+             "only option for a model with no Omeka authority item — Voxtral today.",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Fetch each item and report what would change, but write nothing.",
     )
@@ -229,7 +395,19 @@ def main() -> int:
         "--yes", action="store_true",
         help="Skip the interactive confirmation before writing.",
     )
+    parser.add_argument(
+        "--backup-dir", type=Path, default=None,
+        help="Where each item's pre-write JSON is dumped before its PATCH "
+             "(default: <pipeline>/backups). The only route back from a bulk overwrite.",
+    )
+    parser.add_argument(
+        "--no-backup", action="store_true",
+        help="Do not dump pre-write payloads. Not recommended.",
+    )
     args = parser.parse_args()
+
+    if args.model and args.no_model_annotation:
+        parser.error("--model and --no-model-annotation contradict each other.")
 
     setup_logging(SCRIPT_DIR / 'log')
     transcriptions_folder = SCRIPT_DIR / 'Transcriptions'
@@ -260,18 +438,48 @@ def main() -> int:
         console.print(files_table)
         console.print(f"\n[bold]Total:[/] [cyan]{len(groups)}[/] unique identifier(s)")
 
+        # Settled before the identifier lookups: a folder that cannot be
+        # attributed should stop here, not after a few hundred searches against
+        # a live archive.
+        model_key, resolved = resolve_model_key(
+            count_generators(groups),
+            requested=args.model,
+            skip=args.no_model_annotation,
+            assume_yes=args.yes,
+        )
+        if not resolved:
+            return 1
+
+        annotation = None
+        if model_key:
+            model = AI_MODEL_ITEMS[model_key]
+            annotation = model_annotation_value(
+                client.base_url,
+                model_key,
+                IWAC_TRANSCRIPTION_MODEL_PROPERTY_ID,
+                'AI Model - Transcription',
+            )
+            logging.info(
+                "Annotating with %s -> %s (item %s)",
+                TRANSCRIPTION_MODEL_TERM, model['display_title'], model['item_id'],
+            )
+
         updates = resolve_updates(client, processor, groups)
         unresolved = sum(1 for u in updates if u.item_id is None)
         if unresolved:
             console.print(f"[yellow]⚠[/] {unresolved} identifier(s) had no matching Omeka item")
 
+        backup_dir = None if args.no_backup else (args.backup_dir or SCRIPT_DIR / 'backups')
+
         stats = run_text_updates(
-            client, updates, CONTENT_TARGET,
+            client, updates, content_target(annotation),
             console=console,
             dry_run=args.dry_run,
             require_confirmation=not args.yes,
             extra_confirm_lines=[f"Source folder:    {transcriptions_folder}"],
             description="Updating transcriptions...",
+            backup_dir=backup_dir,
+            backup_label="audio_transcriptions",
         )
         if not stats:
             return 1  # operator declined

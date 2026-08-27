@@ -53,9 +53,12 @@ FABIO_HAS_URL_PROPERTY_ID = 278       # fabio:hasURL — a ``uri`` value, read f
 IWAC_OCR_MODEL_PROPERTY_ID = 312      # iwac:ocrModel ("AI Model - OCR")
 IWAC_SUMMARY_MODEL_PROPERTY_ID = 313  # iwac:summaryModel ("AI Model - Summary")
 #: iwac:transcriptionModel ("AI Model - Transcription"). Declared in the IWAC
-#: vocabulary since it was first uploaded but unused until 2026-08-12: the audio
-#: pipeline's ``03`` step stamps no provenance, so a transcription's model was
-#: recorded nowhere. ``AI_youtube_transcription/03`` writes it.
+#: vocabulary since it was first uploaded but unused until 2026-08-12, when
+#: ``AI_youtube_transcription/03`` became the first step to write it; before
+#: that a transcription's model was recorded nowhere but the file header on
+#: disk. ``AI_audio_summary/03`` writes it too since 2026-08-27 — but only for
+#: the models that have an authority item, which is neither Voxtral nor either
+#: of the rolling Gemini aliases that step 02 offers.
 IWAC_TRANSCRIPTION_MODEL_PROPERTY_ID = 315
 
 #: The IWAC ontology (``iwac:``) in this instance. Its property IDs are

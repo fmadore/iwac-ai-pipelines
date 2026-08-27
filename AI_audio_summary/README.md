@@ -17,6 +17,7 @@ Omeka S or local files → Download media → AI transcription → Update databa
    - `02_AI_transcribe_audio.py` — Google Gemini (prompt-based, multimodal)
    - `02b_AI_transcribe_audio_voxtral.py` — Mistral Voxtral (dedicated transcription model with diarization)
 3. **Update** (`03_omeka_transcription_updater.py`): Store transcripts in Omeka S
+   as `bibo:content`, annotated with the model that produced them
 
 ## Quick Start
 
@@ -26,6 +27,7 @@ python 02_AI_transcribe_audio.py             # Transcribe with Gemini
 # or
 python 02b_AI_transcribe_audio_voxtral.py    # Transcribe with Voxtral
 python 03_omeka_transcription_updater.py     # Update Omeka S (--dry-run to preview)
+python 03_omeka_transcription_updater.py --no-model-annotation   # Voxtral output
 ```
 
 Or process local files by placing them in `Audio/` and running step 2.
@@ -106,6 +108,33 @@ and can be retried with `--resume`.
 ### Voxtral
 
 No splitting needed — Voxtral handles up to 3 hours per request natively.
+
+## Provenance
+
+Every value step 3 writes carries an `iwac:transcriptionModel` annotation naming
+the model behind it, so a transcript's origin survives outside the header on
+disk. The model is read from the transcripts' own `Generated using:` line, and
+`--model` overrides it.
+
+Only some of what this pipeline produces can be named that way. An annotation
+points at an Omeka authority item, and three of the four models here have none:
+
+| Header | Annotated as | Why |
+|---|---|---|
+| `Google gemini-3.7-flash` | Gemini 3.7 Flash | Pinned release, item 111774 |
+| `Google gemini-pro-latest` | — | Rolling alias: reports its version as "Gemini Pro Latest", so a run through it cannot say which release answered |
+| `Google gemini-flash-lite-latest` | — | Same |
+| `Mistral voxtral-mini-2602` | — | No authority item yet |
+
+For the three that cannot be cited, pass `--no-model-annotation` to upload the
+text without provenance, or `--model <key>` to assert the pinned release an
+alias resolved to on the day the run happened. Whichever it is, it is a flag the
+operator passes on purpose: the step stops rather than writing text whose model
+nothing records.
+
+One annotation covers the whole batch, so a `Transcriptions/` folder holding two
+models' output is refused. Move each model's transcripts into their own folder
+and run the step once per folder.
 
 ## Output Format
 

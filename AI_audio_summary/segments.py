@@ -22,7 +22,7 @@ Files written before this field existed parse fine (the field is ``None``).
 
 import re
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # Add repo root to path for shared imports
 import sys as _sys
@@ -32,6 +32,13 @@ from common.ffmpeg_utils import cleanup_files, sanitize_stem, split_audio
 from rich.console import Console
 
 console = Console()
+
+# Header field naming what produced the transcription, e.g.
+# "Generated using: Google gemini-3.7-flash". ``03`` reads it back so the
+# iwac:transcriptionModel annotation it writes can be checked against what
+# actually ran, rather than resting on the operator's memory of which script
+# filled this folder.
+GENERATOR_FIELD = "Generated using"
 
 # Header field recording the segment length used when the audio was split.
 SEGMENT_LENGTH_FIELD = "Segment length"
@@ -137,7 +144,7 @@ def write_transcription(
     try:
         with open(output_file_path, "w", encoding="utf-8") as f:
             f.write(f"Transcription of: {original_file.name}\n")
-            f.write(f"Generated using: {generator}\n")
+            f.write(f"{GENERATOR_FIELD}: {generator}\n")
             for name, value in extra_fields or []:
                 f.write(f"{name}: {value}\n")
             if segment_minutes is not None:
@@ -156,6 +163,34 @@ def write_transcription(
 # ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
+
+def read_header(path: Path) -> Dict[str, str]:
+    """Parse the metadata header of a transcription file.
+
+    Returns the ``Name: value`` lines written above the separator, e.g.
+    ``{"Transcription of": "khutba.mp3", "Generated using": "Google gemini-3.7-flash"}``.
+
+    A file with no separator has no header and yields ``{}``: never guess which
+    leading lines were metadata, because a wrong guess here would let transcript
+    text be read as a provenance claim.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except Exception as e:
+        console.print(f"[yellow]⚠[/] Warning: Could not read transcription header: {e}")
+        return {}
+
+    if _HEADER_SEPARATOR not in text:
+        return {}
+
+    header: Dict[str, str] = {}
+    head, _, _ = text.partition(_HEADER_SEPARATOR)
+    for line in head.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip():
+            header[name.strip()] = value.strip()
+    return header
+
 
 def check_existing_transcription(
     original_file: Path,
