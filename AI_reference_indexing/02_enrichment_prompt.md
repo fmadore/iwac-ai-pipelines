@@ -59,11 +59,11 @@ Some items already have subject and/or spatial keywords assigned. When existing 
 
 ## Output Format
 
-For each item, produce pipe-separated values:
+Return two lists, `subjects` and `spatial`, one term per entry (the script joins them with `|` for the CSV):
 
 ```
-Subject AI: term1|term2|term3|term4|term5
-Spatial AI: place1|place2|place3
+subjects: ["Confréries", "Tidjaniyya", "Éducation islamique", "Colonialisme", "Presse"]
+spatial: ["Dakar", "Sénégal"]
 ```
 
-If a document has no meaningful text content (empty or too short to analyze), leave both fields empty.
+If a document has no meaningful text content (empty or too short to analyze), return both lists empty.

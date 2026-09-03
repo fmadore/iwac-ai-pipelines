@@ -21,13 +21,13 @@ Usage:
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from common.console_utils import standard_progress
+from common.console_utils import key_value_table, standard_progress
 from common.downloader import stream_download
 from common.omeka_client import OmekaClient
 
@@ -183,20 +183,16 @@ def download_pdfs_from_item_set(
 
     downloader = PDFDownloader(client, output_dir)
 
-    # Display configuration
-    config_table = Table(title="Configuration", box=box.ROUNDED)
-    config_table.add_column("Setting", style="dim")
-    config_table.add_column("Value", style="green")
-    config_table.add_row("Item Set ID", str(item_set_id))
-    config_table.add_row("Output Folder", str(output_dir))
-    config_table.add_row("Max Workers", str(max_workers))
-    config_table.add_row("Omeka URL", client.base_url)
+    class_label = None
     if resource_class_id is not None:
-        class_label = f"{resource_class_id}"
-        if required_class_term:
-            class_label += f" ({required_class_term})"
-        config_table.add_row("Resource Class Filter", class_label)
-    console.print(config_table)
+        class_label = f"{resource_class_id}" + (f" ({required_class_term})" if required_class_term else "")
+    console.print(key_value_table([
+        ("Item Set ID", str(item_set_id)),
+        ("Output Folder", str(output_dir)),
+        ("Max Workers", str(max_workers)),
+        ("Omeka URL", client.base_url),
+        ("Resource Class Filter", class_label),
+    ]))
     console.print()
 
     # Retrieve all items from the specified item set
@@ -275,3 +271,73 @@ def download_pdfs_from_item_set(
     console.print(f"\n[green]{chr(10003)}[/] Download complete! PDFs saved to: [cyan]{output_dir}[/]")
 
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Entry point shared by the pipelines' ``01_omeka_pdf_downloader.py`` scripts
+# ---------------------------------------------------------------------------
+
+def run_cli(
+    argv: Optional[Sequence[str]],
+    *,
+    pipeline_dir: Path,
+    description: str,
+    resource_class_id: Optional[int] = None,
+    required_class_term: Optional[str] = None,
+) -> int:
+    """Parse ``--item-set-id`` (or ask), then download into ``<pipeline>/PDF/``.
+
+    One implementation for the OCR and magazine pipelines, which differ only in
+    whether the items are restricted to a resource class (``bibo:Issue``).
+    """
+    import argparse
+
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from common.log_redaction import install_credential_redaction
+
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--item-set-id", type=int, help="Omeka S item set to download from (asked when omitted).")
+    parser.add_argument("--workers", type=int, default=2, help="Concurrent downloads (default: 2).")
+    parser.add_argument(
+        "--output-dir", type=Path, default=pipeline_dir / "PDF",
+        help="Where the PDFs go (default: <pipeline>/PDF).",
+    )
+    args = parser.parse_args(argv)
+
+    log_dir = pipeline_dir / "log"
+    log_dir.mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO, filename=log_dir / "pdf_download.log", filemode="a",
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+    # Credentials ride in Omeka query strings; keep them out of anything
+    # urllib3 decides to log.
+    install_credential_redaction()
+
+    console = Console()
+    console.print(Panel(description, title="Omeka S PDF Downloader", border_style="cyan"))
+    console.print()
+
+    item_set_id = args.item_set_id
+    if item_set_id is None:
+        try:
+            item_set_id = int(console.input("[cyan]Enter the Omeka S item set ID:[/] ").strip())
+        except (ValueError, EOFError, KeyboardInterrupt):
+            console.print("[red]✗[/] An item set id is required.")
+            return 1
+        console.print()
+
+    try:
+        client = OmekaClient.from_env()
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 1
+
+    stats = download_pdfs_from_item_set(
+        client, item_set_id, args.output_dir,
+        resource_class_id=resource_class_id, required_class_term=required_class_term,
+        max_workers=args.workers, console=console,
+    )
+    return 0 if stats.get("failed", 0) == 0 else 1

@@ -13,6 +13,8 @@ from common.omeka_client import OmekaClient
 
 client = OmekaClient.from_env()  # Reads OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
 items = client.get_items(item_set_id=123)
+articles = client.get_items(resource_class_id=36, modified_after="2026-08-01")
+total = client.count_items(resource_class_id=36)
 item = client.get_item(456)
 client.update_item(456, item_data)
 ```
@@ -22,16 +24,33 @@ client.update_item(456, item_data)
 | Method | Description |
 |--------|-------------|
 | `OmekaClient.from_env()` | Create client from `.env` variables |
-| `get_items(item_set_id)` | Fetch all items in a set (handles pagination) |
+| `get_items(item_set_id=None, **filters)` | Every item matching any `/api/items` filter (`item_set_id`, `resource_class_id`, `resource_template_id`, `modified_after`, `property[0][…]` …); follows `Omeka-S-Total-Results` and warns if the count moves during the walk |
+| `iter_items(...)` | The same, streamed a page at a time — for a corpus whose `bibo:content` is too much to hold |
+| `count_items(**filters)` | The match count from the header, one request |
+| `list_page(page, per_page, **filters)` | One page, for samplers that pick pages at random |
+| `get_items_by_ids(ids)` | Many items in pages of `id[]`, as `{id: item}` — a write step pre-fetches this way instead of one GET per item |
+| `search_items_by_property(property_id, value)` | Items with an exact value; raises `OmekaRequestError` on a transport failure rather than answering "no match" |
 | `get_item(item_id)` | Fetch a single item by ID |
 | `get_item_set(item_set_id)` | Fetch item set metadata |
-| `update_item(item_id, data)` | PATCH an item (returns `True`/`False`) |
+| `get_property_id(term)` | Resolve a vocabulary term to its property id at runtime |
+| `update_item(item_id, data)` | PATCH an item (returns `True`/`False`); the payload must be the whole item |
+| `create_item(data)` | POST a new item |
 | `get_resource(url)` | GET any Omeka S resource URL |
+| `append_resource_links(...)` | Add `resource:item` links to a payload, skipping ids already present |
+| `upsert_property_value(...)` | **Deprecated** — drops `@annotation`, ignores `@language`; use `omeka_text_updater.apply_text_value` |
 
 The client includes:
-- **Automatic retry** on transient errors (429, 500-504) with exponential backoff
-- **Automatic pagination** — `get_items()` fetches all pages transparently
+- **Automatic retry** on transient errors (429, 500-504) with `backoff_factor=1`
+  (0, 2, 4, 8, 16 s) and `Retry-After` honoured — Omeka core never rate-limits,
+  so this is for an overloaded PHP host, not for quota
+- **Deterministic pagination** — Omeka sorts by id, and the walk stops at the
+  announced total rather than on the first short page
+- **`server_version`** — the `Omeka-S-Version` header from the last response,
+  for run provenance
 - **Environment-based configuration** via `python-dotenv`
+- Credentials go in the query string (Omeka offers no header alternative), and
+  `requests` echoes the URL in error messages: every entry point calls
+  `common.log_redaction.install_credential_redaction()` so logs stay masked
 
 ### Environment Variables
 
@@ -40,6 +59,24 @@ OMEKA_BASE_URL=https://your-instance.com/api
 OMEKA_KEY_IDENTITY=your_key_identity
 OMEKA_KEY_CREDENTIAL=your_key_credential
 ```
+
+---
+
+## Link Update and Reconciliation Runs (`link_update_cli.py`, `reconciliation_cli.py`)
+
+NER and reference indexing end the same way: reconcile `Spatial AI` / `Subject
+AI` terms against the authority records, then append the reconciled ids to
+Omeka as `dcterms:spatial` / `dcterms:subject` links. Both runs live here once;
+`AI_NER/02`, `AI_NER/03`, `AI_reference_indexing/03` and `05` are entry points
+that name their folder, banner and file tags.
+
+- `reconciliation_cli.run_reconciliation(client, csv, subject_tag=...)` —
+  spatial pass, subject + topic pass (built together so a term in both sets is
+  reported as ambiguous), fuzzy candidates for the rest.
+- `link_update_cli.run_link_update(args, output_dir=..., banner=..., backup_label=...)`
+  — model provenance from the checkpoint (`--model` overrides, prompt otherwise),
+  batch pre-fetch of every item named by the CSV, one `iwac:nerModel`
+  annotation per link added, `WriteGuard` gate and pre-write dump.
 
 ---
 
@@ -184,7 +221,7 @@ The `is_quota_exhausted()` function distinguishes between:
 - **Transient rate limits** (per-minute) → worth retrying after a short delay
 - **Quota exhaustion** (per-day, billing) → stop immediately, retrying is pointless
 
-Detection is based on HTTP 429 status + message patterns like `"exceeded your current quota"`, `"requests_per_model_per_day"`, or status `RESOURCE_EXHAUSTED`.
+Detection is based on the HTTP status (429, or 402 for a billing stop) plus message patterns that name a *daily* or *billing* quota — `"exceeded your current quota"`, `"requests_per_model_per_day"` and the like. The bare `RESOURCE_EXHAUSTED` status is deliberately **not** enough: Gemini uses it for per-minute throttling too, and a throttle is not an exhausted quota. A 429 that carries a `retryDelay` is treated as transient. `is_mistral_quota_exhausted()` applies the same idea to Mistral's error shape.
 
 ---
 
@@ -245,7 +282,10 @@ Behaviour worth knowing:
 ## Omeka Text Updater (`omeka_text_updater.py`)
 
 The `03` write step shared by `AI_summary`, `AI_ocr_extraction`,
-`AI_ocr_correction` and `AI_audio_summary`.
+`AI_ocr_correction`, `AI_audio_summary`, `AI_youtube_transcription`,
+`AI_publication_extraction` and `AI_summary_issue`. Every one of them takes the
+same `--dry-run` / `--yes` / `--backup-dir` / `--no-backup` flags from
+`common/write_guard.add_write_guard_args()`.
 
 ```python
 from common.omeka_text_updater import PropertyTarget, run_text_updates, updates_from_directory
@@ -543,6 +583,14 @@ guards against it.
 
 ## Configuration Parameters
 
+### Usage totals
+
+Every client keeps `client.usage` (`UsageTotals`): requests, input/output
+tokens, cached and reasoning tokens where the provider reports them, and cost
+where the provider states it (OpenRouter's `usage.cost`; elsewhere `None`
+rather than a guess from a rate card). `usage.summary()` is one line for a run
+summary, which NER, summarization and reference enrichment print.
+
 ### OpenAI Parameters
 
 | Parameter | Values | Default | Description |
@@ -612,14 +660,17 @@ adding a model: nothing in a model's name predicts which rungs it kept.
 
 ### Mistral Parameters
 
-Mistral takes no per-script parameters; its `temperature` of `0.2` comes from
-`MODEL_REGISTRY`.
+Mistral takes no per-script parameters; each model's `temperature` comes from
+`MODEL_REGISTRY` (`0.2` for Large 3 and Ministral, `0.3` for Small 4).
 
 **Available Mistral Models**:
 - **`mistral-large`**: Mistral Large 3 — flagship 41B active params MoE model
 - **`ministral-14b`**: Ministral 3 14B — fast, cost-effective ($0.2/M tokens)
+- **`mistral-small`**: Mistral Small 4 — hybrid reasoning; accepts `reasoning_effort` `none` or `high`
 
-**Note**: Both Mistral models support native structured outputs via `client.chat.parse()`.
+**Note**: Structured output uses `client.chat.parse()`; when a reasoning effort is
+requested on Small 4 the adapter calls `chat.complete()` and parses the JSON
+itself, because `parse()` does not document how it interacts with thinking chunks.
 
 ### OpenRouter Parameters
 
@@ -631,6 +682,14 @@ dependency.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `reasoning_effort` | `str` | per model | Only sent to models that accept one; see below |
+
+Every request carries `provider: {data_collection: "deny", require_parameters: true}`
+— no backend that trains on prompts, and only backends that support every
+parameter sent (the `json_schema` response format above all). That is a
+*training* opt-out, not a storage one: set `OPENROUTER_ZDR=1` in the
+environment to add OpenRouter's `zdr` flag and route only to endpoints that
+store nothing, at the price of a much shorter provider list (for DeepSeek it can
+leave none, and the request fails with a 503).
 
 **Available OpenRouter models**:
 - **`qwen3.5-moe` / `qwen3.5-moe-small` / `qwen3.5-dense`**: Qwen3.5 122B-A10B, 35B-A3B and 27B, all Apache-2.0 open weights. `qwen3.5-moe` was re-pointed from 35B-A3B to 122B-A10B on 2026-07-31 so the sentiment panel's open-weights members sit at comparable active-parameter counts (10B vs DeepSeek V4 Flash's 13B; 35B-A3B activates only 3B)

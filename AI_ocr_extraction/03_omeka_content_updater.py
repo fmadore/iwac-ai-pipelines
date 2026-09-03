@@ -44,6 +44,7 @@ from common.iwac_config import (
     select_model_key,
 )
 from common.log_redaction import install_credential_redaction
+from common.write_guard import WriteGuard, add_write_guard_args
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
@@ -51,6 +52,8 @@ install_credential_redaction()
 
 CONTENT_TERM = "bibo:content"
 OCR_MODEL_TERM = "iwac:ocrModel"
+PIPELINE_DIR = Path(__file__).resolve().parent
+BACKUP_DIR = PIPELINE_DIR / "backups"
 
 
 def main() -> int:
@@ -62,15 +65,10 @@ def main() -> int:
         "--model", choices=list(AI_MODEL_ITEMS),
         help="OCR model used for extraction. Prompts interactively when omitted.",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Fetch each item and report what would change, but write nothing.",
-    )
-    parser.add_argument(
-        "--yes", action="store_true",
-        help="Skip the interactive confirmation before writing.",
-    )
+    add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
     args = parser.parse_args()
+    guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
+    backup_dir = guard.backup_dir if guard.backup_enabled else None
 
     console.print(Panel(
         "[bold]Update Omeka S items with OCR extracted text[/]\n\n"
@@ -103,12 +101,13 @@ def main() -> int:
     )
     console.print()
 
-    ocr_folder = Path(__file__).resolve().parent / "OCR_Results"
+    ocr_folder = PIPELINE_DIR / "OCR_Results"
     console.print(key_value_table([
         ("OCR Results Folder", str(ocr_folder)),
         ("Omeka URL", client.base_url),
         ("OCR Model", ocr_model_value["display_title"]),
-        ("Mode", "DRY RUN — no writes" if args.dry_run else "LIVE update"),
+        ("Mode", guard.mode_label),
+        ("Backup", str(backup_dir) if backup_dir else "disabled"),
     ]))
     console.print()
 
@@ -128,10 +127,12 @@ def main() -> int:
     stats = run_text_updates(
         client, updates, target,
         console=console,
-        dry_run=args.dry_run,
-        require_confirmation=not args.yes,
+        dry_run=guard.dry_run,
+        require_confirmation=not guard.assume_yes,
         extra_confirm_lines=[f"Source folder:    {ocr_folder}"],
         description="Updating OCR content...",
+        backup_dir=backup_dir,
+        backup_label="ocr_content",
     )
     if not stats:
         return 1  # operator declined

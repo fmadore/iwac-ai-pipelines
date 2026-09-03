@@ -27,6 +27,7 @@ The script sends video directly to Gemini, which analyzes both audio and visual 
 Or specify options directly:
 ```bash
 python AI_video_summary.py --model gemini-3.7-flash
+python AI_video_summary.py --model gemini-3.7-flash --prompt 1   # no menu: prompt 1 (0 = built-in)
 ```
 
 ## Processing Modes

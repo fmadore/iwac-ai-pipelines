@@ -53,7 +53,6 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Iterator, TextIO
 from functools import partial
 
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 # Rich console for beautiful output
@@ -66,9 +65,7 @@ from rich import box
 console = Console()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
@@ -85,6 +82,7 @@ from common.llm_provider import (  # noqa: E402
     BaseLLMClient,
     ModelOption,
     LLMConfig,
+    UsageTotals,
     build_llm_client,
     get_model_option,
     summary_from_option,
@@ -104,7 +102,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # out of anything urllib3 or an SDK decides to log.
 install_credential_redaction()
 logger = logging.getLogger(__name__)
-load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Constants & Types
@@ -449,7 +446,7 @@ async def process_items_async(items: List[Dict[str, Any]], output_csv: str, stat
 # Summary
 # ---------------------------------------------------------------------------
 
-def summarize(stats: ProcessingStats, output_csv: str) -> None:
+def summarize(stats: ProcessingStats, output_csv: str, usage: Optional[UsageTotals] = None) -> None:
     elapsed = (datetime.now() - stats.start_time).total_seconds()
     speed = stats.processed_items / elapsed if elapsed else 0
     success_rate = (stats.successful_items / stats.total_items * 100) if stats.total_items else 0
@@ -470,6 +467,8 @@ def summarize(stats: ProcessingStats, output_csv: str) -> None:
     summary_table.add_row("⏱️ Duration", f"{elapsed:.1f}s")
     summary_table.add_row("⚡ Speed", f"{speed:.2f} items/s")
     summary_table.add_row("📁 Output", output_csv)
+    if usage is not None and usage.requests:
+        summary_table.add_row("💸 Model usage", usage.summary())
 
     console.print(summary_table)
 
@@ -678,7 +677,7 @@ async def async_main(args) -> None:
                                   setup.config.batch_size, ner_fn, progress, task_id,
                                   resume=setup.resume)
 
-    summarize(stats, setup.output_csv)
+    summarize(stats, setup.output_csv, setup.llm_client.usage)
 
 def main() -> None:
     args = parse_arguments()
@@ -704,7 +703,7 @@ def main() -> None:
                     setup.items, writer, stats, setup.spatial_filter, ner_fn, progress, task_id
                 )
 
-        summarize(stats, setup.output_csv)
+        summarize(stats, setup.output_csv, setup.llm_client.usage)
     except (CheckpointMismatch, ValueError) as exc:
         console.print(f"[red]✗[/] {exc}")
 

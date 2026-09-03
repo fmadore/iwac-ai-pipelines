@@ -12,7 +12,7 @@ request, and the generation settings.
 
 Usage:
     python 02_gemini_ocr_processor.py
-    python 02_gemini_ocr_processor.py --model gemini-pro --rpm 5
+    python 02_gemini_ocr_processor.py --model gemini-3.1-pro --rpm 5
 
 Requirements:
     - Environment variable: GEMINI_API_KEY
@@ -110,7 +110,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main():
+def main() -> int:
     """Orchestrate the page-by-page PDF OCR process."""
     args = parse_args()
 
@@ -214,14 +214,17 @@ def main():
         title="✨ OCR Complete",
         border_style="green",
     ))
+    return 0 if batch.failed == 0 else 1
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         console.print("\n[yellow]⚠[/] Process interrupted by user")
         logging.info("Process interrupted by user")
+        sys.exit(130)
     except Exception as e:
         console.print(f"\n[red]✗[/] An error occurred: {e}")
         logging.error(f"An error occurred: {e}", exc_info=True)
+        sys.exit(1)

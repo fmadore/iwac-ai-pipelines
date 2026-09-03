@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import logging
+from dataclasses import dataclass
 import re
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
@@ -68,6 +69,7 @@ from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     OPENROUTER_BASE_URL,
     OPENROUTER_HEADERS,
     OPENROUTER_PROVIDER_PREFS,
+    OPENROUTER_ZDR_ENV,
     PROVIDER_GEMINI,
     PROVIDER_MISTRAL,
     PROVIDER_OPENAI,
@@ -86,11 +88,81 @@ from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     summary_from_option,
 )
 
+@dataclass
+class UsageTotals:
+    """Tokens and cost accumulated over a client's lifetime.
+
+    Every adapter records what its provider reports after each call, so a
+    pipeline can print what a run cost beside what it produced. ``cost`` is
+    only known where the provider states it (OpenRouter); elsewhere it stays
+    ``None`` rather than being guessed from a rate card.
+    """
+
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost_usd: Optional[float] = None
+
+    def add(
+        self,
+        *,
+        input_tokens: Any = None,
+        output_tokens: Any = None,
+        cached_input_tokens: Any = None,
+        reasoning_tokens: Any = None,
+        cost_usd: Any = None,
+    ) -> None:
+        self.requests += 1
+        self.input_tokens += _as_int(input_tokens)
+        self.output_tokens += _as_int(output_tokens)
+        self.cached_input_tokens += _as_int(cached_input_tokens)
+        self.reasoning_tokens += _as_int(reasoning_tokens)
+        if isinstance(cost_usd, (int, float)) and not isinstance(cost_usd, bool):
+            self.cost_usd = (self.cost_usd or 0.0) + float(cost_usd)
+
+    def summary(self) -> str:
+        """One line for a run summary, e.g. ``12 calls · 40,120 in / 3,800 out tokens · $0.0210``."""
+        parts = [f"{self.requests:,} calls", f"{self.input_tokens:,} in / {self.output_tokens:,} out tokens"]
+        if self.cached_input_tokens:
+            parts.append(f"{self.cached_input_tokens:,} cached")
+        if self.reasoning_tokens:
+            parts.append(f"{self.reasoning_tokens:,} reasoning")
+        if self.cost_usd is not None:
+            parts.append(f"${self.cost_usd:,.4f}")
+        return " · ".join(parts)
+
+
+def _as_int(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _attr(obj: Any, *names: str) -> Any:
+    """Walk ``obj.a.b`` / ``obj["a"]["b"]``, returning None when any step is missing."""
+    current = obj
+    for name in names:
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(name)
+        else:
+            current = getattr(current, name, None)
+    return current
+
+
 class BaseLLMClient:
     """Minimal interface implemented by provider-specific clients."""
 
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
         self.option = option
+        #: What this client has consumed so far — see :class:`UsageTotals`.
+        self.usage = UsageTotals()
         # Fill in defaults from ModelOption when not explicitly set
         model_defaults = LLMConfig(
             temperature=option.default_temperature,
@@ -110,12 +182,12 @@ class BaseLLMClient:
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         """Generate content with optional per-request config override.
-        
+
         Args:
             system_prompt: System instruction for the model
             user_prompt: User's input/question
             config: Optional config to override client defaults for this request only
-        
+
         Returns:
             Generated text response
         """
@@ -130,29 +202,29 @@ class BaseLLMClient:
         config: Optional[LLMConfig] = None
     ) -> T:
         """Generate structured output conforming to a Pydantic schema.
-        
+
         This method uses native structured output support from both OpenAI and Gemini APIs
         to guarantee valid JSON matching your schema. No manual JSON parsing needed.
-        
+
         Args:
             system_prompt: System instruction for the model
             user_prompt: User's input/question
             response_schema: A Pydantic BaseModel class defining the expected output structure
             config: Optional config to override client defaults for this request only
-        
+
         Returns:
             Instance of response_schema populated with model's response
-        
+
         Example:
             from pydantic import BaseModel
             from typing import List
-            
+
             class NERResult(BaseModel):
                 persons: List[str]
                 organizations: List[str]
                 locations: List[str]
                 subjects: List[str]
-            
+
             result = client.generate_structured(
                 system_prompt="Extract named entities...",
                 user_prompt=text_content,
@@ -176,17 +248,31 @@ class OpenAIResponsesClient(BaseLLMClient):
             client_kwargs["max_retries"] = self.config.sdk_max_retries
         self._client = OpenAI(**client_kwargs)
 
+    @staticmethod
+    def _tier_kwargs(effective_config: LLMConfig) -> Dict[str, Any]:
+        """``service_tier`` only when asked for: absent means the project default."""
+        tier = effective_config.service_tier
+        return {"service_tier": tier} if tier else {}
+
+    def _record_usage(self, response: Any) -> None:
+        self.usage.add(
+            input_tokens=_attr(response, "usage", "input_tokens"),
+            output_tokens=_attr(response, "usage", "output_tokens"),
+            cached_input_tokens=_attr(response, "usage", "input_tokens_details", "cached_tokens"),
+            reasoning_tokens=_attr(response, "usage", "output_tokens_details", "reasoning_tokens"),
+        )
+
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
-        
+
         # Use configured values or model defaults
         reasoning_effort = effective_config.reasoning_effort
         text_verbosity = effective_config.text_verbosity
-        
+
         LOGGER.debug(
             f"OpenAI request with reasoning_effort={reasoning_effort}, text_verbosity={text_verbosity}"
         )
-        
+
         response = self._client.responses.create(
             model=self.option.model,
             input=[
@@ -200,7 +286,9 @@ class OpenAIResponsesClient(BaseLLMClient):
             reasoning={"effort": reasoning_effort},
             tools=[],
             store=bool(effective_config.store),
+            **self._tier_kwargs(effective_config),
         )
+        self._record_usage(response)
         raw_output = getattr(response, "output_text", None)
         if raw_output:
             return raw_output.strip()
@@ -253,7 +341,9 @@ class OpenAIResponsesClient(BaseLLMClient):
             text={"verbosity": text_verbosity},
             reasoning={"effort": reasoning_effort},
             store=bool(effective_config.store),
+            **self._tier_kwargs(effective_config),
         )
+        self._record_usage(response)
 
         parsed = getattr(response, "output_parsed", None)
         if parsed is not None:
@@ -313,7 +403,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
 
         if genai_types is None:
             return gen_config_kwargs
-        
+
         try:
             thinking_level = effective_config.thinking_level
             if thinking_level is None:
@@ -343,16 +433,16 @@ class GeminiGenerateContentClient(BaseLLMClient):
             LOGGER.debug(f"Gemini 3 request with thinking_level={thinking_level}, temperature={temp}")
         except Exception as exc:  # pragma: no cover - optional field
             LOGGER.warning("Failed to configure thinking mode: %s", exc)
-        
+
         return gen_config_kwargs
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
         gen_config_kwargs = self._build_generation_config(effective_config)
-        
+
         # Use system_instruction parameter for system prompts (modern API)
         gen_config_kwargs["system_instruction"] = system_prompt
-        
+
         if genai_types is None:
             raise RuntimeError("google-genai package is required for Gemini generation")
         try:
@@ -367,8 +457,17 @@ class GeminiGenerateContentClient(BaseLLMClient):
             contents=user_prompt,
             config=gen_config,
         )
+        self._record_usage(response)
         text = getattr(response, "text", None)
         return text.strip() if isinstance(text, str) else ""
+
+    def _record_usage(self, response: Any) -> None:
+        self.usage.add(
+            input_tokens=_attr(response, "usage_metadata", "prompt_token_count"),
+            output_tokens=_attr(response, "usage_metadata", "candidates_token_count"),
+            cached_input_tokens=_attr(response, "usage_metadata", "cached_content_token_count"),
+            reasoning_tokens=_attr(response, "usage_metadata", "thoughts_token_count"),
+        )
 
     def generate_structured(
         self,
@@ -379,7 +478,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
         config: Optional[LLMConfig] = None
     ) -> T:
         """Generate structured output using Gemini's native JSON schema support.
-        
+
         Uses response_mime_type='application/json' and response_schema with the Pydantic
         class directly to guarantee valid JSON matching the provided schema.
         """
@@ -387,35 +486,36 @@ class GeminiGenerateContentClient(BaseLLMClient):
             raise RuntimeError("pydantic package is required for structured outputs")
         if genai_types is None:
             raise RuntimeError("google-genai package is required for structured outputs")
-        
+
         effective_config = self._get_effective_config(config)
         gen_config_kwargs = self._build_generation_config(effective_config)
-        
+
         # Use system_instruction and pass Pydantic model directly to response_schema
         gen_config_kwargs["system_instruction"] = system_prompt
         gen_config_kwargs["response_mime_type"] = "application/json"
         gen_config_kwargs["response_schema"] = response_schema  # Pass Pydantic class directly
-        
+
         LOGGER.debug(
             f"Gemini structured request with schema={response_schema.__name__}, "
             f"temperature={gen_config_kwargs.get('temperature')}"
         )
-        
+
         try:
             gen_config = genai_types.GenerateContentConfig(**gen_config_kwargs)
         except Exception as exc:
             raise RuntimeError(f"Failed to configure Gemini structured output: {exc}") from exc
-        
+
         response = self._client.models.generate_content(
             model=self.option.model,
             contents=user_prompt,
             config=gen_config,
         )
-        
+        self._record_usage(response)
+
         text = getattr(response, "text", None)
         if not text:
             raise ValueError("No output received from Gemini structured response")
-        
+
         # Parse and validate with Pydantic
         return response_schema.model_validate_json(text.strip())
 
@@ -466,7 +566,7 @@ class MistralClient(BaseLLMClient):
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
         temp = effective_config.temperature
-        
+
         LOGGER.debug(f"Mistral request with temperature={temp}")
 
         effort = self._resolve_reasoning_effort(effective_config)
@@ -480,11 +580,18 @@ class MistralClient(BaseLLMClient):
             **({} if effort is None else {"reasoning_effort": effort}),
         )
 
+        self._record_usage(response)
         if response.choices and len(response.choices) > 0:
             # Reasoning mode returns a chunk list, not a string; keep only the
             # answer text and drop the thinking chunk.
             return self._content_text(response.choices[0].message.content).strip()
         return ""
+
+    def _record_usage(self, response: Any) -> None:
+        self.usage.add(
+            input_tokens=_attr(response, "usage", "prompt_tokens"),
+            output_tokens=_attr(response, "usage", "completion_tokens"),
+        )
 
     @staticmethod
     def _content_text(content: Any) -> str:
@@ -558,6 +665,7 @@ class MistralClient(BaseLLMClient):
                 response_format=response_schema,
                 **common,
             )
+            self._record_usage(response)
             if response.choices:
                 parsed = response.choices[0].message.parsed
                 if parsed is not None:
@@ -577,6 +685,7 @@ class MistralClient(BaseLLMClient):
             },
             **common,
         )
+        self._record_usage(response)
         if not response.choices:
             raise ValueError("No output received from Mistral structured response")
         text = self._content_text(response.choices[0].message.content).strip()
@@ -645,11 +754,23 @@ class OpenRouterClient(BaseLLMClient):
 
     def _extra_body(self, effective_config: LLMConfig) -> Dict[str, Any]:
         """Build the OpenRouter-only part of the request body."""
-        body: Dict[str, Any] = {"provider": dict(OPENROUTER_PROVIDER_PREFS)}
+        provider = dict(OPENROUTER_PROVIDER_PREFS)
+        if os.getenv(OPENROUTER_ZDR_ENV, "").strip().lower() in ("1", "true", "yes"):
+            provider["zdr"] = True  # no storage at all, see llm_registry
+        body: Dict[str, Any] = {"provider": provider}
         effort = self._resolve_reasoning_effort(effective_config)
         if effort:
             body["reasoning"] = {"effort": effort}
         return body
+
+    def _record_usage(self, response: Any) -> None:
+        self.usage.add(
+            input_tokens=_attr(response, "usage", "prompt_tokens"),
+            output_tokens=_attr(response, "usage", "completion_tokens"),
+            cached_input_tokens=_attr(response, "usage", "prompt_tokens_details", "cached_tokens"),
+            reasoning_tokens=_attr(response, "usage", "completion_tokens_details", "reasoning_tokens"),
+            cost_usd=_attr(response, "usage", "cost"),
+        )
 
     def _request_headers(self) -> Dict[str, str]:
         """Extra headers for every request. Subclasses serving a different
@@ -736,6 +857,7 @@ class OpenRouterClient(BaseLLMClient):
             extra_body=self._extra_body(effective_config),
             extra_headers=self._request_headers(),
         )
+        self._record_usage(response)
         return self._message_text(self._first_message(response)).strip()
 
     def generate_structured(
@@ -776,6 +898,7 @@ class OpenRouterClient(BaseLLMClient):
         response = self.structured_response(
             system_prompt, user_prompt, response_schema, effective_config
         )
+        self._record_usage(response)
 
         message = self._first_message(response)
 
@@ -935,25 +1058,25 @@ def _extract_json_payload(text: str) -> str:
 
 def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None, temperature: Optional[float] = None) -> BaseLLMClient:
     """Build an LLM client with optional configuration.
-    
+
     Args:
         option: Model selection from MODEL_REGISTRY
         config: Optional LLMConfig for customizing behavior
         temperature: Deprecated - overrides the model's vendor-recommended default,
                      which is rarely what you want (see LLMConfig). Kept only for
                      backward compatibility.
-    
+
     Returns:
         Configured LLM client ready for generate() calls
-    
+
     Example:
         # Simple usage with defaults
         client = build_llm_client(option)
-        
+
         # High-quality reasoning for complex tasks
         config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
         client = build_llm_client(option, config=config)
-        
+
         # Fast processing with minimal thinking
         config = LLMConfig(thinking_level="minimal")
         client = build_llm_client(option, config=config)

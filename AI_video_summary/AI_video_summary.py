@@ -12,6 +12,7 @@ Supports:
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -399,6 +400,12 @@ Examples:
         default=None,
         help="Rate limit: maximum requests per minute (default: no limit)"
     )
+    parser.add_argument(
+        "--prompt",
+        type=int,
+        default=None,
+        help="Prompt number from prompts/ (0 = built-in default) instead of the menu",
+    )
     return parser.parse_args()
 
 
@@ -423,7 +430,7 @@ def select_model_interactive():
     return 'gemini-pro-latest'
 
 
-def main():
+def main() -> int:
     """
     Main function to run the video processing script.
     """
@@ -452,6 +459,7 @@ def main():
             console,
             default_prompt=DEFAULT_PROMPT,
             title="Available Processing Modes",
+            preselected=args.prompt,
         )
 
         # Display configuration
@@ -477,6 +485,7 @@ def main():
             video_folder=args.video_folder,
             output_folder=args.output_folder
         )
+        return 0
 
     except ValueError as e:
         console.print(f"\n[red]✗ Configuration Error:[/] {e}")
@@ -485,11 +494,13 @@ def main():
         console.print("  2. Create or edit a .env file in this directory")
         console.print("  3. Add: GEMINI_API_KEY=your-api-key-here")
         console.print("  4. Save the file and run this script again")
+        return 1
 
     except Exception:
         console.print("\n[red]✗ Unexpected error:[/]")
         console.print_exception()
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

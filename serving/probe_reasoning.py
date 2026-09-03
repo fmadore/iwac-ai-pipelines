@@ -102,12 +102,7 @@ def fetch_articles(
     if item_ids:
         items = [client.get_item(item_id) for item_id in item_ids]
     else:
-        url = (
-            f"{client.base_url}/items"
-            f"?resource_class_id={ARTICLE_CLASS_ID}&per_page=50&page=1"
-        )
-        result = client.get_resource(url)
-        items = result if isinstance(result, list) else []
+        items = client.list_page(1, 50, resource_class_id=ARTICLE_CLASS_ID)
 
     usable = [
         item for item in items

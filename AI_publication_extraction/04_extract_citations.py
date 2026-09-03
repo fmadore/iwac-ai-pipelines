@@ -281,6 +281,22 @@ def cites_values(citations: List[Citation]) -> List[Dict[str, Any]]:
     ]
 
 
+def _values_match(stored: Any, wanted: List[Dict[str, Any]]) -> bool:
+    """True when the stored values already say what *wanted* would write.
+
+    Omeka echoes every value back with server-added keys (``@annotation``,
+    ``value_resource_name`` …), so an exact list comparison never matches and
+    every re-run would re-PATCH and re-dump a backup. Compare only the keys
+    this pipeline sends, in order.
+    """
+    if not isinstance(stored, list) or len(stored) != len(wanted):
+        return False
+    return all(
+        isinstance(have, dict) and all(have.get(key) == value for key, value in want.items())
+        for have, want in zip(stored, wanted, strict=True)
+    )
+
+
 def write_citations(
     client: OmekaClient,
     item_id: int,
@@ -297,7 +313,7 @@ def write_citations(
         return "not_found"
 
     values = cites_values(citations)
-    if item_data.get(CITES_TERM) == values:
+    if _values_match(item_data.get(CITES_TERM), values):
         return "unchanged"
 
     if guard.dry_run:

@@ -7,18 +7,12 @@ Google's NotebookLM AI research tool.
 
 === Overview ===
 
-The IWAC (Institut des mondes africains) project digitizes West African newspapers
-from the colonial and post-independence periods. This script helps researchers
-export collections of articles in a format that NotebookLM can easily process
-for analysis, summarization, and question-answering.
+The Islam West Africa Collection (IWAC) holds digitised West African newspaper
+articles from the 1960s onwards. This script helps researchers export a
+selection of them in a format that NotebookLM can process for analysis,
+summarisation and question-answering.
 
 === Export Modes ===
-
-Three main export modes are supported:em to NotebookLM-ready Markdown exporter.
-
-This script fetches all newspaper articles linked to a single Omeka item and
-exports them to one consolidated UTF-8 Markdown file that’s easy to ingest into
-NotebookLM.
 
 Input
 - Option A: Export the whole IWAC collection (predefined country -> item set IDs)

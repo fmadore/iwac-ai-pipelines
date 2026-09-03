@@ -108,6 +108,33 @@ class JsonCheckpoint:
         )
 
 
+def checkpoint_path_for(output_path: Path) -> Path:
+    """The checkpoint that sits beside a pipeline output file.
+
+    ``item_set_1_processed_x.csv`` -> ``item_set_1_processed_x.csv.checkpoint.json``.
+    One naming rule, so a downstream step can find the provenance of the file
+    it was handed without the upstream step having to pass it along.
+    """
+    output_path = Path(output_path)
+    return output_path.with_suffix(output_path.suffix + ".checkpoint.json")
+
+
+def read_checkpoint_context(output_path: Path) -> Dict[str, Any]:
+    """Return the run context recorded beside *output_path*, or ``{}``.
+
+    Tolerant on purpose: this is how a write step recovers which model
+    produced the file it is about to upload, so a missing or unreadable
+    checkpoint means "ask the operator", never "abort".
+    """
+    path = checkpoint_path_for(output_path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    context = payload.get("context") if isinstance(payload, dict) else None
+    return dict(context) if isinstance(context, dict) else {}
+
+
 def load_csv_ids(path: Path, id_column: str) -> set[str]:
     """Return completed IDs from a CSV; a malformed/missing header is unsafe."""
     import csv

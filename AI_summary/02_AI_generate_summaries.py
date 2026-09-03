@@ -15,7 +15,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Tuple
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 from rich.console import Console
@@ -24,9 +23,7 @@ from rich.table import Table
 from rich import box
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.llm_provider import (  # noqa: E402
     LEGACY_CLI_MODEL_KEYS,
@@ -52,7 +49,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
 install_credential_redaction()
-load_dotenv()
 console = Console()
 
 # Restricted to the cost-effective tiers — summarization does not need a flagship.
@@ -269,6 +265,12 @@ def main():
         "--workers", type=int, default=DEFAULT_WORKERS,
         help=f"Concurrent model calls (default: {DEFAULT_WORKERS}; 1 = serial)",
     )
+    parser.add_argument(
+        "--service-tier", choices=["flex", "priority"], default=None,
+        help="OpenAI only: 'flex' runs at about half price with slower, occasionally "
+             "refused completions (a retry then succeeds) — right for an overnight corpus "
+             "pass; 'priority' is the faster, dearer trade. Default: the project setting.",
+    )
     args = parser.parse_args()
     if args.workers < 1:
         parser.error("--workers must be at least 1")
@@ -321,7 +323,10 @@ def main():
         config = LLMConfig(
             reasoning_effort="low",      # OpenAI: quick summarization
             text_verbosity="low",        # OpenAI: concise output
-            thinking_level="MINIMAL",    # Gemini Flash: minimal thinking for speed
+            thinking_level="minimal",    # Gemini: the shallowest level the model offers
+            service_tier=args.service_tier,
+            # Flex completions can queue for minutes; give them the room.
+            request_timeout_seconds=900.0 if args.service_tier == "flex" else None,
             # No temperature: MODEL_REGISTRY holds each vendor's recommendation.
         )
 
@@ -344,9 +349,11 @@ def main():
             llm_client, input_dir, french_dir, english_dir, system_prompt, checkpoint,
             workers=args.workers,
         )
-        
+
         # Display results
         console.print()
+        if llm_client.usage.requests:
+            console.print(f"[dim]Model usage: {llm_client.usage.summary()}[/]")
         if error_count == 0 and success_count > 0:
             console.print(Panel.fit(
                 f"[bold green]✓ Completed successfully![/bold green]\n\n"
@@ -377,7 +384,7 @@ def main():
                 border_style="red",
                 box=box.ROUNDED
             ))
-            
+
     except (FileNotFoundError, ValueError) as err:
         console.print(f"\n[red]✗ Error:[/red] {err}")
     except KeyboardInterrupt:

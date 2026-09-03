@@ -12,12 +12,11 @@ both deliberate:
   is auditable, and provenance goes into a value annotation instead.
 
 * **Provenance is recorded.** Each value carries an ``iwac:transcriptionModel``
-  annotation naming the model that produced it — the property has been declared
-  in the IWAC vocabulary since it was first uploaded (id 315, "AI Model -
-  Transcription") and, until this pipeline, nothing wrote it, so a transcription's
-  model was recorded nowhere. This is why step 02 offers only *pinned* model ids:
-  an annotation naming ``gemini-flash-latest`` would assert a version the run
-  cannot confirm.
+  annotation naming the model that produced it (property 315, "AI Model -
+  Transcription"; this pipeline was the first to write it, and
+  ``AI_audio_summary/03`` does too since 2026-08-27). This is why step 02 offers
+  only *pinned* model ids: an annotation naming ``gemini-flash-latest`` would
+  assert a version the run cannot confirm.
 
 Transcripts are named ``<item_id>.txt``, so no identifier lookup is needed.
 Incomplete transcripts — where a window failed and the header records

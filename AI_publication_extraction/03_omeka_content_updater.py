@@ -49,6 +49,7 @@ from common.iwac_config import (
     select_model_key,
 )
 from common.log_redaction import install_credential_redaction
+from common.write_guard import add_write_guard_args
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import (
     PropertyTarget,
@@ -104,22 +105,7 @@ def main() -> int:
         "--item-id", type=int, action="append", dest="item_ids",
         help="Restrict the write to these item ids. Repeatable.",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Fetch each item and report what would change, but write nothing.",
-    )
-    parser.add_argument(
-        "--yes", action="store_true",
-        help="Skip the interactive confirmation before writing.",
-    )
-    parser.add_argument(
-        "--backup-dir", type=Path, default=BACKUP_DIR,
-        help="Where pre-write payloads are dumped (the only route back).",
-    )
-    parser.add_argument(
-        "--no-backup", action="store_true",
-        help="Do not dump pre-write payloads. Not recommended.",
-    )
+    add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
     args = parser.parse_args()
 
     console.print(Panel(

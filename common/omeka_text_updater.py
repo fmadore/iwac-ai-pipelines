@@ -36,6 +36,7 @@ Usage:
 
 import copy
 import json
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -43,10 +44,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from rich.console import Console
-from rich.panel import Panel
 
 from common.console_utils import count_table, standard_progress
 from common.omeka_client import OmekaClient
+from common.write_guard import WriteGuard
 
 # Outcome buckets, in the order they are reported.
 STATUSES = ("updated", "would_update", "unchanged", "empty", "not_found", "failed")
@@ -284,10 +285,13 @@ def open_backup(
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"_pre_write_{label}_{stamp}.jsonl"
 
+    lock = threading.Lock()  # concurrent writers (the sentiment panel) must not interleave lines
     with path.open("w", encoding="utf-8") as handle:
         def sink(payload: Dict[str, Any]) -> None:
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            handle.flush()  # the PATCH follows immediately; an unflushed line is no backup
+            line = json.dumps(payload, ensure_ascii=False) + "\n"
+            with lock:
+                handle.write(line)
+                handle.flush()  # the PATCH follows immediately; an unflushed line is no backup
 
         sink.path = path  # type: ignore[attr-defined]
         yield sink
@@ -366,6 +370,29 @@ def updates_from_directory(
     ]
 
 
+def describe_targets(updates: Sequence[TextUpdate], target: PropertyTarget) -> List[str]:
+    """Panel lines naming every property and annotation a batch will write.
+
+    Every distinct target across the batch, so a bilingual run names both
+    values it is about to write rather than only the main one.
+    """
+    targets: List[PropertyTarget] = [target]
+    for update in updates:
+        for extra_target, _ in update.extra_values:
+            if extra_target not in targets:
+                targets.append(extra_target)
+    lines = []
+    for index, written in enumerate(targets):
+        label = "Property:     " if index == 0 else " " * 14
+        lines.append(f"{label} {written.describe()}")
+    if target.annotation_term and target.annotation_value:
+        lines.append(
+            f"Annotation:    {target.annotation_term} -> "
+            f"{target.annotation_value.get('display_title', '?')}"
+        )
+    return lines
+
+
 def confirm_write(
     console: Console,
     updates: Sequence[TextUpdate],
@@ -374,57 +401,23 @@ def confirm_write(
     *,
     dry_run: bool,
     extra_lines: Sequence[str] = (),
+    guard: Optional[WriteGuard] = None,
 ) -> bool:
     """Show what is about to be written and, in live mode, ask to proceed.
 
-    Returns False when the operator declines. Bulk PATCH against a live archive
-    is not something to start from a bare argv.
+    One gate for every write step: this is ``WriteGuard.confirm`` with the
+    text-update details filled in, so the panel and the EOF-is-not-consent
+    rule are the same whether a script writes literals or resource links.
     """
-    # Every distinct target across the batch, so a bilingual run names both
-    # values it is about to write rather than only the main one.
-    targets: List[PropertyTarget] = [target]
-    for update in updates:
-        for extra_target, _ in update.extra_values:
-            if extra_target not in targets:
-                targets.append(extra_target)
-
-    lines = [
-        f"Items to update:  {len(updates)}",
-        f"Omeka:            {client.base_url}",
-    ]
-    for index, written in enumerate(targets):
-        label = "Property written:" if index == 0 else " " * 17
-        lines.append(f"{label} {written.describe()}")
-    if target.annotation_term and target.annotation_value:
-        lines.append(
-            f"Annotation:       {target.annotation_term} -> "
-            f"{target.annotation_value.get('display_title', '?')}"
-        )
-    lines.extend(extra_lines)
-    lines.append(f"Mode:             {'DRY RUN — no writes' if dry_run else 'LIVE update'}")
-
-    console.print(Panel(
-        "\n".join(lines),
+    guard = guard or WriteGuard(dry_run=dry_run)
+    return guard.confirm(
+        console,
+        action=f"Update {len(updates)} item(s)",
+        base_url=client.base_url,
+        item_count=len(updates),
+        details=[*describe_targets(updates, target), *extra_lines],
         title="About to update Omeka",
-        border_style="cyan" if dry_run else "yellow",
-    ))
-
-    if dry_run:
-        return True
-
-    # An EOF is not consent. Matches WriteGuard.confirm: a run with no stdin —
-    # cron, a pipe, a subprocess — must pass --yes on purpose rather than have
-    # the gate crash out of the try block in run_text_updates and be counted as
-    # a failure after some items were already written.
-    try:
-        answer = console.input("\n[bold]Proceed with updating these items? [y/N]:[/] ")
-    except (EOFError, KeyboardInterrupt):
-        console.print("\n[yellow]No answer on stdin — aborted, nothing written.[/]")
-        return False
-    if answer.strip().lower() not in ("y", "yes"):
-        console.print("[yellow]Aborted — no changes made.[/]")
-        return False
-    return True
+    )
 
 
 def run_text_updates(
@@ -439,12 +432,16 @@ def run_text_updates(
     description: str = "Updating items...",
     backup_dir: Optional[Path] = None,
     backup_label: str = "text_update",
+    guard: Optional[WriteGuard] = None,
 ) -> Dict[str, int]:
     """Run the whole write step: confirm, PATCH each item, print a summary.
 
-    When *backup_dir* is set, every item's pre-write JSON is appended to a
-    timestamped ``.jsonl`` there before its PATCH — the only route back from a
-    bulk overwrite.
+    Pass a :class:`WriteGuard` (built from ``add_write_guard_args``) and it
+    supplies the dry-run flag, the confirmation policy and the backup folder;
+    the older keyword arguments remain for callers that resolve those
+    themselves. Every item's pre-write JSON is appended to a timestamped
+    ``.jsonl`` in the backup folder before its PATCH — the only route back
+    from a bulk overwrite.
 
     Returns:
         A dict of :data:`STATUSES` counts. An empty dict means the operator
@@ -452,19 +449,21 @@ def run_text_updates(
     """
     console = console or Console()
     stats: Dict[str, int] = {status: 0 for status in STATUSES}
+    if guard is not None:
+        dry_run = guard.dry_run
+        require_confirmation = not guard.assume_yes
+        backup_dir = guard.backup_dir if guard.backup_enabled else None
+    else:
+        guard = WriteGuard(dry_run=dry_run, assume_yes=not require_confirmation, backup_dir=backup_dir,
+                           backup_enabled=backup_dir is not None)
 
     if not updates:
         console.print("[yellow]⚠[/] Nothing to update.")
         return stats
 
-    backup_note = (
-        f"Backup:           {backup_dir}" if backup_dir and not dry_run
-        else "Backup:           [red]disabled — no route back[/]" if not dry_run
-        else None
-    )
     if require_confirmation and not confirm_write(
         console, updates, target, client, dry_run=dry_run,
-        extra_lines=[*extra_confirm_lines, *([backup_note] if backup_note else [])],
+        extra_lines=list(extra_confirm_lines), guard=guard,
     ):
         return {}
 

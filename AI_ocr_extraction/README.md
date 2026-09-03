@@ -45,7 +45,7 @@ enough for the difference to show.
 
 ### Mistral OCR
 
-Uses Mistral's dedicated Document AI endpoint as `mistral-ocr-latest`, which resolves server-side to the latest release (OCR 4). The whole PDF is sent in a **single call** — no page splitting — and the model's Markdown output is normalised to plain text so `bibo:content` stays consistent with the Gemini path (no `#`, `**`, image placeholders, or table pipes). Optional `--rpm` throttling is available:
+Uses Mistral's dedicated Document AI endpoint with the pinned release `mistral-ocr-4-1` (from `common/mistral_ocr.py`, never the rolling `mistral-ocr-latest`: step 03 stamps the model into an `iwac:ocrModel` annotation, so a run must be able to name it). The whole PDF is sent in a **single call** — files over the 50 MB upload cap are split by page range and stitched back — and the model's Markdown output is normalised to plain text so `bibo:content` stays consistent with the Gemini path (no `#`, `**`, image placeholders, or table pipes). Optional `--rpm` throttling is available:
 
 ```bash
 python 02_mistral_ocr_processor.py          # whole batch, paid-tier speed
@@ -67,12 +67,15 @@ python 02_mistral_ocr_processor.py --rpm 30 # space requests to 30/minute
 Extracted text is saved to `OCR_Results/` as `.txt` files, one per PDF. Files include page markers:
 
 ```
---- Page 1 ---
-[extracted text]
+[extracted text of page 1]
 
 --- Page 2 ---
 [extracted text]
 ```
+
+The first page carries no marker; every later page is introduced by
+`--- Page N ---`. Pages that yield no text contribute nothing, so a marker is
+never followed by a placeholder.
 
 ## Limitations
 

@@ -13,7 +13,7 @@ user request, and the RECITATION fallback strategies.
 
 Usage:
     python gemini_htr_processor.py
-    python gemini_htr_processor.py --model gemini-pro --language arabic
+    python gemini_htr_processor.py --model gemini-3.1-pro --language arabic
     python gemini_htr_processor.py --pdf-dir /path/to/pdfs --rpm 5
 
 Requirements:
@@ -83,11 +83,6 @@ def load_system_instruction(language: str) -> str:
     """Load the language-specific HTR system prompt."""
     _, filename = LANGUAGES[language]
     prompt_file = script_dir / filename
-
-    # Fallback to the old naming convention if the per-language file is absent.
-    if not prompt_file.exists():
-        prompt_file = script_dir / "htr_system_prompt.md"
-
     try:
         return prompt_file.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -178,7 +173,7 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
   python gemini_htr_processor.py
-  python gemini_htr_processor.py --model gemini-pro --language arabic
+  python gemini_htr_processor.py --model gemini-3.1-pro --language arabic
   python gemini_htr_processor.py --pdf-dir /path/to/pdfs --rpm 5
         """,
     )
@@ -216,7 +211,7 @@ def select_language_interactive() -> str:
         console.print("[red]❌[/] Invalid choice. Please enter 1, 2, or 3.")
 
 
-def main():
+def main() -> int:
     """Orchestrate the page-by-page PDF HTR process."""
     args = parse_args()
 
@@ -319,15 +314,18 @@ def main():
     )
 
     console.print("\n[green]✨ Direct PDF HTR Process Complete! ✨[/]\n")
+    return 0 if batch.failed == 0 else 1
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         console.print("\n\n[yellow]⚠ Process interrupted by user[/]")
         LOGGER.info("Process interrupted by user")
+        sys.exit(130)
     except Exception:
         console.print("\n[red]❌ An error occurred:[/]")
         console.print_exception()
         LOGGER.error("An unexpected error occurred", exc_info=True)
+        sys.exit(1)

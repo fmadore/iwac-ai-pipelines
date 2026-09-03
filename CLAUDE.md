@@ -28,19 +28,24 @@ accept CLI flags and fall back to interactive prompts.
 Which architecture rules apply depends on the pipeline's category:
 
 - **Text-only** — `AI_summary`, `AI_NER`, `AI_ocr_correction`,
-  `AI_sentiment_analysis`, `NotebookLM`
+  `AI_reference_indexing`, `AI_sentiment_analysis`, `NotebookLM`
 - **Multimodal** — `AI_audio_summary`, `AI_htr_extraction`, `AI_ocr_extraction`,
   `AI_publication_extraction`, `AI_video_summary`, `AI_summary_issue`,
   `AI_youtube_transcription`
-- **Agent-driven** — `AI_reference_indexing` (orchestrated by the
-  `reference-indexing` skill rather than a numbered run)
+
+Every pipeline is a numbered run of Python scripts. The repository carries no
+Claude Code agents or skills: the two that once drove reference indexing and
+magazine indexing were replaced by `AI_reference_indexing/02_enrich_references.py`
+and the Gemini/Mistral magazine scripts on 2026-09-02, so that a reader of the
+paper can reproduce every step from the code alone.
 
 `serving/` is not a pipeline: it is the Slurm/vLLM setup for running an
 open-weights model on your own GPU and the probe that checks a route's reasoning
 levels are real before anything is judged on its output.
 
-Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provider`,
-`rate_limiter`, `retry` and `ffmpeg_utils` in depth; the rest are only described here:
+Shared code in `common/`. `common/README.md` covers the client, provider, rate
+limiter, retry, checkpoint, ffmpeg, page-processor, text-updater and write-guard
+modules in depth; the rest are only described here:
 
 | module | purpose |
 |---|---|
@@ -48,9 +53,12 @@ Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provide
 | `gemini_utils.py` | Gemini plumbing for multimodal scripts: generation config, Files API upload, text extraction that skips `thought` parts |
 | `gemini_page_processor.py` | The page-by-page Gemini PDF loop shared by OCR and HTR: inline→Files-API fallback, retry policy, `finish_reason` handling, page markers, batch driver |
 | `omeka_text_updater.py` | The `03` write step shared by summary/OCR/correction/transcription: change detection, `@annotation` attachment, `@language`-tagged values, several values per item in one PATCH, `--dry-run`, confirmation gate |
-| `omeka_link_updater.py` | The same idempotent write for *resource-link* properties (`dcterms:subject`, `dcterms:spatial`): dedup against existing links, whole-item PATCH, `dry_run`, pre-write snapshot |
-| `write_guard.py` | The gate in front of every bulk write: `--dry-run`, `--yes`, pre-write payload dump, confirmation panel |
-| `checkpoint.py` | Atomic JSON checkpoints for resumable runs: a stored fingerprint of model, prompt and input decides resume vs. regenerate |
+| `omeka_link_updater.py` | The same idempotent write for *resource-link* properties (`dcterms:subject`, `dcterms:spatial`): dedup against existing links, `iwac:nerModel` annotation on every link added, whole-item PATCH, `dry_run`, pre-write snapshot; `provenance_model_key()` follows a `*_reconciled.csv` back to the checkpoint that names its model |
+| `write_guard.py` | The gate in front of every bulk write: `--dry-run`, `--yes`, `--backup-dir`, `--no-backup`, pre-write payload dump, one confirmation panel (the text updater's `confirm_write` delegates to it) |
+| `link_update_cli.py` | The whole link write step shared by `AI_NER/03` and `AI_reference_indexing/05`: provenance model from the checkpoint, batch pre-fetch, annotated links, gate and dump |
+| `reconciliation_cli.py` | The whole reconciliation run shared by `AI_NER/02` and `AI_reference_indexing/03` |
+| `checkpoint.py` | Atomic JSON checkpoints for resumable runs: a stored fingerprint of model, prompt and input decides resume vs. regenerate; `read_checkpoint_context()` is how a write step learns which model made the file it uploads |
+| `log_redaction.py` | `install_credential_redaction()`, called by every entry point: masks Omeka and provider keys in anything urllib3 or an SDK logs, since Omeka only accepts credentials as query parameters and `requests` echoes the URL in its error messages |
 | `console_utils.py` | `standard_progress()`, `key_value_table()`, `count_table()` — one definition of the rich furniture every pipeline prints |
 | `downloader.py` | `stream_download()` — streaming download via a `.part` temp file, used by the PDF and media downloaders |
 | `prompt_loader.py` | Discovery and interactive selection for pipelines holding several `prompts/*.md` |
@@ -62,8 +70,12 @@ Shared code in `common/`. `common/README.md` covers `omeka_client`, `llm_provide
 ## Architecture rules
 
 **All Omeka S access goes through `common/omeka_client.py`.** Never use raw
-`requests` with Omeka credentials in a pipeline script. Do not modify
-`omeka_client.py` without asking — every pipeline depends on it.
+`requests` with Omeka credentials in a pipeline script, and never page through
+`/api/items` by hand: `get_items()` / `iter_items()` take any search filter
+(`resource_class_id`, `resource_template_id`, `modified_after`, `property[0][…]`),
+`count_items()` reads the total from the header, `list_page()` serves samplers
+and `get_items_by_ids()` batch-fetches. Do not modify `omeka_client.py` without
+asking — every pipeline depends on it.
 
 **Text-only pipelines route every LLM call through `common/llm_provider.py`.**
 Never instantiate `openai.OpenAI()`, `google.genai.Client()`, or
@@ -210,6 +222,15 @@ same property. The HF export carries them as `descriptionAI` and `descriptionAI_
 one value per language — so two literals of the *same* language on one item are a
 bug this pipeline must not create: the export keeps one and drops the other.
 
+**Every resource link a pipeline adds carries an `iwac:nerModel` annotation.**
+`dcterms:subject` and `dcterms:spatial` links are indistinguishable from
+hand-catalogued ones once written, so `omeka_link_updater` stamps each *added*
+link with the model that proposed it (property 314, verified live 2026-09-02)
+and leaves links already on the item untouched. The write steps recover the
+model from the checkpoint the AI step left beside its CSV, and ask when that
+key has no authority item — a registry key is not enough, because the route is
+half of what the provenance claims (`gemma-4` vs `gemma-4-openrouter`).
+
 Instance-specific constants — property IDs, authority item sets, the `AI_MODEL_ITEMS`
 model-provenance registry — belong in `common/iwac_config.py`, not inline in scripts.
 Adding a model there means creating its Omeka authority item first (class 244,
@@ -225,3 +246,10 @@ progress bars and the standard tables. Beyond that, match the surrounding code.
 Scripts put the repo root on `sys.path` with one canonical line —
 `sys.path.insert(0, str(Path(__file__).resolve().parent.parent))`. `insert`, not
 `append`: with `append`, a same-named module earlier on the path shadows `common`.
+Text pipelines do not call `load_dotenv()` themselves — `llm_provider` loads it
+on import and `OmekaClient.from_env()` again; multimodal scripts that read a
+key before building any client still do. `main()` returns an exit code. A
+library module never touches `sys.stdout` on import.
+
+Incident history belongs in `CHANGELOG.md`, not beside the constant it
+explains: the code states the rule, the changelog tells the story.

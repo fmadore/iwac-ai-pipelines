@@ -41,6 +41,8 @@ That fetches all 12,356 `bibo:Article` items and drops the **51** outside French
 ```bash
 python 01_extract_omeka_content.py --resource-class --sample 200
 python 02_AI_generate_summaries.py --workers 6
+python 01_extract_omeka_content.py --resource-class --modified-after 2026-08-01   # incremental re-run
+python 02_AI_generate_summaries.py --service-tier flex   # OpenAI at ~half price, slower; for an overnight pass
 python 03_omeka_update_summaries.py --dry-run
 ```
 
@@ -61,7 +63,9 @@ The cost breakdown matters, because two things make it much cheaper than a naive
 
 > **Do not delete the existing summaries first.** `adopt_untagged=True` overwrites them in place, so there is nothing left over to delete; and deleting first turns any mid-run failure into 12,300 articles with no summary at all, where the pipeline as written simply leaves the old one standing.
 
-The summarization script prompts you to select a model interactively, or use `--model`:
+The summarization script runs on GPT-5.6 Luna unless `--model` names another
+registry model (step 03, which uploads, is the one that asks which model wrote
+the summaries when `--model` is omitted):
 
 ```bash
 python 02_AI_generate_summaries.py  # GPT-5.6 Luna by default

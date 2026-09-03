@@ -82,17 +82,19 @@ Files are saved to `extracted_articles/`:
 ```
 extracted_articles/
 ├── Benin/
-│   ├── L_Observateur_60638.md
-│   └── La_Croix_du_Benin_61062.md
+│   ├── L_Observateur_60638_articles.md
+│   └── La_Croix_du_Benin_61062_articles.md
 ├── Burkina Faso/
 │   └── ...
-└── subject_Islam_12345.md
+└── <subject title>/                  # subject mode: one file per publisher
+    ├── L_Observateur_articles.md
+    └── Le_Pays_articles.md
 ```
 
 Large collections (>250 articles) are automatically split:
 ```
-newspaper_name_60638_part1.md
-newspaper_name_60638_part2.md
+L_Observateur_60638_articles_part1.md
+L_Observateur_60638_articles_part2.md
 ```
 
 ## Using with NotebookLM
@@ -112,7 +114,7 @@ newspaper_name_60638_part2.md
 
 **File size**: NotebookLM has a ~500k word limit per source. The script auto-splits at 250 articles to stay within limits.
 
-**Article types only**: Exports `bibo:Article` and `bibo:Issue` items; other item types are skipped.
+**Article types only**: Exports `bibo:Article` items; issues and other item types are skipped.
 
 **Text content only**: Images and media attachments are not included.
 

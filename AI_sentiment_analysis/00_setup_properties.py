@@ -301,18 +301,10 @@ def ttl_terms(ttl_path: Path) -> set:
 
 def count_values(client: OmekaClient, property_id: int) -> int:
     """How many items hold a value for *property_id*, from Omeka's count header."""
-    response = client.session.get(
-        f"{client.base_url}/items",
-        params={
-            **client._auth_params(),
-            "property[0][property]": property_id,
-            "property[0][type]": "ex",
-            "per_page": 1,
-        },
-        timeout=client.timeout,
-    )
-    response.raise_for_status()
-    return int(response.headers.get("Omeka-S-Total-Results", 0))
+    return client.count_items(**{
+        "property[0][property]": property_id,
+        "property[0][type]": "ex",
+    })
 
 
 def verify_ttl_is_superset(client: OmekaClient, ttl_path: Path) -> bool:

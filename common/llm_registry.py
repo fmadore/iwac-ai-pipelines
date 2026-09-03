@@ -71,8 +71,18 @@ OPENROUTER_PROVIDER_PREFS: Dict[str, Any] = {
     "data_collection": "deny",
     "require_parameters": True,
 }
+#: ``data_collection: "deny"`` keeps archive text away from backends that train
+#: on it; it says nothing about *storage*. OpenRouter's separate ``zdr`` flag
+#: routes only to endpoints that keep nothing at all, at the price of a much
+#: shorter provider list — for DeepSeek it can leave no eligible backend and
+#: the request fails with a 503. So it is opt-in: set ``OPENROUTER_ZDR=1`` in
+#: the environment for a run that must not be stored anywhere.
+OPENROUTER_ZDR_ENV = "OPENROUTER_ZDR"
+# App attribution only — neither header changes routing. ``X-OpenRouter-Title``
+# is the current name; ``X-Title`` is kept as the documented legacy alias.
 OPENROUTER_HEADERS: Dict[str, str] = {
     "HTTP-Referer": "https://github.com/fmadore/iwac-ai-pipelines",
+    "X-OpenRouter-Title": "IWAC AI Pipelines",
     "X-Title": "IWAC AI Pipelines",
 }
 
@@ -115,6 +125,12 @@ class LLMConfig:
     thinking_level: Optional[str] = None
     request_timeout_seconds: Optional[float] = None
     sdk_max_retries: Optional[int] = None
+    #: OpenAI only: ``"flex"`` runs at roughly batch price on the live API in
+    #: exchange for slower, occasionally refused (429) completions — the right
+    #: setting for an overnight corpus pass; ``"priority"`` is the opposite
+    #: trade. ``None`` sends nothing and the project default applies. Other
+    #: providers ignore it.
+    service_tier: Optional[str] = None
 
     def merged_over(self, base: "LLMConfig") -> "LLMConfig":
         """Return a copy where unset fields fall back to ``base``."""
@@ -223,21 +239,12 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort=None,
         supported_reasoning_efforts=("none", "high"),
     ),
-    # The same weights as the ``gemma-4`` entry above, deliberately reached by a
-    # different route. Gemma is free on the Gemini API because it is served on
-    # the free tier, and free-tier content is used to improve Google's products —
-    # precisely what ``OPENROUTER_PROVIDER_PREFS``' ``data_collection: "deny"``
-    # exists to prevent when whole archival articles are shipped to a third
-    # party. (OpenRouter's own ``:free`` variant has the same problem and is
-    # filtered out by that policy anyway.) Use this key for anything that sends
-    # archive text; ``gemma-4`` stays for the multimodal document work the
-    # OpenAI-shaped chat API cannot do.
-    #
-    # Gemma 4 has two thinking levels, MINIMAL and HIGH, with nothing in
-    # between — the Gemini adapter clamps to the same pair. A caller asking for
-    # the panel's "medium" therefore lands on ``high`` rather than dropping to a
-    # non-reasoning mode, which is the rounding Mistral Small 4 and DeepSeek V4
-    # Flash 0731 already do. Temperature stays unset, as for every Google model.
+    # The same weights as ``gemma-4``, reached through OpenRouter under
+    # ``data_collection: deny``. The Gemini route serves Gemma on the free tier,
+    # whose content Google states it uses to improve its products — so this is
+    # the key for anything that sends archive text; ``gemma-4`` stays for the
+    # multimodal document work the chat API cannot do. Two thinking levels,
+    # MINIMAL and HIGH: a request for "medium" rounds up (see CHANGELOG.md).
     "gemma-4-openrouter": ModelOption(
         "gemma-4-openrouter", PROVIDER_OPENROUTER, OPENROUTER_GEMMA_4_31B_MODEL,
         "Gemma 4 31B (OpenRouter)",
@@ -268,28 +275,13 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort=None,
         supported_reasoning_efforts=("minimal", "low", "medium", "high", "xhigh"),
     ),
-    # Qwen3.8 27B, twice: once through an endpoint you run yourself, once
-    # through OpenRouter. Same weights, different route — the split
-    # ``gemma-4`` / ``gemma-4-openrouter`` already makes, for the same reason:
-    # the route is half of what a provenance record claims.
-    #
-    # Both carry temperature 1.0, which is Qwen's *thinking-mode* recipe
-    # (generation_config.json ships 1.0 / top_p 0.95 / top_k 20; the model card's
-    # 0.7 is the non-thinking recipe, and it is what the Qwen3.5 entries above
-    # inherited). Everything here runs thinking-on, so 1.0 is the applicable
-    # number — do not copy 0.7 down from the neighbours. ``top_p``/``top_k`` stay
-    # unset as always; a self-hosted vLLM applies the model's own
-    # generation_config server-side, which is a quiet bonus of this route.
-    #
-    # The ladder is genuinely graduated — low / medium / xhigh, verified on the
-    # model card — which is the whole reason this model is interesting for the
-    # sentiment panel: it would be the first member since GPT-5.6 Luna to sit at
-    # the requested middle rather than be rounded up to it. Whether the middle
-    # survives the *route* is a separate question, and the one Gemma failed
-    # (see ``AI_sentiment_analysis/sentiment_core.py``); ``serving/probe_reasoning.py``
-    # is what answers it. Default is ``low``, not the vendor's own ``xhigh``:
-    # an unconfigured bulk run reasoning as hard as it can, on GPU hours shared
-    # with a whole university, is the expensive accident to design against.
+    # Qwen3.8 27B, twice: self-hosted and through OpenRouter. Same weights,
+    # different route, and the route is half of what a provenance record
+    # claims (as ``gemma-4`` / ``gemma-4-openrouter``). Temperature 1.0 is
+    # Qwen's thinking-mode recipe (0.7 is the non-thinking one). The ladder is
+    # low / medium / xhigh; the default is ``low``, not the vendor's ``xhigh``,
+    # so an unconfigured bulk run on shared GPUs cannot reason as hard as it
+    # can by accident. Why this model was piloted: CHANGELOG.md.
     "qwen3.8-27b-selfhosted": ModelOption(
         "qwen3.8-27b-selfhosted", PROVIDER_SELFHOSTED, SELFHOSTED_QWEN38_MODEL,
         "Qwen3.8 27B (self-hosted)",

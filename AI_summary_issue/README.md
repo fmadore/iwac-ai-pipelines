@@ -43,7 +43,7 @@ Mistral OCR for step 1 and DeepSeek for step 2.
 ```bash
 python 01_omeka_pdf_downloader.py            # Download PDFs from collection (bibo:Issue only)
 python 02_AI_generate_summaries_issue.py     # Extract articles
-python 03_update_omeka_toc.py --dry-run      # Preview; records DeepSeek 0731 provenance
+python 03_update_omeka_toc.py --dry-run      # Preview
 python 03_update_omeka_toc.py                # Write the TOC to Omeka via the API
 ```
 
@@ -52,22 +52,18 @@ via the Omeka REST API** and records which model produced it as an
 `iwac:summaryModel` value annotation. It is safe for existing metadata: for each
 item it fetches the full record, modifies only the table-of-contents property,
 and PATCHes the whole record back — aborting that item if any existing property
-would be lost. Run `--dry-run` first to review; the live run asks for confirmation.
-The updater defaults to the matching `DeepSeek V4 Flash 0731` authority item
-(83261). Use `--model` only when uploading an index produced by another model.
-
-### Claude Agent (Alternative)
-
-The issue-indexing Claude agent reads PDFs directly without LLM API calls and handles the full pipeline (download, extraction, Omeka update). Use it via the `/issue-indexing` skill in Claude Code.
-
-On that path the provenance to record is the Claude model that did the reading, not a registry model — `--model claude-opus-5` for Opus 5. Nothing in this repo can observe which model Claude Code is running, so the operator asserts it; naming last year's release is the easy mistake, which is why the key carries the version.
+would be lost. Run `--dry-run` first to review; the live run dumps every pre-write
+payload to `backups/` and asks for confirmation (`--yes` for unattended runs).
+The updater asks which model consolidated the index, with `DeepSeek V4 Flash 0731`
+(authority item 83261) preselected; pass `--model` to answer on the command line.
+Older indexes read by a Claude model keep their `claude-opus-*` keys in
+`common/iwac_config.py` so their annotations still resolve.
 
 ## Supported Models
 
 | Provider | Model | Best For |
 |----------|-------|----------|
-| **Claude Agent** (recommended) | Opus 5 | Reads PDFs directly, no API costs, best quality |
-| **Gemini** (standard profile) | Gemini Pro → DeepSeek V4 Flash 0731 | Good extraction quality, accurate article detection |
+| **Gemini** (standard profile) | Gemini Pro → DeepSeek V4 Flash 0731 | Best extraction quality, accurate article detection |
 | **Gemini** (light profile) | Gemini 3.7 Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
 | Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |
 

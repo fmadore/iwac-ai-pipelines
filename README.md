@@ -26,7 +26,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
 | **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a five-model panel |
-| **Reference Indexing** | Assign controlled subject and spatial keywords to scholarly references using Claude, with authority reconciliation |
+| **Reference Indexing** | Assign controlled subject and spatial keywords to scholarly references, with authority reconciliation and per-link model provenance |
 
 ## Limitations and Caveats
 
@@ -87,10 +87,23 @@ Each pipeline directory contains numbered scripts to run in sequence:
 
 ```bash
 cd AI_ocr_extraction/
-python 01_omeka_pdf_downloader.py   # Download source PDFs
-python 02_gemini_ocr_processor.py   # Extract text
+python 01_omeka_pdf_downloader.py   # Download source PDFs into PDF/
+python 02_gemini_ocr_processor.py   # Extract text into OCR_Results/
 python 03_omeka_content_updater.py  # Update database
 ```
+
+Each pipeline directory ships its input folder empty (`PDF/`, `Audio/`,
+`video/`, `TXT/`, `ALTO/` hold a `.gitkeep`), so source material can be
+dropped in place or fetched by the `01` step; output, cache and backup folders
+are created on first run. All of them are git-ignored.
+
+Every step that writes to Omeka goes through the same gate: `--dry-run` reports
+what would change, the pre-write payload of every item is dumped to a
+`backups/` or `output/` folder first (the only route back from a bulk write),
+and a live run asks for confirmation unless `--yes` is passed. Whatever a
+pipeline writes carries a value annotation naming the model that produced it —
+`iwac:ocrModel`, `iwac:summaryModel`, `iwac:transcriptionModel`, and
+`iwac:nerModel` on every subject or place link.
 
 Most scripts support both interactive mode and command-line flags:
 
@@ -132,7 +145,7 @@ The approach assumes you have digitized materials and need to make them searchab
 
 - [Shared Utilities](common/README.md) — OmekaClient, LLM provider configuration, the Gemini page processor and the Omeka text updater
 - [Serving Your Own Models](serving/README.md) — running an open-weights model on your own GPU (Slurm + vLLM), the SSH tunnel, and the probe that checks a route's reasoning levels are real
-- [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini, Mistral, or Claude agent)
+- [Magazine Article Extraction](AI_summary_issue/README.md) — Article indexing from digitized periodicals (Gemini or Mistral)
 - [Audio Transcription](AI_audio_summary/README.md) — three transcribers compared, which languages Gemini 3.5 Transcribe actually covers, and why splitting is mandatory once timestamps are on
 - [YouTube Transcription](AI_youtube_transcription/README.md) — URL-based transcription with language detection, the measured token budget, and the public-video-only limit
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
@@ -154,6 +167,8 @@ Madore, Frédérick. *IWAC AI Pipelines*. 2026. https://doi.org/10.5281/zenodo.2
 
 That DOI resolves to the latest release; each version also has its own. GitHub's
 "Cite this repository" button generates the same reference from `CITATION.cff`.
+What changed between releases, and the operational history behind the model
+registry and the sentiment panel, is in [CHANGELOG.md](CHANGELOG.md).
 
 For the accompanying article:
 

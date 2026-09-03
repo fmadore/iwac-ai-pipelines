@@ -25,7 +25,7 @@ python 01_NER_AI.py --item-set-id 123  # DeepSeek V4 Flash 0731 by default
 # Or use Google's open-weights flagship
 python 01_NER_AI.py --item-set-id 123 --model gemma-4
 
-# Match against authority records
+# Match against authority records (newest CSV in output/, or --input)
 python 02_NER_reconciliation_Omeka.py
 
 # Preview the Omeka writes — no PATCH is sent
@@ -39,6 +39,13 @@ Step 3 writes to the live archive. It reports what would change under
 `--dry-run`, dumps every pre-write payload to `output/_pre_write_ner_links_*.json`,
 and asks for confirmation before the first PATCH. `--yes` skips the prompt for
 unattended runs; `--input` applies a specific CSV instead of the newest one.
+
+Every link step 3 adds carries an `iwac:nerModel` value annotation naming the
+model that extracted the entity, so AI-assigned subjects and places can be told
+apart from hand-catalogued ones. The model is read from the checkpoint step 1
+left beside its CSV; `--model` overrides it, and the script asks when neither
+is available (for instance after a run on `gemma-4`, whose Gemini route has no
+authority item). Links already on an item are never re-stamped.
 
 The extraction CSV is resumable. Each completed row is flushed immediately,
 and a sidecar checkpoint records the exact model, prompt, item-set scope, and
@@ -87,11 +94,16 @@ The pipeline extracts four entity types:
 
 After extraction:
 - `item_set_<ID>_processed_<model>.csv` — Extracted entities per item
+- `item_set_<ID>_processed_<model>.csv.checkpoint.json` — Model, prompt and scope the CSV was made with
 
 After reconciliation:
 - `*_reconciled.csv` — Entities matched to authority IDs
 - `*_unreconciled_*.csv` — Entities needing manual review
+- `*_potential_reconciliation_*.csv` — Fuzzy-match suggestions for the unreconciled terms
 - `*_ambiguous_*.csv` — Terms matching multiple authorities
+
+After the Omeka update:
+- `_pre_write_ner_links_*.json` — Pre-write payload dump, the only route back
 
 ## Validating Extracted Entities
 
@@ -125,7 +137,9 @@ OMEKA_BASE_URL=https://your-instance.com/api
 OMEKA_KEY_IDENTITY=your_key
 OMEKA_KEY_CREDENTIAL=your_credential
 
-# At least one AI provider
+# The default model (DeepSeek V4 Flash 0731) is reached through OpenRouter
+OPENROUTER_API_KEY=your_key
+# Other --model choices need their own provider key
 GEMINI_API_KEY=your_key
 OPENAI_API_KEY=your_key
 MISTRAL_API_KEY=your_key
@@ -141,7 +155,11 @@ The reconciliation script uses conservative defaults to minimize false matches. 
 | More suggestions | Lower `MIN_TOKEN_OVERLAP`, raise `DEFAULT_MAX_CANDIDATES` |
 | Skip suggestions entirely | Set `DEFAULT_MAX_CANDIDATES = 0` |
 
-See tuning constants at the top of `02_NER_reconciliation_Omeka.py`.
+The constants live in `common/reconciliation.py` (`BASE_MIN_SIMILARITY`,
+`MIN_TOKEN_OVERLAP`, `DEFAULT_MAX_CANDIDATES`), shared with the
+reference-indexing pipeline so both reconcile the same way. Steps 2 and 3 are
+entry points for `common/reconciliation_cli.py` and `common/link_update_cli.py`;
+the reference-indexing pipeline's steps 3 and 5 run the same code.
 
 ## Customization
 

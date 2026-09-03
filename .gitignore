@@ -35,8 +35,9 @@ wheels/
 *.swo
 *~
 
-# Claude Code
-.claude/settings.local.json
+# Claude Code — the repository ships Python scripts only; any local agent or
+# skill configuration stays on the machine that wrote it.
+.claude/
 
 # OS specific
 .DS_Store
@@ -51,36 +52,50 @@ nul
 # Logs
 *.log
 
-# Pipeline output directories
+# Pipeline data directories. Input folders (PDF/, Audio/, video/, TXT/, ALTO/)
+# are kept as empty placeholders via a .gitkeep; everything else is created
+# by the scripts on first run.
 AI_audio_summary/backups/
-AI_audio_summary/Audio/
+AI_audio_summary/Audio/*
+!AI_audio_summary/Audio/.gitkeep
 AI_audio_summary/temp_converted_audio/
 AI_audio_summary/temp_segments/
 AI_audio_summary/Transcriptions/
 AI_htr_extraction/OCR_Results/
-AI_htr_extraction/PDF/
+AI_htr_extraction/PDF/*
+!AI_htr_extraction/PDF/.gitkeep
 AI_NER/output/
-AI_ocr_correction/ALTO/
+AI_ocr_correction/ALTO/*
+!AI_ocr_correction/ALTO/.gitkeep
 AI_ocr_correction/ALTO_Corrected/
 AI_ocr_correction/Corrected_TXT/
-AI_ocr_correction/TXT/
+AI_ocr_correction/backups/
+AI_ocr_correction/TXT/*
+!AI_ocr_correction/TXT/.gitkeep
+AI_ocr_extraction/backups/
 AI_ocr_extraction/OCR_Results/
-AI_ocr_extraction/PDF/
+AI_ocr_extraction/PDF/*
+!AI_ocr_extraction/PDF/.gitkeep
 # Scholarly PDFs are large (one thesis is 276 MB) and under copyright; the JSON
 # sidecars carry the full extracted text, so they stay local too.
 AI_publication_extraction/OCR_Results/
 AI_publication_extraction/output/
-AI_publication_extraction/PDF/
+AI_publication_extraction/PDF/*
+!AI_publication_extraction/PDF/.gitkeep
 AI_reference_indexing/output/
+AI_sentiment_analysis/backups/
 AI_summary/backups/
 AI_summary/Summaries_EN_TXT/
 AI_summary/Summaries_FR_TXT/
-AI_summary/TXT/
+AI_summary/TXT/*
+!AI_summary/TXT/.gitkeep
+AI_summary_issue/backups/
 AI_summary_issue/Magazine_Extractions/
-AI_summary_issue/output/
-AI_summary_issue/PDF/
+AI_summary_issue/PDF/*
+!AI_summary_issue/PDF/.gitkeep
 AI_video_summary/output/
-AI_video_summary/video/
+AI_video_summary/video/*
+!AI_video_summary/video/.gitkeep
 AI_youtube_transcription/backups/
 # Transcriptions* — the hybrid run writes a second folder (Transcriptions_flash/)
 # so each model's output can be uploaded with its own provenance annotation.
@@ -93,6 +108,9 @@ NotebookLM/extracted_articles/
 # job would die at submit time on a fresh clone.
 serving/logs/*
 !serving/logs/.gitkeep
+# The corpus slice an offline run annotates (full article text) and the JSONL
+# it writes back — see serving/README.md.
+serving/work/
 
 # Cache and temporary files
 *.tmp

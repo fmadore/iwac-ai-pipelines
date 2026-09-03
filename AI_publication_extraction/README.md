@@ -231,8 +231,8 @@ Valacrons"); running body text is clean.
 and rejected for citation extraction: on item 4987 it returned 10 cited works
 from the full 33 pages but 20 from the first 8, and left title, authors and
 journal empty in both. It under-extracts as documents grow, which is the wrong
-direction for a corpus of books. Citations will come from the `apparatus` blocks
-through `common/llm_provider.py` instead.
+direction for a corpus of books. Citations are therefore extracted from the
+`apparatus` blocks by step 04 through `common/llm_provider.py` instead.
 
 **Block confidence scores are not available.** The model card advertises
 block-level confidence, but the SDK's `confidence_scores_granularity` accepts

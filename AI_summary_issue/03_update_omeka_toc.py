@@ -12,8 +12,12 @@ SAFETY — preserves existing metadata:
     value. Every other property is therefore sent back unchanged.
 
 Usage:
-    python 03_update_omeka_toc.py            # prompts, then updates live
     python 03_update_omeka_toc.py --dry-run  # fetch + report only, writes nothing
+    python 03_update_omeka_toc.py            # prompts for the model, then updates live
+    python 03_update_omeka_toc.py --model deepseek-v4-flash-0731 --yes
+
+Writes are gated like every other write step: --dry-run, a pre-write payload
+dump to backups/ (the only route back), and a confirmation before the first PATCH.
 
 Requirements:
     OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL in .env
@@ -28,9 +32,7 @@ from pathlib import Path
 from rich.console import Console
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.iwac_config import (  # noqa: E402
@@ -38,6 +40,7 @@ from common.iwac_config import (  # noqa: E402
     DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID,
     IWAC_SUMMARY_MODEL_PROPERTY_ID,
     model_annotation_value,
+    select_model_key,
 )
 from common.llm_provider import DEFAULT_TEXT_MODEL_KEY  # noqa: E402
 from common.omeka_text_updater import (  # noqa: E402
@@ -46,12 +49,14 @@ from common.omeka_text_updater import (  # noqa: E402
     run_text_updates,
 )
 from common.log_redaction import install_credential_redaction
+from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
 install_credential_redaction()
 
 console = Console()
+BACKUP_DIR = Path(SCRIPT_DIR) / "backups"
 
 
 def format_article_toc(article: dict) -> str:
@@ -96,18 +101,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
         description="Update Omeka S items with the AI table of contents (preserves existing metadata)."
     )
     parser.add_argument(
-        "--model", choices=list(AI_MODEL_ITEMS), default=DEFAULT_TEXT_MODEL_KEY,
-        help=f"AI model that consolidated the index (default: {DEFAULT_TEXT_MODEL_KEY}).",
+        "--model", choices=list(AI_MODEL_ITEMS),
+        help=(
+            "AI model that consolidated the index. Prompts interactively when "
+            f"omitted, with {DEFAULT_TEXT_MODEL_KEY} preselected."
+        ),
     )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Fetch each item and report what would change, but write nothing.",
-    )
+    add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
     return parser
 
 
 def main() -> int:
     args = build_argument_parser().parse_args()
+    guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
+    backup_dir = guard.backup_dir if guard.backup_enabled else None
 
     extractions_dir = Path(SCRIPT_DIR) / "Magazine_Extractions"
     toc_entries = load_from_extractions(extractions_dir)
@@ -121,7 +128,11 @@ def main() -> int:
         console.print(f"[red]✗[/] {e}")
         return 1
 
-    selected_key = args.model
+    # Asked rather than defaulted: an unattended run must not stamp whatever
+    # the registry default happens to be on upload day.
+    selected_key = args.model or select_model_key(default=DEFAULT_TEXT_MODEL_KEY)
+    if selected_key is None:
+        return 1
     model_value = model_annotation_value(
         client.base_url, selected_key, IWAC_SUMMARY_MODEL_PROPERTY_ID, "AI Model - Summary"
     )
@@ -140,15 +151,21 @@ def main() -> int:
         )
         for entry in toc_entries
     ]
-    run_text_updates(
+    stats = run_text_updates(
         client,
         updates,
         target,
         console=console,
-        dry_run=args.dry_run,
+        dry_run=guard.dry_run,
+        require_confirmation=not guard.assume_yes,
+        extra_confirm_lines=[f"Source folder:    {extractions_dir}"],
         description="Updating tables of contents...",
+        backup_dir=backup_dir,
+        backup_label="table_of_contents",
     )
-    return 0
+    if not stats:
+        return 1  # operator declined
+    return 0 if stats["failed"] == 0 else 1
 
 
 if __name__ == "__main__":

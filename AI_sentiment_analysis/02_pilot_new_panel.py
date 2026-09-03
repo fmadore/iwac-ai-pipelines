@@ -152,32 +152,20 @@ def _items_page(
     client: OmekaClient, page: int, probe_property_id: int, per_page: int = PER_PAGE
 ) -> List[Dict[str, Any]]:
     """One page of articles that already carry a live panel annotation."""
-    url = (
-        f"{client.base_url}/items"
-        f"?resource_class_id={ARTICLE_CLASS_ID}"
-        f"&property%5B0%5D%5Bproperty%5D={probe_property_id}"
-        f"&property%5B0%5D%5Btype%5D=ex"
-        f"&per_page={per_page}&page={page}"
-    )
-    result = client.get_resource(url)
-    return result if isinstance(result, list) else []
+    return client.list_page(page, per_page, **_annotated_filters(probe_property_id))
 
 
-def _last_page(client: OmekaClient, probe_property_id: int) -> int:
-    """Binary-search the final page rather than paging the whole corpus."""
-    lo, hi = 1, 2
-    while _items_page(client, hi, probe_property_id, per_page=1):
-        lo, hi = hi, hi * 2
-        if hi > 1_000_000:  # pathological guard
-            break
-    # invariant: page `lo` has data, page `hi` does not
-    while lo + 1 < hi:
-        mid = (lo + hi) // 2
-        if _items_page(client, mid, probe_property_id, per_page=1):
-            lo = mid
-        else:
-            hi = mid
-    return lo
+def _annotated_filters(probe_property_id: int) -> Dict[str, Any]:
+    return {
+        "resource_class_id": ARTICLE_CLASS_ID,
+        "property[0][property]": probe_property_id,
+        "property[0][type]": "ex",
+    }
+
+
+def _count_annotated(client: OmekaClient, probe_property_id: int) -> int:
+    """How many articles carry the annotation, from Omeka's own count header."""
+    return client.count_items(**_annotated_filters(probe_property_id))
 
 
 def sample_articles(
@@ -195,7 +183,7 @@ def sample_articles(
     """
     probe_property_id = resolve_probe_property(client)
     with console.status("[bold green]Locating corpus bounds...", spinner="dots"):
-        total_items = _last_page(client, probe_property_id)
+        total_items = _count_annotated(client, probe_property_id)
     max_page = max(1, -(-total_items // PER_PAGE))  # ceil
     console.print(
         f"[green]✓[/] ~{total_items:,} annotated articles across {max_page} pages"

@@ -44,9 +44,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich import box
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # This pipeline's own directory, so the 02_ scripts can import this module
 # regardless of how they were invoked.
 if SCRIPT_DIR not in sys.path:

@@ -14,8 +14,8 @@ The write step lives in ``common/omeka_text_updater.py``, shared with the
 summary, OCR-extraction and transcription updaters.
 
 Usage:
-    python 03_update_database.py
-    python 03_update_database.py --dry-run
+    python 03_update_database.py --dry-run   # preview first
+    python 03_update_database.py             # pre-write payloads go to backups/
 """
 
 import argparse
@@ -31,13 +31,18 @@ from common.iwac_config import BIBO_CONTENT_PROPERTY_ID
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, run_text_updates, updates_from_directory
 from common.log_redaction import install_credential_redaction
+from common.write_guard import WriteGuard, add_write_guard_args
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
 install_credential_redaction()
 
+PIPELINE_DIR = Path(__file__).resolve().parent
 # Directory containing the corrected text files (relative to script location)
-DEFAULT_TXT_DIRECTORY = Path(__file__).resolve().parent / 'Corrected_TXT'
+DEFAULT_TXT_DIRECTORY = PIPELINE_DIR / 'Corrected_TXT'
+# Correction overwrites the whole bibo:content literal, so the pre-write dump
+# is the only copy of the text a run replaces.
+BACKUP_DIR = PIPELINE_DIR / 'backups'
 
 console = Console()
 
@@ -50,15 +55,10 @@ def main() -> int:
         default=DEFAULT_TXT_DIRECTORY,
         help="Directory of corrected .txt files named <item_id>.txt",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Fetch each item and report what would change, but write nothing.",
-    )
-    parser.add_argument(
-        "--yes", action="store_true",
-        help="Skip the interactive confirmation before writing.",
-    )
+    add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
     args = parser.parse_args()
+    guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
+    backup_dir = guard.backup_dir if guard.backup_enabled else None
 
     console.print(Panel.fit("[bold]OCR Correction — Omeka S Database Update[/]", border_style="cyan"))
 
@@ -86,10 +86,12 @@ def main() -> int:
     stats = run_text_updates(
         client, updates, target,
         console=console,
-        dry_run=args.dry_run,
-        require_confirmation=not args.yes,
+        dry_run=guard.dry_run,
+        require_confirmation=not guard.assume_yes,
         extra_confirm_lines=[f"Source folder:    {args.txt_dir}"],
         description="Updating corrected text...",
+        backup_dir=backup_dir,
+        backup_label="corrected_content",
     )
     if not stats:
         return 1  # operator declined

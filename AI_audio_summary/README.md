@@ -250,6 +250,7 @@ For long recordings, enable splitting into 20-minute segments:
 ```bash
 python 02_AI_transcribe_audio.py --split                 # 20-min segments (default)
 python 02_AI_transcribe_audio.py --split --segment-minutes 45   # longer segments
+python 02_AI_transcribe_audio.py --no-split --prompt 2   # unattended: no menu, no "split?" question
 ```
 
 Twenty-minute segments mean fewer split points — and fewer boundary
@@ -281,6 +282,8 @@ points at an Omeka authority item, and three of the five models here have none:
 
 So the default transcriber (`02c_`) needs no flag: its header names a pinned id
 with an authority item, and the annotation is written without being asked for.
+The Gemini transcriber (`02_`) defaults to the pinned `gemini-3.7-flash` for the
+same reason; its rolling aliases stay on offer for a run that does not go to Omeka.
 
 For the three that cannot be cited, pass `--no-model-annotation` to upload the
 text without provenance, or `--model <key>` to assert the pinned release an

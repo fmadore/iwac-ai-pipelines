@@ -9,6 +9,8 @@ silently dropped the notes from one of the two.
 """
 
 import pytest
+import re
+from pathlib import Path
 
 from common.mistral_ocr import (
     MISTRAL_OCR_MODEL,
@@ -244,3 +246,48 @@ def test_render_numbers_pages_from_the_source_document():
 def test_render_returns_empty_when_everything_is_furniture():
     blocks = [ClassifiedBlock(0, "footer", "12", "furniture")]
     assert render_plain_text(blocks) == ""
+
+
+# --- Provenance: no pipeline may run the rolling OCR alias -------------------
+
+_ROOT = Path(__file__).resolve().parent.parent
+_OCR_SCRIPTS = sorted(
+    path for path in _ROOT.glob("AI_*/*.py") if "mistral" in path.name.lower()
+)
+
+
+def test_no_pipeline_script_uses_the_rolling_mistral_ocr_alias():
+    """Step 03 stamps ``iwac:ocrModel`` with a pinned release; a script that
+    ran ``mistral-ocr-latest`` would annotate text with a model it cannot name."""
+    assert _OCR_SCRIPTS, "expected at least one Mistral pipeline script"
+    # A quoted literal is a model id being sent; prose may name the alias to
+    # explain why it is not used.
+    offenders = [
+        str(path.relative_to(_ROOT))
+        for path in _OCR_SCRIPTS
+        if re.search(r"""["']mistral-ocr-latest["']""", path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], f"rolling OCR alias in: {offenders}"
+
+
+def test_ocr_extraction_render_pages_keeps_first_page_furniture_only():
+    import importlib.util
+    import sys
+
+    script = _ROOT / "AI_ocr_extraction" / "02_mistral_ocr_processor.py"
+    spec = importlib.util.spec_from_file_location("ocr_mistral_processor", script)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    pages = [
+        {"index": 0, "markdown": "# Titre\n\nCorps de la page une.", "header": "Le Pays, 3 mai 1994", "footer": "p. 1"},
+        {"index": 1, "markdown": "Suite du texte.", "header": "Le Pays", "footer": "2"},
+        {"index": 2, "markdown": "", "header": "Le Pays", "footer": "3"},
+    ]
+    text = module.render_pages(pages)
+
+    assert text.startswith("Le Pays, 3 mai 1994")
+    assert "Corps de la page une." in text and text.count("p. 1") == 1
+    assert "--- Page 2 ---" in text and "Suite du texte." in text
+    assert "Page 3" not in text and "[Empty page" not in text

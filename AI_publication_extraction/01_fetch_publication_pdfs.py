@@ -108,18 +108,8 @@ def _has_text(item: Dict[str, Any]) -> bool:
 
 
 def items_by_class(client: OmekaClient, class_id: int) -> List[Dict[str, Any]]:
-    """Every item of one resource class, paginated.
-
-    ``OmekaClient.get_items`` is shaped around item sets, but ``requests`` drops
-    query parameters whose value is ``None``, so passing no item set turns it
-    into a plain class query — verified live against all nine classes, which
-    return exactly their documented counts and nothing of another class.
-
-    A ``get_items_by_class`` method on the shared client would read better, but
-    ``omeka_client.py`` is not modified without sign-off: every pipeline in the
-    repo depends on it.
-    """
-    return client.get_items(None, resource_class_id=class_id)
+    """Every item of one resource class."""
+    return client.get_items(resource_class_id=class_id)
 
 
 def discover(

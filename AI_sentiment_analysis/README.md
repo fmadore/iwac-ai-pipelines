@@ -249,6 +249,8 @@ python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 --l
 | `--force-reanalyze` | Ignore the cache **and** the already-annotated guard |
 | `--rewrite` | Re-PATCH items that already have values, reusing cached answers (no model calls) |
 | `--yes` | Skip the confirmation prompt (for unattended runs) |
+| `--backup-dir` | Where each item's pre-write JSON is appended before its PATCH (default `backups/`) — the only route back from a corpus pass |
+| `--no-backup` | Do not dump pre-write payloads. Not recommended |
 | `--verbose` | Log each model failure as it happens |
 
 ### One model at a time
@@ -684,9 +686,9 @@ Then report:
 python AI_sentiment_analysis/03_pilot_report.py
 ```
 
-The report gives, per dimension: agreement with the generation-1 consensus
-(with the generation-1 models scored against their own consensus as a
-baseline), pairwise Cohen's kappa within the candidate panel, and — when the
+The report gives, per dimension: each model's agreement with the majority of
+the *other* panel members (leave-one-out, so a model is never scored against a
+consensus it votes in), pairwise Cohen's kappa within the panel, and — when the
 pilot used `--repeats` > 1 — how often each model reproduces its own answer.
 
 That last one matters because sampling temperature is vendor-owned and varies
@@ -753,7 +755,7 @@ there.
 | Column prefix | Model id | Omeka properties | Params (active/total) | $/1M in–out |
 |---|---|---|---|---|
 | `gemma_4_31b_it` | `google/gemma-4-31b-it` | `iwac:gemma431bIt*` | **31B dense** | from $0.09 / $0.34 |
-| `gpt_5_6_luna` | `gpt-5.6-luna` | `iwac:gpt56Luna*` | closed | $1.00 / $6.00 |
+| `gpt_5_6_luna` | `gpt-5.6-luna` | `iwac:gpt56Luna*` | closed | $0.20 / $1.20 |
 | `mistral_small_2603` | `mistral-small-2603` | `iwac:mistralSmall2603*` | **6.5B / 119B** | $0.15 / $0.60 |
 | `deepseek_v4_flash_0731` | `deepseek/deepseek-v4-flash-0731` | `iwac:deepseekV4Flash0731*` | **13B / 284B** | from $0.09 / $0.18 |
 | `qwen3_8_27b` | `Qwen/Qwen3.8-27B` (self-hosted) | `iwac:qwen3827b*` | **27B dense** | GPU-hours, not tokens |
@@ -952,12 +954,10 @@ startup (24 for a full panel) via `common.iwac_config.resolve_property_ids`, and
 fails loudly naming any that are missing rather than writing a partial
 annotation set.
 
-Every generation-2 value additionally carries:
-
-```json
-"@annotation": {"iwac:sentimentModel": [{"type": "resource:item",
-                                         "value_resource_id": 79611}]}
-```
+Generation-2 values carry **no** value annotation: the model is the property
+name (`iwac:gpt56Luna*`, …), because Omeka does not index annotations and a
+per-model query has to be answerable through the API. `iwac:sentimentModel`
+remains declared in the vocabulary for the values written before 2026-07-31.
 
 ## Controlled vocabulary item IDs
 

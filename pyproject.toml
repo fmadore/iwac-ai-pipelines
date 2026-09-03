@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iwac-ai-pipelines"
-version = "1.0.0"
+version = "1.1.0"
 description = "AI-powered document processing workflows for the Islam West Africa Collection (IWAC)"
 readme = "README.md"
 requires-python = ">=3.11"

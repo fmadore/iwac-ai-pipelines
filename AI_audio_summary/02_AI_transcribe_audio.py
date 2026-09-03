@@ -64,7 +64,9 @@ ALLOWED_MODELS = {
     "gemini-3.7-flash": "Faster, good quality",
     "gemini-flash-lite-latest": "Fastest, cheapest, lowest latency",
 }
-DEFAULT_MODEL = "gemini-pro-latest"
+# Pinned, so the default is a model step 03 can annotate; the rolling aliases
+# stay on offer for a run that does not go to Omeka.
+DEFAULT_MODEL = "gemini-3.7-flash"
 
 # Default transcription prompt (fallback when no prompt file is selected)
 DEFAULT_PROMPT = """
@@ -751,6 +753,17 @@ def parse_args():
         help="Split audio into 20-minute segments (segments over 20 MB are sent via the Files API)"
     )
     parser.add_argument(
+        "--no-split",
+        action="store_true",
+        help="Never split; answers the interactive 'Split audio?' question with no",
+    )
+    parser.add_argument(
+        "--prompt",
+        type=int,
+        default=None,
+        help="Prompt number from prompts/ (0 = built-in default) instead of the menu",
+    )
+    parser.add_argument(
         "--segment-minutes",
         type=int,
         default=20,
@@ -792,7 +805,9 @@ def choose_split_mode(args, transcriber: AudioTranscriber, ffmpeg_ready: bool) -
     split_segments = args.split or transcriber.auto_split
     if transcriber.auto_split and not args.split:
         console.print("  [dim]→ Audio splitting automatically enabled for detailed transcription[/]")
-    if not split_segments:
+    if args.no_split:
+        split_segments = False
+    elif not split_segments:
         split_choice = console.input(
             "\n[bold]Split audio into 20-minute segments for improved accuracy? (y/N):[/] "
         ).strip().lower()
@@ -834,6 +849,7 @@ def build_transcriber(args) -> tuple[AudioTranscriber, str]:
         console,
         default_prompt=DEFAULT_PROMPT,
         title="Available Transcription Prompts",
+        preselected=args.prompt,
     )
     return AudioTranscriber(
         model=selected_model,

@@ -29,7 +29,6 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlencode
 
 from rich.console import Console
 from rich.panel import Panel
@@ -90,28 +89,8 @@ def first_value(item: Dict[str, Any], term: str) -> str:
 
 
 def fetch_items_by_template(client: OmekaClient, template_id: int) -> List[Dict[str, Any]]:
-    """Page through every item on one resource template.
-
-    ``OmekaClient.get_items()`` is keyed on an item set, so a template-wide sweep
-    pages here instead. Deliberately not a change to ``omeka_client.py``: every
-    pipeline depends on that module.
-    """
-    items: List[Dict[str, Any]] = []
-    page = 1
-    while True:
-        query = urlencode({
-            "resource_template_id": template_id,
-            "per_page": PAGE_SIZE,
-            "page": page,
-        })
-        batch = client.get_resource(f"{client.base_url}/items?{query}")
-        if not isinstance(batch, list) or not batch:
-            break
-        items.extend(batch)
-        if len(batch) < PAGE_SIZE:
-            break
-        page += 1
-    return items
+    """Every item on one resource template."""
+    return client.get_items(resource_template_id=template_id)
 
 
 def collect_items(

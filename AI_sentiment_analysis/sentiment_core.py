@@ -240,69 +240,22 @@ class PanelMember:
 
 
 #: Generation 2, live from 2026-07-31. Each member owns SIX properties named
-#: for the model, never for its vendor: reusing a vendor slot is what made
-#: generation 1 impossible to attribute without a git archaeology session.
+#: for the model, never for its vendor: Omeka does not index value
+#: annotations, so the property name is the only provenance a query can
+#: reach. Three rules decide membership:
 #:
-#: Four of the five are open-weights releases (Mistral Small 4, Gemma 4 and
-#: Qwen3.8 under Apache-2.0, DeepSeek V4 Flash under MIT), so those annotations
-#: can be regenerated from weights that are archivable alongside them. Their
-#: active parameter counts — 6.5B, 13B, 27B and 31B (Gemma is dense, so all of
-#: it) — sit inside a factor of five, wider than the pair that preceded them.
-#: Only GPT-5.6 Luna is a model that could be withdrawn out from under its own
-#: annotations, and Qwen3.8 goes further than the other three: its answers were
-#: produced on hardware in the building, so the run is reproducible without a
-#: third party consenting to serve the weights at all.
+#: * every member is its vendor's high-volume tier, so the panel is a set of
+#:   readings of the construct and not a quality ladder;
+#: * no two members share a lab or pretraining family (Gemma replaced
+#:   Gemini rather than joining it), because that buys correlated annotator
+#:   error;
+#: * a member is keyed on its *route* as well as its weights — Gemma goes
+#:   through OpenRouter under ``data_collection: deny`` because the Gemini
+#:   route serves it on a free tier whose content Google uses; Qwen3.8 is
+#:   the self-hosted run, and its OpenRouter twin stays a candidate.
 #:
-#: Every member is its vendor's high-volume tier. That is the property that
-#: makes this a panel rather than a quality ladder, and it is why the Gemini
-#: slot moved off ``gemini-3.6-flash`` on 2026-07-31: at $1.50/$7.50 per 1M it
-#: cost five to seventeen times the others, so any disagreement it had with
-#: them could be read as "the expensive model knows better" rather than as two
-#: readings of the construct. Nothing was ever written to ``iwac:gemini36Flash*``.
-#:
-#: **The Google slot became Gemma 4 31B on 2026-08-14, replacing
-#: ``gemini-3.5-flash-lite``.** Flash-Lite held the slot from 2026-07-31 but
-#: never annotated anything — ``iwac:gemini35FlashLiteCentralite`` was verified
-#: at 0 items on the live archive the day of the swap — so this fills an empty
-#: slot rather than mixing two models into one column, and generation 2 is
-#: unchanged by it. Flash-Lite was still the panel's cost outlier at $0.30/$2.50
-#: per 1M, against $0.09–0.20 in and $0.18–1.20 out for the rest, and the only
-#: member whose weights could not be archived beside its annotations.
-#:
-#: Gemma replaces the Google slot rather than joining as a fifth voice. It comes
-#: out of the same lab and pretraining-pipeline family as Gemini, so running both
-#: would buy correlated annotator error — the preference-leakage effect in the
-#: LLM-as-judge literature — which inflates agreement for reasons that have
-#: nothing to do with the construct, while making the panel 2/5 Google.
-#:
-#: **It is routed through OpenRouter, not ``GEMINI_API_KEY``, and that is not an
-#: implementation detail.** Gemma is free-of-charge on the Gemini API with no
-#: paid tier, and Google's pricing page states that free-tier content is used to
-#: improve its products; this pipeline ships whole archival articles, which is
-#: exactly what ``OPENROUTER_PROVIDER_PREFS``' ``data_collection: "deny"`` exists
-#: to prevent. The Gemini route is also capped at 16,000 input tokens per minute
-#: for this model (measured 2026-08-14, quota
-#: ``GenerateContentInputTokensPerModelPerMinute``), i.e. ~4 articles a minute
-#: and ~51 h for the corpus — no faster than OpenRouter, for the privacy cost.
-#:
-#: **Qwen3.5 122B-A10B was dropped on 2026-08-05, before it annotated
-#: anything.** It was never a model-quality decision — it was a serving one.
-#: OpenRouter lists five endpoints for it against DeepSeek's 22, and one of
-#: those does not support structured outputs, so ``require_parameters`` leaves
-#: four. That queueing put its median call at 104 s where the rest of the panel
-#: sat at 4–6 s, i.e. a corpus pass measured in days rather than hours, and the
-#: bottleneck was never the prompt or the reasoning level (it is marginally
-#: *faster* at ``medium`` than at ``low``). ``iwac:qwen35A10b*`` holds zero
-#: values, so it follows ``qwen35A3b`` and ``gemini36Flash`` out of the emitted
-#: ontology, which ``00_setup_properties.py --verify`` confirms is empty before
-#: any upload.
-#:
-#: Gemma was checked against that precedent before it was added, because it is the
-#: same shape of risk: OpenRouter lists 19 endpoints for ``google/gemma-4-31b-it``
-#: and 16 of them support structured outputs, so ``require_parameters`` leaves a
-#: deep pool rather than Qwen's four (verified 2026-08-14). Its ~72 s median is
-#: still the slowest in the panel — see the throughput table in the README — but
-#: it is queueing behind reasoning, not behind a starved endpoint list.
+#: How each slot came to hold what it holds, and the coverage gap Qwen3.8
+#: keeps on purpose, is dated in CHANGELOG.md ("Sentiment panel").
 PANEL: Dict[str, PanelMember] = {
     m.key: m
     for m in (
@@ -319,74 +272,29 @@ PANEL: Dict[str, PanelMember] = {
     )
 }
 
-#: **Qwen3.8 27B joined as a fifth voice on 2026-08-25**, annotated on
-#: university hardware rather than through anyone's API — the first member whose
-#: answers cost queue time instead of tokens, and the first whose requested
-#: ``medium`` is a rung the model actually has rather than one it is rounded up
-#: to (see :data:`PANEL_REASONING`). It joins rather than replaces: it shares no
-#: lab or pretraining family with the other four, so it does not carry the
-#: correlated-error problem that kept Gemma from being added beside Gemini.
-#:
-#: Its registry key names the *route*, not just the weights. The OpenRouter twin
-#: stays in :data:`PILOT_CANDIDATES` and must not be promoted alongside it: the
-#: same weights reached two ways would look like two annotators in the panel
-#: while being one reading of the construct, which is the correlated-error
-#: failure again in its purest form.
-#:
-#: **Its coverage is 12,098 of 12,251 and is expected to stay there.** 153
-#: articles were attempted four times each — a full-corpus pass plus three retry
-#: rounds — and retired. 145 of them fail the schema's cross-field rule the same
-#: way every time, and the failures concentrate on low centrality (5.45% of
-#: ``Marginal`` against 0.00% of ``Non abordé``): the model declines subjectivité
-#: when Islam is *peripheral* to an article where the prompt licenses declining
-#: only when it is *absent*. That is a disagreement about the instrument, so it
-#: is recorded rather than repaired — ``serving/merge_shards.py`` writes the
-#: failure log, and the README explains why relaxing the validator would be
-#: worse than the gap. **Do not "fix" this member's shortfall by re-running it.**
-#: The consequence for analysis is that its missing subjectivité is not missing
-#: at random.
+#: Qwen3.8 27B's coverage is 12,098 of 12,251 and stays there: 153 articles
+#: were attempted four times and retired because the model declines
+#: subjectivité when Islam is peripheral where the prompt licenses declining
+#: only when it is absent. Recorded, not repaired — do not re-run this member
+#: to "fix" the shortfall, and remember its missing subjectivité is not
+#: missing at random. Detail: CHANGELOG.md and the README.
 
 #: Models under evaluation, which ``02_pilot_new_panel.py`` runs and nothing
 #: else does. Membership of :data:`PANEL` is what makes a model *writable* —
-#: ``01_sentiment_analysis.py`` iterates that dict alone — so a candidate parked
-#: here is one that cannot reach Omeka however it is invoked. That separation is
-#: the point: issue #12 defers the add-or-replace decision until the pilot
-#: report exists, and a candidate sitting in ``PANEL`` in the meantime would be a
-#: single ``--models`` flag away from writing six properties across 12,300 items.
+#: ``01_sentiment_analysis.py`` iterates that dict alone — so a candidate
+#: parked here cannot reach Omeka however it is invoked. Everything else
+#: about a candidate is production (same type, prompt, schema and call path),
+#: so the pilot measures the model rather than a lookalike of the pipeline.
+#: :attr:`PanelMember.model_item_id` raises ``KeyError`` until the candidate's
+#: Omeka authority item exists: the record comes first, then the code that
+#: cites it.
 #:
-#: Everything else about a candidate is production: same ``PanelMember`` type,
-#: same prompt, same schema, same :func:`panel_reasoning`, same call path
-#: through ``analyze_with_all_models``. Only the membership is staged, so the
-#: pilot measures the model rather than a lookalike of the pipeline.
-#:
-#: :attr:`PanelMember.model_item_id` raises ``KeyError`` for a candidate until
-#: its Omeka authority item exists, and that is the correct order — the record
-#: comes first, then the code that cites it (see ``AI_MODEL_ITEMS``). Nothing in
-#: the pilot path asks for it; only the write path does.
-#:
-#: **The remaining candidate is Qwen3.8 27B's OpenRouter twin, and it stays a
-#: candidate even though the same weights are now in :data:`PANEL`.** The
-#: property prefix names the model and the registry key carries the route,
-#: exactly as ``gemma_4_31b_it`` does for ``gemma-4-openrouter``. Running both on
-#: one sample is what turns "self-hosting is cheaper" into a measurement: same
-#: weights, same articles, with latency, structured-output reliability and
-#: reasoning depth read off each route rather than assumed to match. Cost is not
-#: comparable in one unit — OpenRouter bills tokens, a cluster bills GPU-hours
-#: and queue time — so record both rather than converting one into the other.
-#:
-#: What it must never become is a fifth-and-a-half voice. Promoting it beside the
-#: self-hosted member would put one model in the panel twice, and a panel that
-#: counts one reading as two is measuring its own routing rather than the
-#: construct.
-#:
-#: It needs no :data:`PANEL_REASONING_OVERRIDES` entry. Qwen3.8's ladder is
-#: low/medium/xhigh, so the panel's requested ``medium`` is a rung the model
-#: actually has — verified on the self-hosted route, where reasoning length grew
-#: ~3.5× from ``low`` to ``xhigh`` with the middle rung cleanly between. Whether
-#: that survives the OpenRouter route is precisely what this twin is for: Gemma's
-#: graduated levels collapsed to on/off when fanned across third-party backends
-#: (see :data:`PANEL_REASONING`), and a server you run yourself is the only route
-#: here where the depth can be read off the server's own logs.
+#: The remaining candidate is Qwen3.8 27B's OpenRouter twin. The same weights
+#: are in :data:`PANEL` on the self-hosted route; running both on one sample
+#: measures the route (latency, structured-output reliability, whether the
+#: middle reasoning rung survives a third-party backend). It must never be
+#: promoted beside the self-hosted member — one model counted twice measures
+#: routing, not the construct.
 PILOT_CANDIDATES: Dict[str, PanelMember] = {
     m.key: m
     for m in (
@@ -395,38 +303,16 @@ PILOT_CANDIDATES: Dict[str, PanelMember] = {
     )
 }
 
-#: Reasoning depth requested of every panel member.
+#: Reasoning depth requested of every panel member. Both knobs are sent
+#: because the vendors split on naming (Gemini ``thinking_level``, the rest
+#: ``reasoning_effort``); each client reads only its own.
 #:
-#: The two knobs are sent together because the vendors split on naming: Gemini
-#: takes ``thinking_level``, everyone else ``reasoning_effort``. Each client
-#: reads only its own, so setting both is how one config reaches all four.
-#:
-#: Verified against the live APIs, 2026-07-29/31 and 2026-08-14 for Gemma:
-#:   GPT-5.6 Luna           effort none/low/medium/high/xhigh/max  -> medium
-#:   Gemma 4 31B            two levels only, MINIMAL|HIGH          -> high
-#:   DeepSeek V4 Flash 0731 accepts only low/high/max              -> high
-#:   Mistral Small 4        effort ONLY none|high — low/medium 400 -> high
-#:
-#: **Only GPT-5.6 Luna now sits at a genuine middle setting.** The other three
-#: have no middle level, so they are rounded up to ``high`` rather than dropped
-#: into a lighter/non-reasoning mode. That is a real limit on comparability and
-#: belongs in any write-up of the panel results — and the swap of the Google
-#: slot from Gemini 3.5 Flash-Lite (which did have MEDIUM) to Gemma made it
-#: worse, taking the panel from an even 2/2 split to 3 of 4 rounded up. It was
-#: accepted for the reasons in the ``PANEL`` comment above; it should not pass
-#: unstated.
-#:
-#: Gemma's ``high`` is also the least legible of the three, because OpenRouter
-#: fans the request across third-party backends serving the same weights and they
-#: do not agree on what an effort means or on how to report it. Measured on one
-#: article, 2026-08-14: with no effort sent the answer is ~200 output tokens and
-#: no reasoning; at ``medium`` and at ``high`` it is ~1,000-1,200 output tokens
-#: with 3.3-4.2k characters of reasoning — but the two levels are
-#: indistinguishable from each other in both latency and reasoning length, so
-#: Gemma's thinking is on/off through this route rather than graduated. One
-#: backend reasoned at ``minimal`` too (897 tokens), and one reports
-#: ``reasoning_tokens: 1`` while emitting 3.7k characters of it. Read the depth
-#: as requested, never as measured.
+#: Only GPT-5.6 Luna and Qwen3.8 accept a genuine middle; Gemma 4, DeepSeek
+#: 0731 and Mistral Small 4 have no such rung and are rounded up to ``high``
+#: (:data:`PANEL_REASONING_OVERRIDES`). That is a real limit on comparability
+#: and belongs in any write-up. Gemma's depth through OpenRouter is on/off
+#: rather than graduated — read it as requested, never as measured. The
+#: levels each API accepts, and when they were verified: CHANGELOG.md.
 PANEL_REASONING = {"reasoning_effort": "medium", "thinking_level": "MEDIUM"}
 
 #: Per-member deviations from the shared middle setting. DeepSeek 0731 and
@@ -459,19 +345,10 @@ PANEL_REASONING_EFFECTIVE: Dict[str, str] = {
     for key in {**PANEL, **PILOT_CANDIDATES}
 }
 
-#: Sentiment on Omeka is now generation 2 alone. Deleted from the archive on
-#: 2026-08-07, after the values were confirmed present on the Hugging Face full
-#: mirror: the vendor-keyed generation-1 campaign (``iwac:gemini*``,
-#: ``iwac:chatgpt*``, ``iwac:mistral*``, 12,286 items each) and the retired
-#: April preview ``iwac:deepseekV4Flash*`` (11,482). The Hub keeps generation 1
-#: as ``gemini_3_flash_preview_*`` / ``gpt_5_mini_*`` / ``ministral_14b_2512_*``,
-#: frozen with ``omeka_prefix=None`` in the uploader's panel so ``hub_merge``
-#: preserves what the uploader no longer emits — that freeze is the archive, and
-#: removing it would drop the only remaining copy. The preview was not on the
-#: Hub and was discarded deliberately.
-#:
-#: Nothing here reads those properties any more. Anything comparing generations
-#: reads the Hub, not Omeka.
+#: Sentiment on Omeka is generation 2 alone: generation 1 and the April
+#: DeepSeek preview were deleted on 2026-08-07 once the Hugging Face full
+#: mirror held them, and the Hub is now their only copy. Nothing here reads
+#: those properties; anything comparing generations reads the Hub, not Omeka.
 
 
 # ---------------------------------------------------------------------------

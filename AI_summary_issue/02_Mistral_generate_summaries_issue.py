@@ -60,14 +60,13 @@ from dotenv import load_dotenv
 from rich.panel import Panel
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.pdf_utils import get_pdf_page_count  # noqa: E402
 from common.llm_provider import DEFAULT_TEXT_MODEL_KEY, ModelOption, get_model_option  # noqa: E402
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
+from common.mistral_ocr import MISTRAL_OCR_MODEL  # noqa: E402
 from common.log_redaction import install_credential_redaction
 
 # Shared magazine-extraction building blocks (models, prompts, step skeletons)
@@ -100,7 +99,9 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds (exponential backoff via common.retry)
 
 # Mistral multimodal extraction model
-MISTRAL_OCR = "mistral-ocr-latest"  # For OCR API endpoint
+# The pinned OCR release, shared with the two OCR pipelines: a rolling alias
+# would leave the page extraction unable to name the model that read it.
+MISTRAL_OCR = MISTRAL_OCR_MODEL
 MISTRAL_OCR_TIMEOUT_MS = 600_000
 
 # ------------------------------------------------------------------

@@ -19,7 +19,6 @@ Usage:
 import csv
 import os
 import re
-import sys
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -27,6 +26,7 @@ from dataclasses import dataclass, field
 csv.field_size_limit(10 * 1024 * 1024)
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
+from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from rich.console import Console
@@ -36,8 +36,6 @@ from rich import box
 from common.omeka_client import OmekaClient
 from common.console_utils import standard_progress
 
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8")
 
 console = Console()
 
@@ -198,22 +196,41 @@ def build_authority_dict(
 # ---------------------------------------------------------------------------
 
 
+_TOKEN_RE = re.compile(r"\b\w+\b", re.UNICODE)
+
+
+@lru_cache(maxsize=65536)
+def _prepared(text: str) -> Tuple[str, str, Tuple[str, ...]]:
+    """(lowercase, compact key, content tokens) for one string, computed once.
+
+    A fuzzy pass compares every unreconciled value against every authority
+    title; without this each authority's forms were re-derived per value.
+    """
+    lower = text.lower().strip()
+    norm = normalize_location_name(text)
+    tokens = tuple(t for t in _TOKEN_RE.findall(_strip_diacritics(lower)) if t not in STOPWORDS)
+    return lower, norm, tokens
+
+
+def _ratio_at_least(a: str, b: str, floor: float) -> float:
+    """``SequenceMatcher.ratio()`` unless its cheap upper bound rules it out."""
+    matcher = SequenceMatcher(None, a, b)
+    if matcher.real_quick_ratio() < floor or matcher.quick_ratio() < floor:
+        return 0.0
+    return matcher.ratio()
+
+
 def calculate_similarity(s1: str, s2: str) -> float:
     """Return a conservative similarity score (0..1) between two strings."""
-    s1_lower, s2_lower = s1.lower().strip(), s2.lower().strip()
+    s1_lower, s1_norm, s1_tokens = _prepared(s1)
+    s2_lower, s2_norm, s2_tokens = _prepared(s2)
     if not s1_lower or not s2_lower:
         return 0.0
     if s1_lower == s2_lower:
         return 1.0
-
-    s1_norm = normalize_location_name(s1)
-    s2_norm = normalize_location_name(s2)
     if s1_norm and s1_norm == s2_norm:
         return STRONG_MATCH_THRESHOLD
 
-    token_pattern = re.compile(r"\b\w+\b", re.UNICODE)
-    s1_tokens = [t for t in token_pattern.findall(_strip_diacritics(s1_lower)) if t not in STOPWORDS]
-    s2_tokens = [t for t in token_pattern.findall(_strip_diacritics(s2_lower)) if t not in STOPWORDS]
     s1_token_set, s2_token_set = set(s1_tokens), set(s2_tokens)
     common_tokens = s1_token_set & s2_token_set
     all_tokens = s1_token_set | s2_token_set
@@ -225,15 +242,23 @@ def calculate_similarity(s1: str, s2: str) -> float:
     else:
         token_overlap_ratio = 1.0 if common_tokens else 0.0
 
-    char_similarity = SequenceMatcher(None, s1_lower, s2_lower).ratio()
-    norm_similarity = SequenceMatcher(None, s1_norm, s2_norm).ratio() if (s1_norm and s2_norm) else 0.0
-    max_char_sim = max(char_similarity, norm_similarity)
-
     if len(all_tokens) >= 2 and token_overlap_ratio < MIN_TOKEN_OVERLAP:
         return 0.0
-    if len(s1_lower) <= 4 or len(s2_lower) <= 4:
+
+    # A reversed name ("Bamba Amadou" / "Amadou Bamba") is a strong match
+    # whatever the character similarity, so it is decided before the ratio
+    # gate below, which would otherwise discard it.
+    reversed_name = bool(s1_tokens and s2_tokens and s1_token_set == s2_token_set
+                         and tuple(reversed(s1_tokens)) == s2_tokens)
+    short = len(s1_lower) <= 4 or len(s2_lower) <= 4
+    floor = 0.0 if reversed_name else (0.95 if short else 0.85)
+    char_similarity = _ratio_at_least(s1_lower, s2_lower, floor)
+    norm_similarity = _ratio_at_least(s1_norm, s2_norm, floor) if (s1_norm and s2_norm) else 0.0
+    max_char_sim = max(char_similarity, norm_similarity)
+
+    if short:
         return max_char_sim if max_char_sim >= 0.95 else 0.0
-    if s1_tokens and s2_tokens and s1_token_set == s2_token_set and s1_tokens[::-1] == s2_tokens:
+    if reversed_name:
         return max(STRONG_MATCH_THRESHOLD, max_char_sim)
     if max_char_sim < 0.85:
         return 0.0

@@ -149,7 +149,74 @@ def test_search_items_by_property_builds_eq_query():
     assert params["property[0][text]"] == "ABC-123"
 
 
-def test_search_items_by_property_returns_empty_on_error():
+def response_with_headers(json_data, headers):
+    resp = response_with(json_data)
+    resp.headers = headers
+    return resp
+
+
+def test_iter_items_follows_the_total_results_header():
+    """Two full pages the header accounts for: two requests, no probing third."""
     client = make_client()
-    client.session.get.return_value = response_with([], status=500)
-    assert client.search_items_by_property(10, "x") == []
+    page1 = [{"o:id": i} for i in range(100)]
+    page2 = [{"o:id": 100 + i} for i in range(100)]
+    client.session.get.side_effect = [
+        response_with_headers(page1, {"Omeka-S-Total-Results": "200", "Omeka-S-Version": "4.2.1"}),
+        response_with_headers(page2, {"Omeka-S-Total-Results": "200"}),
+    ]
+
+    items = client.get_items(resource_class_id=36)
+
+    assert len(items) == 200
+    assert client.session.get.call_count == 2
+    assert client.server_version == "4.2.1"
+    _, kwargs = client.session.get.call_args_list[0]
+    assert kwargs["params"]["resource_class_id"] == 36
+    assert "item_set_id" not in kwargs["params"]
+
+
+def test_get_items_drops_none_filters_and_keeps_item_set():
+    client = make_client()
+    client.session.get.return_value = response_with([])
+    client.get_items(5, modified_after=None, resource_template_id=23)
+    _, kwargs = client.session.get.call_args
+    assert kwargs["params"]["item_set_id"] == 5
+    assert kwargs["params"]["resource_template_id"] == 23
+    assert "modified_after" not in kwargs["params"]
+
+
+def test_count_items_reads_the_header_with_one_request():
+    client = make_client()
+    client.session.get.return_value = response_with_headers(
+        [{"o:id": 1}], {"Omeka-S-Total-Results": "12349"}
+    )
+    assert client.count_items(resource_class_id=36) == 12349
+    _, kwargs = client.session.get.call_args
+    assert kwargs["params"]["per_page"] == 1
+
+
+def test_get_items_by_ids_pages_the_id_list():
+    client = make_client()
+    client.session.get.side_effect = [
+        response_with([{"o:id": i} for i in range(100)]),
+        response_with([{"o:id": 100}, {"o:id": 101}]),
+    ]
+    found = client.get_items_by_ids(range(102))
+    assert set(found) == set(range(102))
+    assert client.session.get.call_count == 2
+    _, kwargs = client.session.get.call_args_list[1]
+    assert kwargs["params"]["id[]"] == [100, 101]
+
+
+def test_search_raises_on_transport_error_instead_of_returning_no_match():
+    from common.omeka_client import OmekaRequestError
+
+    client = make_client()
+    client.session.get.side_effect = requests.ConnectionError("down")
+    with pytest.raises(OmekaRequestError):
+        client.search_items_by_property(10, "x")
+
+
+def test_upsert_property_value_is_deprecated():
+    with pytest.warns(DeprecationWarning):
+        OmekaClient.upsert_property_value({}, "bibo:content", 91, "text")

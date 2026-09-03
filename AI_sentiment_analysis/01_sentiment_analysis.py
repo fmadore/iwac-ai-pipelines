@@ -97,6 +97,7 @@ import argparse
 import concurrent.futures as futures
 import logging
 import threading
+from copy import deepcopy
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
@@ -113,6 +114,8 @@ from common.llm_provider import build_llm_client, get_model_option, LLMConfig, B
 from common.console_utils import standard_progress
 from common.iwac_config import resolve_property_ids
 from common.log_redaction import install_credential_redaction
+from common.omeka_text_updater import BackupSink, open_backup
+from common.write_guard import WriteGuard
 
 # Schema, prompt, panel and analysis calls are shared with the pilot so the two
 # runs stay comparable (see sentiment_core's module docstring).
@@ -227,13 +230,7 @@ def count_items(client: OmekaClient, params: Dict[str, Any]) -> int:
     makes an accurate progress bar possible without holding the corpus in
     memory.
     """
-    response = client.session.get(
-        f"{client.base_url}/items",
-        params={**client._auth_params(), **params, "per_page": 1, "page": 1},
-        timeout=client.timeout,
-    )
-    response.raise_for_status()
-    return int(response.headers.get("Omeka-S-Total-Results", 0))
+    return client.count_items(**params)
 
 
 def iter_explicit_items(
@@ -290,19 +287,7 @@ def iter_items(client: OmekaClient, params: Dict[str, Any]) -> Iterator[Dict[str
     whose ``bibo:content`` is the complete OCR text, which is a lot to hold in
     memory for no reason when each item is used once and discarded.
     """
-    page = 1
-    while True:
-        url = (
-            f"{client.base_url}/items?per_page={PER_PAGE}&page={page}"
-            + "".join(f"&{key}={value}" for key, value in params.items())
-        )
-        batch = client.get_resource(url)
-        if not isinstance(batch, list) or not batch:
-            return
-        yield from batch
-        if len(batch) < PER_PAGE:
-            return
-        page += 1
+    yield from client.iter_items(per_page=PER_PAGE, **params)
 
 
 # ============================================================================
@@ -386,8 +371,12 @@ def update_item_sentiment(
     property_ids: Dict[str, int],
     *,
     dry_run: bool = False,
+    backup: Optional[BackupSink] = None,
 ) -> str:
     """Write every model's answer for one item in a single PATCH.
+
+    *backup* receives the item exactly as fetched, before the PATCH — the
+    only route back after a corpus pass.
 
     The item is re-fetched and sent back whole. Omeka treats an item's
     properties as one block, so anything missing from the payload is deleted —
@@ -400,6 +389,7 @@ def update_item_sentiment(
     item_data = client.get_item(int(item_id))
     if not item_data:
         return "not_found"
+    original = deepcopy(item_data) if backup is not None else None
 
     modified = False
     for model_key, result in results.items():
@@ -417,6 +407,8 @@ def update_item_sentiment(
         return "unchanged"
     if dry_run:
         return "would_update"
+    if backup is not None and original is not None:
+        backup(original)
     return "updated" if client.update_item(int(item_id), item_data) else "failed"
 
 
@@ -685,6 +677,7 @@ class SentimentRunner:
             results,
             self.property_ids,
             dry_run=self.args.dry_run,
+            backup=getattr(self, "backup", None),
         )
         self.bump(status)
         if status == "failed":
@@ -693,7 +686,10 @@ class SentimentRunner:
     def run(self, progress_total: int) -> None:
         """Consume the lazy job stream with a bounded worker queue."""
         console.rule("[bold cyan]Processing")
-        with self.cache, standard_progress(console, show_eta=True) as progress:
+        backup_dir = None if self.args.no_backup or self.args.skip_update else self.args.backup_dir
+        with self.cache, open_backup(backup_dir, label="sentiment", dry_run=self.args.dry_run) as backup, \
+                standard_progress(console, show_eta=True) as progress:
+            self.backup = backup
             task = progress.add_task("[cyan]Annotating...", total=progress_total)
             with futures.ThreadPoolExecutor(max_workers=self.args.concurrency) as pool:
                 for future in bounded_completions(
@@ -840,6 +836,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
              "alone rather than requested",
     )
     behaviour.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
+    behaviour.add_argument(
+        "--backup-dir", type=Path, default=Path(__file__).resolve().parent / "backups",
+        help="Where each item's pre-write JSON is appended before its PATCH (default: backups/).",
+    )
+    behaviour.add_argument("--no-backup", action="store_true", help="Do not dump pre-write payloads. Not recommended.")
     behaviour.add_argument(
         "--verbose", action="store_true", help="Log per-model failures as they happen"
     )
@@ -1108,20 +1109,25 @@ def prepare_run(
 
 
 def confirm_run(prepared: PreparedSentimentRun) -> bool:
+    """The same gate every other write step uses, with the panel's numbers."""
     args = prepared.runner.args
-    if args.skip_update or args.dry_run or args.yes:
+    if args.skip_update:
         return True
-    console.print(Panel(
-        f"About to PATCH up to [bold]{prepared.total_items:,}[/] items on "
-        f"[cyan]{prepared.runner.listing_client.base_url}[/].\n\n"
-        f"Writes {len(prepared.runner.members) * 6} properties per item, all "
-        f"under iwac:<model>* — generation-1 values are not read or modified.\n"
-        f"Estimated runtime: [bold]"
-        f"{format_duration(prepared.total_items * SECONDS_PER_ITEM_SERIAL / args.concurrency)}[/] "
-        f"at concurrency {args.concurrency} (interrupt and re-run to resume).",
-        title="Confirm", border_style="yellow",
-    ))
-    return console.input("\n[bold]Proceed? [y/N]:[/] ").strip().lower() in ("y", "yes")
+    guard = WriteGuard(
+        dry_run=args.dry_run, assume_yes=args.yes,
+        backup_dir=args.backup_dir, backup_enabled=not args.no_backup,
+    )
+    return guard.confirm(
+        console,
+        action=f"PATCH {len(prepared.runner.members) * 6} iwac:<model>* properties per item",
+        base_url=prepared.runner.listing_client.base_url,
+        item_count=prepared.total_items,
+        details=[
+            "Generation-1 values are not read or modified.",
+            f"Runtime:       ~{format_duration(prepared.total_items * SECONDS_PER_ITEM_SERIAL / args.concurrency)} "
+            f"at concurrency {args.concurrency} (interrupt and re-run to resume)",
+        ],
+    )
 
 
 # ============================================================================

@@ -132,27 +132,11 @@ def process_items(items, output_dir):
     return success_count, skipped_count
 
 
-def fetch_by_resource_class(client: OmekaClient, resource_class_id: int) -> List[Dict[str, Any]]:
-    """Fetch every item of a resource class, paginating through the API.
-
-    ``OmekaClient.get_items`` is keyed on an item set, which cannot express
-    "the whole class". This goes through the client's own ``get_resource`` rather
-    than raw ``requests`` so authentication, timeouts and retries still apply.
-    """
-    items: List[Dict[str, Any]] = []
-    page = 1
-    while True:
-        batch = client.get_resource(
-            f"{client.base_url}/items"
-            f"?resource_class_id={resource_class_id}&per_page=100&page={page}"
-        )
-        if not batch:
-            break
-        items.extend(batch)
-        if len(batch) < 100:
-            break
-        page += 1
-    return items
+def fetch_by_resource_class(
+    client: OmekaClient, resource_class_id: int, modified_after: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Every item of a resource class, optionally only those modified since a date."""
+    return client.get_items(resource_class_id=resource_class_id, modified_after=modified_after)
 
 
 def item_languages(item: Dict[str, Any]) -> List[str]:
@@ -203,6 +187,11 @@ def main():
              f"sets and 39 belong to none.",
     )
     parser.add_argument(
+        "--modified-after", metavar="DATE",
+        help="With --resource-class: only items modified since this ISO date "
+             "(e.g. 2026-08-01), for an incremental re-run.",
+    )
+    parser.add_argument(
         "--language", nargs="*", default=list(DEFAULT_LANGUAGES), metavar="NAME",
         help="dcterms:language labels to keep (default: %(default)s). "
              "Pass --language with no value to disable filtering.",
@@ -224,7 +213,7 @@ def main():
 
     if args.resource_class is not None:
         logging.info(f"Fetching every item of resource class {args.resource_class}...")
-        items = fetch_by_resource_class(client, args.resource_class)
+        items = fetch_by_resource_class(client, args.resource_class, args.modified_after)
         logging.info(f"Fetched {len(items)} items.")
     else:
         item_set_ids = args.item_set

@@ -61,9 +61,7 @@ from rich.table import Table
 from rich import box
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.llm_provider import (  # noqa: E402
     DEFAULT_TEXT_MODEL_KEY,

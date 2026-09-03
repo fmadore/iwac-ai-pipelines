@@ -21,7 +21,7 @@ The script extracts individual pages from each PDF and sends them directly to Ge
    ```bash
    python gemini_htr_processor.py
    # or skip the prompts:
-   python gemini_htr_processor.py --model gemini-pro --language arabic --rpm 5
+   python gemini_htr_processor.py --model gemini-3.1-pro --language arabic --rpm 5
    ```
 3. Select language mode (French, Arabic, or Multilingual)
 4. Select model (Flash or Pro)
@@ -33,7 +33,10 @@ distinguishes letters in handwriting.
 
 A page that fails is reported in the run summary and left out of the transcript.
 It is never represented by an `[ERROR: ...]` placeholder in the text: that string
-would otherwise be uploaded to Omeka as page content by a later `03` step.
+would otherwise be uploaded to Omeka as page content. There is no `03` step here:
+copy the finished `.txt` files into `AI_ocr_extraction/OCR_Results/` and run
+`AI_ocr_extraction/03_omeka_content_updater.py`, which writes `bibo:content`
+with the `iwac:ocrModel` annotation.
 
 ## Language Modes
 
@@ -50,7 +53,7 @@ Each mode uses a specialized prompt (`htr_system_prompt_*.md`) with language-spe
 | Model | Speed | Accuracy | Best For |
 |-------|-------|----------|----------|
 | Gemini 3.7 Flash | Faster | Good | Clear handwriting, bulk processing |
-| Gemini Pro | Slower | Higher | Difficult scripts, faded ink |
+| `gemini-3.1-pro` | Slower | Higher | Difficult scripts, faded ink |
 
 ## Output
 

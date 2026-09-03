@@ -329,10 +329,10 @@ A checkpoint entry only counts when its transcript is still on disk.
 ## What reaches Omeka
 
 `bibo:content`, as one literal, with an `iwac:transcriptionModel` annotation
-(property 315, "AI Model - Transcription"). The property has been declared in the
-IWAC vocabulary since it was first uploaded and nothing wrote it until now — the
-audio pipeline's `03` step stamps no provenance, so a transcription's model was
-recorded nowhere.
+(property 315, "AI Model - Transcription"). The property had been declared in the
+IWAC vocabulary since it was first uploaded, and this pipeline (2026-08-12) was
+the first to write it; `AI_audio_summary/03` has stamped it too since
+2026-08-27, for the models that have an authority item.
 
 Two deliberate differences from `AI_audio_summary/03`:
 

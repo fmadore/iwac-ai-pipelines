@@ -32,15 +32,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8")
 
 console = Console()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.iwac_config import (  # noqa: E402

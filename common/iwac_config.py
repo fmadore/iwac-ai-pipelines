@@ -89,6 +89,12 @@ IWAC_SUMMARY_MODEL_PROPERTY_ID = 313  # iwac:summaryModel ("AI Model - Summary")
 #: the models that have an authority item, which is neither Voxtral nor either
 #: of the rolling Gemini aliases that step 02 offers.
 IWAC_TRANSCRIPTION_MODEL_PROPERTY_ID = 315
+#: iwac:nerModel ("AI Model - NER"). Declared with the vocabulary but written by
+#: nothing until 2026-09-02, when ``AI_NER/03`` and ``AI_reference_indexing/05``
+#: started annotating every ``dcterms:subject`` / ``dcterms:spatial`` link they
+#: append. Links added before then carry no provenance and cannot be told apart
+#: from hand-catalogued ones. Verified live 2026-09-02.
+IWAC_NER_MODEL_PROPERTY_ID = 314
 
 #: The IWAC ontology (``iwac:``) in this instance. Its property IDs are
 #: contiguous but not guaranteed to be — resolve terms with
@@ -139,29 +145,14 @@ LANGUAGE_LABELS_BY_CODE: Dict[str, str] = {
 }
 
 # AI model annotation items (class 244, "Notice d'autorité", item set 267).
-# display_title mirrors the actual Omeka item title.
+# display_title mirrors the actual Omeka item title — it is what the pre-write
+# dump and the confirmation panel show.
 #
 # Keys match the ``common.llm_provider`` registry keys where one exists, so a
 # pipeline can map the model it just ran straight to its annotation item.
-#
-# Superseded models keep their Omeka items so historical annotations still
-# resolve (e.g. 78053 "Gemini 3.0 flash", 78630 "Gemini 3.5 flash"); they are
-# dropped from this dict once no longer offered for new writes.
-#
-# ``gemini-3.6-flash`` is superseded by 3.7 everywhere a run may be *started*,
-# but stays here because it is still needed to *finish* one: 46 YouTube
-# transcripts already on the archive carry an ``iwac:transcriptionModel``
-# annotation naming item 79611, and OCR text produced by 3.6 that has not
-# reached step 03 yet must be stamped for the model that actually read it, not
-# for whatever is current on upload day.
-#
-# Three ``display_title`` values were corrected on 2026-08-14 to match the live
-# item titles they claim to mirror: "Gemini 3.1 pro" -> "Gemini 3.1 Pro",
-# "Gemini 3.6 flash" -> "Gemini 3.6 Flash", "Gemini 3.1 flash lite" -> "Gemini
-# 3.1 Flash Lite". Omeka regenerates this key from the linked item on read, so
-# nothing stored was ever wrong — but it is what the pre-write payload dump and
-# the confirmation panel show, which is where an operator checks that the run is
-# about to stamp the model they think it is.
+# Superseded models keep their items while an annotation still needs them
+# (``gemini-3.6-flash`` finishes runs that started on it) and leave this dict
+# once nothing does. When each entry was created and why: CHANGELOG.md.
 AI_MODEL_ITEMS: Dict[str, Dict] = {
     "claude-opus-5": {"item_id": 79615, "display_title": "Claude Opus 5.0"},
     "claude-opus-4.6": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
@@ -208,53 +199,18 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     "gemini-3.5-transcribe": {"item_id": 113077, "display_title": "Gemini 3.5 Transcribe"},
 }
 
-#: Superseded authority items, kept only so this file records why an id that
-#: appears in git history no longer resolves. Do not annotate with these.
+#: Superseded authority items — never annotate with these. Why each was
+#: retired, and the three rolling-alias keys that were re-pinned before
+#: them, is in CHANGELOG.md under "AI model authority items".
 #:
-#:   79608  "Gemini 3.6 flash"  duplicate of 79611, created 2026-07-27
+#:   79608  "Gemini 3.6 flash"  duplicate of 79611
 #:   79609  "GPT-5.6 Luna"      deleted upstream; replaced by 79610
 #:
-#: The key for Gemini was ``gemini-flash`` until 2026-07-31. That is the
-#: registry key for ``gemini-flash-latest``, a rolling alias which reports its
-#: version as literally "Gemini Flash Latest" — so annotating such a run as
-#: "Gemini 3.6 flash" asserted a model version the run could not confirm. The
-#: key is now the pinned ``gemini-3.6-flash``.
-#:
-#: ``gemini-flash-lite`` was the same bug and outlived the fix: it is the
-#: registry key for the *rolling* ``gemini-flash-lite-latest`` while claiming
-#: item 78631, "Gemini 3.1 flash lite". That alias resolved to 3.1 when the
-#: entry was written and resolves to 3.5 now, so every annotation written
-#: through it since Gemini 3.5 Flash-Lite shipped names the wrong model. Both
-#: Flash-Lite generations now have pinned registry entries and their own items,
-#: and the rolling key is deliberately absent: a model whose version cannot be
-#: stated is a model that cannot be cited.
-#:
-#: ``gemini-pro`` was the third case, found the same day by the guard added for
-#: the second (``test_no_registry_key_is_a_rolling_alias``). It resolved to
-#: ``gemini-pro-latest`` while claiming item 78536, "Gemini 3.1 pro"; the alias
-#: reports its own version as the string "Gemini Pro Latest", so a run through
-#: it could not have confirmed that claim even if asked. Re-keyed to the pinned
-#: ``gemini-3.1-pro``. The rolling ``gemini-pro`` option stays in
-#: ``MODEL_REGISTRY`` — it is the right choice for a pipeline that wants
-#: whatever Pro is current and does not stamp provenance — it simply cannot be
-#: an annotation key.
-#:
-#: ``claude-opus`` was the same ambiguity in a different shape and was split on
-#: 2026-08-07 into ``claude-opus-4.6`` and ``claude-opus-5``. There is no
-#: registry entry for either — the Claude keys exist only so ``AI_summary_issue``
-#: can stamp which model read the PDFs when the index came from the
-#: ``issue-indexing`` agent rather than from a provider API. (The other
-#: agent-driven pipeline, ``AI_reference_indexing``, writes resource links and
-#: stamps nothing.) That model is whatever Claude Code is running, which no code
-#: here observes, so the operator asserts it — and an unversioned key invited
-#: them to assert a name that had quietly come to mean the wrong release. 78528
-#: keeps the existing Opus 4.6 annotations resolving; new runs take 79615.
-#:
-#: ``deepseek-v4-flash`` (item 79613, "DeepSeek V4 Flash") left this dict on
-#: 2026-08-07: the April preview is superseded everywhere by the dated 0731
-#: release. Its sentiment values were deleted from Omeka the same day, so
-#: nothing links to 79613 any more. The item itself is still live and is left
-#: out of RETIRED_AI_MODEL_ITEM_IDS, which means "this id no longer resolves".
+#: The rule those incidents left behind: a key here must name a pinned
+#: release. A rolling alias (``gemini-flash-latest``, ``gemini-pro-latest``)
+#: reports its own version as "… Latest", so a run through it cannot confirm
+#: the model the annotation would claim — and a model whose version cannot
+#: be stated is a model that cannot be cited.
 RETIRED_AI_MODEL_ITEM_IDS = (79608, 79609)
 
 

@@ -61,6 +61,7 @@ from common.iwac_config import (
     select_model_key,
 )
 from common.log_redaction import install_credential_redaction
+from common.write_guard import add_write_guard_args
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
@@ -92,23 +93,7 @@ def main() -> int:
         "--model", choices=list(AI_MODEL_ITEMS),
         help="AI model that produced the summaries. Prompts interactively when omitted.",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Fetch each item and report what would change, but write nothing.",
-    )
-    parser.add_argument(
-        "--yes", action="store_true",
-        help="Skip the interactive confirmation before writing.",
-    )
-    parser.add_argument(
-        "--backup-dir", type=Path, default=None,
-        help="Where each item's pre-write JSON is dumped before its PATCH "
-             "(default: <pipeline>/backups). The only route back from a bulk overwrite.",
-    )
-    parser.add_argument(
-        "--no-backup", action="store_true",
-        help="Do not dump pre-write payloads. Not recommended.",
-    )
+    add_write_guard_args(parser, default_backup_dir=Path(__file__).resolve().parent / "backups")
     args = parser.parse_args()
 
     try:
@@ -200,7 +185,7 @@ def main() -> int:
     if french_only:
         confirm_lines.append(f"French only:      {french_only} of {len(updates)}")
 
-    backup_dir = None if args.no_backup else (args.backup_dir or pipeline_dir / "backups")
+    backup_dir = None if args.no_backup else args.backup_dir
 
     stats = run_text_updates(
         client, updates, french_target,

@@ -21,6 +21,7 @@ Supported formats:
 import os
 import re
 import sys
+import argparse
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any, Set
@@ -41,7 +42,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.downloader import stream_download
-from common.ffmpeg_utils import AUDIO_FORMATS, VIDEO_FORMATS
+from common.ffmpeg_utils import AUDIO_FORMATS, VIDEO_FORMATS, sanitize_stem
 from common.console_utils import standard_progress
 from common.log_redaction import install_credential_redaction
 
@@ -136,8 +137,10 @@ class MediaDownloader:
         Returns:
             str: Sanitized filename safe for filesystem use
         """
-        # Replace invalid characters with underscores
-        sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        # Replace invalid characters with underscores, then drop the quotes
+        # and other shell-unsafe characters the transcribers refuse to pass
+        # to ffmpeg — a file this step names must be one step 02 will read.
+        sanitized = sanitize_stem(re.sub(r'[<>:"/\\|?*]', '_', filename))
         # Remove leading/trailing spaces and dots
         sanitized = sanitized.strip(' .')
         # Limit length to avoid filesystem issues
@@ -362,6 +365,14 @@ def download_media_from_single_item(item_id: str, media_folder: Path) -> Optiona
         return downloader.process_item(item)
 
 
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Download audio and video media from Omeka S into Audio/.")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--item-set-id", type=str, help="Download every item's media from this item set")
+    target.add_argument("--item-id", type=str, help="Download one item's media")
+    return parser.parse_args(argv)
+
+
 def get_download_choice() -> Tuple[str, str]:
     """
     Prompt user to choose between downloading from an item set or a single item.
@@ -470,6 +481,7 @@ def main():
 
     Prompts user for download type (item set or single item) and processes accordingly.
     """
+    args = parse_args()
     # Initialize logging
     setup_logging(SCRIPT_DIR)
 
@@ -477,8 +489,13 @@ def main():
     media_folder = SCRIPT_DIR / "Audio"
 
     try:
-        # Get user choice
-        choice_type, target_id = get_download_choice()
+        # A flag answers the menu; otherwise ask.
+        if args.item_set_id:
+            choice_type, target_id = "item_set", args.item_set_id
+        elif args.item_id:
+            choice_type, target_id = "item", args.item_id
+        else:
+            choice_type, target_id = get_download_choice()
 
         # Display configuration
         console.print()

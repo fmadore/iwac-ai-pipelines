@@ -27,10 +27,15 @@ Corrects text while maintaining word-level coordinates. Essential when coordinat
 ### Plain Text Workflow
 
 ```bash
-python 01_extract_ocr_text.py      # Extract text from Omeka S
+python 01_extract_ocr_text.py      # Extract the raw OCR (extracttext:extracted_text) from Omeka S
 python 02_correct_ocr_text.py      # Apply AI corrections
-python 03_update_database.py       # Update Omeka S (--dry-run to preview)
+python 03_update_database.py       # Write bibo:content (--dry-run to preview; backups/ holds the pre-write copy)
 ```
+
+Note the round trip: step 01 reads the *raw* OCR that the ExtractText module
+stored under `extracttext:extracted_text`, and step 03 writes the corrected
+text to `bibo:content`, the property the archive searches and exports. The raw
+OCR is left untouched, so the original remains available for comparison.
 
 Step 03 asks for confirmation before writing; `--dry-run` reports what would
 change without PATCHing, and `--yes` skips the prompt. It writes no
@@ -113,6 +118,7 @@ OMEKA_BASE_URL=https://your-instance.com/api
 OMEKA_KEY_IDENTITY=your_key
 OMEKA_KEY_CREDENTIAL=your_credential
 
+OPENROUTER_API_KEY=your_key   # the default model (DeepSeek V4 Flash 0731)
 GEMINI_API_KEY=your_key
 OPENAI_API_KEY=your_key
 MISTRAL_API_KEY=your_key
@@ -130,4 +136,4 @@ MISTRAL_API_KEY=your_key
 | Token count mismatch | Script falls back to original; check for merged/split words |
 | Historical spellings changed | Adjust prompt with more examples |
 | ALTO namespace errors | Script auto-detects v2/v3/v4; check XML validity |
-| API rate limits | Built-in retry handles this |
+| API rate limits | The provider adapters retry transient errors; a daily quota stops the run, and re-running skips files already corrected |

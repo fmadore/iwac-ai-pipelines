@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Optional
 from xml.etree import ElementTree as ET
 
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from rich import box
 from rich.console import Console
@@ -48,6 +47,7 @@ from common.llm_provider import (
     summary_from_option,
 )
 from common.console_utils import standard_progress
+from common.llm_registry import PROVIDER_GEMINI, clamp_thinking_level
 from common.log_redaction import install_credential_redaction
 
 # Credentials ride in Omeka query strings and provider headers; keep them
@@ -55,7 +55,6 @@ from common.log_redaction import install_credential_redaction
 install_credential_redaction()
 
 # Load environment variables
-load_dotenv()
 
 # Initialize Rich console
 console = Console()
@@ -687,17 +686,12 @@ def main():
         console.print(f"[red]✗[/] {e}")
         sys.exit(1)
 
-    # Configure LLM based on provider. Temperature is deliberately absent: it is
-    # set per model in MODEL_REGISTRY from each vendor's guidance, and forcing it
-    # low here is what Gemini 3 and Qwen both document as a cause of looping.
-    # "minimal" here means "as little as this model offers" — Gemini 3.7 Flash
-    # dropped that rung, and the registry clamp turns the request into LOW.
-    if model_option.key == "gemini-3.7-flash":
-        config = LLMConfig(thinking_level="minimal")  # Fastest/cheapest
-    elif model_option.key == "gemini-pro":
-        config = LLMConfig(thinking_level="low")  # Minimal thinking
-    else:
-        config = LLMConfig()
+    # "minimal" means "as little as this model offers": the provider adapter
+    # snaps it to the nearest level the chosen model accepts, so no model name
+    # is tested here. Temperature is deliberately absent — it is set per model
+    # in MODEL_REGISTRY from each vendor's guidance, and forcing it low is a
+    # documented cause of looping.
+    config = LLMConfig(thinking_level="minimal")
 
     # Display configuration
     console.rule("[bold cyan]Configuration")
@@ -709,10 +703,9 @@ def main():
     config_table.add_row("Input Directory", str(input_dir))
     config_table.add_row("Output Directory", str(output_dir))
     config_table.add_row("Max Lines/Request", f"{args.max_lines} (for large blocks)")
-    if model_option.key == "gemini-3.7-flash":
-        config_table.add_row("Thinking", "Shallowest available (thinking_level=low)")
-    elif model_option.key == "gemini-pro":
-        config_table.add_row("Thinking Level", "low")
+    if model_option.provider == PROVIDER_GEMINI:
+        effective = clamp_thinking_level(model_option.model, config.thinking_level)
+        config_table.add_row("Thinking Level", f"{effective} (shallowest this model offers)")
     console.print(config_table)
     console.print()
 

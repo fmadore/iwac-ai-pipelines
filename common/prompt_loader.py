@@ -88,8 +88,12 @@ def select_prompt_interactive(
     *,
     default_prompt: str,
     title: str = "Available Prompts",
+    preselected: Optional[int] = None,
 ) -> Tuple[str, Optional[int]]:
     """Show a numbered menu of prompts and return the chosen content.
+
+    *preselected* (a ``--prompt N`` flag) answers the menu without showing
+    it, so an unattended run needs no stdin; ``0`` means the default prompt.
 
     Returns:
         (prompt_content, prompt_number) — number is ``None`` when the
@@ -102,6 +106,18 @@ def select_prompt_interactive(
     if not numbered:
         console.print("[yellow]⚠[/] No numbered prompt files found. Using default prompt.")
         return default_prompt, None
+
+    if preselected is not None:
+        if preselected == 0:
+            console.print("[dim]Using default prompt (--prompt 0).[/]")
+            return default_prompt, None
+        selected = next((opt for opt in numbered if opt.number == preselected), None)
+        if selected is None:
+            raise ValueError(
+                f"--prompt {preselected} does not exist; choose 1-{len(numbered)} or 0 for the default"
+            )
+        console.print(f"[green]✓[/] Prompt {selected.number}: [cyan]{selected.description}[/]")
+        return load_prompt_md(selected.path), selected.number
 
     table = Table(title=f"📝 {title}", box=box.ROUNDED)
     table.add_column("#", style="cyan", justify="right")
