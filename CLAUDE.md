@@ -253,3 +253,11 @@ library module never touches `sys.stdout` on import.
 
 Incident history belongs in `CHANGELOG.md`, not beside the constant it
 explains: the code states the rule, the changelog tells the story.
+
+Written output is calibrated to the task: a changelog entry, a README section or a
+docstring covers the substance and stops. No filler sections, no redundant summary
+of what was just said, no boilerplate — the prose in this file is the target register.
+
+Delegate to a subagent only for a genuinely independent, wide investigation across
+many pipelines. Not for work finishable in a handful of tool calls, and never to
+verify or double-check a change — the test suite and `--dry-run` do that.
