@@ -241,3 +241,10 @@ only `word` and `page`, and the block objects carry no confidence field.
 **Copyright.** Reference full text is overwhelmingly non-public on Omeka (7 of
 423 values), and the public Hugging Face projection masks it per row. This
 pipeline does not change any value's visibility.
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

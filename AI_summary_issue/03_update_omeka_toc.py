@@ -40,7 +40,6 @@ from common.iwac_config import (  # noqa: E402
     DCTERMS_TABLE_OF_CONTENTS_PROPERTY_ID,
     IWAC_SUMMARY_MODEL_PROPERTY_ID,
     model_annotation_value,
-    select_model_key,
 )
 from common.llm_provider import DEFAULT_TEXT_MODEL_KEY  # noqa: E402
 from common.omeka_text_updater import (  # noqa: E402
@@ -48,6 +47,7 @@ from common.omeka_text_updater import (  # noqa: E402
     TextUpdate,
     run_text_updates,
 )
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 
@@ -88,11 +88,13 @@ def load_from_extractions(extractions_dir: Path) -> list:
             continue
         with open(index_files[0], "r", encoding="utf-8") as f:
             data = json.load(f)
+        if data.get("extraction_errors"):
+            raise ValueError(f"Incomplete table of contents: {index_files[0]}; retry extraction first")
         articles = data.get("articles", [])
         if not articles:
             continue
         toc_text = "\n\n".join(format_article_toc(a) for a in articles)
-        toc_entries.append({"item_id": item_id, "table_of_contents": toc_text})
+        toc_entries.append({"item_id": item_id, "table_of_contents": toc_text, "path": index_files[0]})
     return toc_entries
 
 
@@ -108,10 +110,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
+    parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest output; requires --model.")
     return parser
 
 
 def main() -> int:
+    from common.artifacts import validated_model
     args = build_argument_parser().parse_args()
     guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
     backup_dir = guard.backup_dir if guard.backup_enabled else None
@@ -130,8 +134,12 @@ def main() -> int:
 
     # Asked rather than defaulted: an unattended run must not stamp whatever
     # the registry default happens to be on upload day.
-    selected_key = args.model or select_model_key(default=DEFAULT_TEXT_MODEL_KEY)
-    if selected_key is None:
+    try:
+        selected_key = validated_model([entry["path"] for entry in toc_entries], requested=args.model, legacy=args.legacy_import)
+        if selected_key not in AI_MODEL_ITEMS:
+            raise ValueError(f"No model authority for {selected_key}")
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
         return 1
     model_value = model_annotation_value(
         client.base_url, selected_key, IWAC_SUMMARY_MODEL_PROPERTY_ID, "AI Model - Summary"
@@ -165,7 +173,7 @@ def main() -> int:
     )
     if not stats:
         return 1  # operator declined
-    return 0 if stats["failed"] == 0 else 1
+    return batch_exit_code(stats)
 
 
 if __name__ == "__main__":

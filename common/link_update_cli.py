@@ -7,8 +7,8 @@ link annotated with the model that proposed it. One implementation here; the
 two ``03``/``05`` scripts are thin entry points that name their folder and
 banner.
 
-Reads are batched: every item the CSV names is fetched in pages of 100 via
-``id[]`` before the PATCH loop, instead of one GET per item.
+Reads are fetched in batches of at most 100 immediately before their PATCH
+loop, bounding memory and the read-modify-write window.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from common.omeka_link_updater import (
     update_item_resource_links,
 )
 from common.write_guard import WriteGuard, add_write_guard_args
+from common.omeka_text_updater import open_backup
 
 SPATIAL_RECONCILED_COLUMN = "Spatial AI Reconciled ID"
 SUBJECT_RECONCILED_COLUMN = "Subject AI Reconciled ID"
@@ -201,16 +202,17 @@ def update_reconciled_items(
     console = console or Console()
     guard = guard or WriteGuard()
     stats: Counter = Counter(total=len(rows))
-    pre_write: List[MutableMapping[str, Any]] = []
-
     console.rule("[bold cyan]Processing Items")
-    prefetched = _prefetch(client, rows)
-    with standard_progress(console) as progress:
+    backup_dir = guard.backup_dir if guard.backup_enabled else None
+    with open_backup(backup_dir, label=backup_label, dry_run=guard.dry_run) as backup, standard_progress(console) as progress:
         task = progress.add_task(
             "[cyan]Checking Omeka items...[/]" if guard.dry_run else "[cyan]Updating Omeka items...[/]",
             total=len(rows),
         )
-        for row in rows:
+        prefetched = {}
+        for index, row in enumerate(rows):
+            if index % 100 == 0:
+                prefetched = _prefetch(client, rows[index:index + 100])
             cached = None
             try:
                 cached = prefetched.get(int((row.get("o:id") or "").strip()))
@@ -220,7 +222,7 @@ def update_reconciled_items(
                 client, row,
                 new_spatial_map=new_spatial_map, new_subject_map=new_subject_map,
                 annotation=annotation, dry_run=guard.dry_run,
-                on_pre_write=pre_write.append,
+                on_pre_write=backup,
                 item_data=cached if isinstance(cached, dict) else None,
             )
             stats["errors" if result.status == "error" else result.status] += 1
@@ -228,9 +230,8 @@ def update_reconciled_items(
             stats["subject_added"] += result.subject_added
             progress.update(task, advance=1)
 
-    backup_path = guard.dump_backup(pre_write, label=backup_label)
-    if backup_path is not None:
-        console.print(f"[dim]Pre-write payloads saved to {backup_path}[/]")
+        if backup is not None:
+            console.print(f"[dim]Pre-write payloads saved to {backup.path}[/]")
     return stats
 
 

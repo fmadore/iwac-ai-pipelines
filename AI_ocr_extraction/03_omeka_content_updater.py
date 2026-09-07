@@ -41,10 +41,11 @@ from common.iwac_config import (
     BIBO_CONTENT_PROPERTY_ID,
     IWAC_OCR_MODEL_PROPERTY_ID,
     model_annotation_value,
-    select_model_key,
 )
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 from common.write_guard import WriteGuard, add_write_guard_args
+from common.artifacts import validated_model
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
@@ -66,6 +67,7 @@ def main() -> int:
         help="OCR model used for extraction. Prompts interactively when omitted.",
     )
     add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
+    parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest output; requires --model.")
     args = parser.parse_args()
     guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
     backup_dir = guard.backup_dir if guard.backup_enabled else None
@@ -86,8 +88,13 @@ def main() -> int:
         return 1
 
     # Which model produced this OCR? Recorded as an iwac:ocrModel annotation.
-    model_key = args.model or select_model_key(default="gemini-3.7-flash")
-    if model_key is None:
+    ocr_folder = PIPELINE_DIR / "OCR_Results"
+    try:
+        model_key = validated_model(sorted(ocr_folder.glob("*.txt")), requested=args.model, legacy=args.legacy_import)
+        if model_key not in AI_MODEL_ITEMS:
+            raise ValueError(f"No Omeka authority registered for {model_key}")
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
         return 1
     ocr_model_value = model_annotation_value(
         client.base_url, model_key, IWAC_OCR_MODEL_PROPERTY_ID, "AI Model - OCR"
@@ -137,7 +144,7 @@ def main() -> int:
     if not stats:
         return 1  # operator declined
 
-    return 0 if stats["failed"] == 0 else 1
+    return batch_exit_code(stats)
 
 
 if __name__ == "__main__":

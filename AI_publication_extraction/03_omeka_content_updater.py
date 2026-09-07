@@ -46,8 +46,8 @@ from common.iwac_config import (
     BIBO_CONTENT_PROPERTY_ID,
     IWAC_OCR_MODEL_PROPERTY_ID,
     model_annotation_value,
-    select_model_key,
 )
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 from common.write_guard import add_write_guard_args
 from common.omeka_client import OmekaClient
@@ -94,6 +94,7 @@ def _sidecar_note(updates: List[TextUpdate]) -> str:
 
 
 def main() -> int:
+    from common.artifacts import validated_model
     parser = argparse.ArgumentParser(
         description="Update Omeka S reference items with extracted publication text.",
     )
@@ -106,6 +107,7 @@ def main() -> int:
         help="Restrict the write to these item ids. Repeatable.",
     )
     add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
+    parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest files; requires --model.")
     args = parser.parse_args()
 
     console.print(Panel(
@@ -124,8 +126,15 @@ def main() -> int:
         console.print(f"[red]✗[/] {exc}")
         return 1
 
-    model_key = args.model or select_model_key(default=DEFAULT_MODEL_KEY)
-    if model_key is None:
+    paths = sorted(p for p in RESULTS_DIR.glob("*.txt") if p.stem.isdigit())
+    if args.item_ids:
+        paths = [p for p in paths if int(p.stem) in args.item_ids]
+    try:
+        model_key = validated_model(paths, requested=args.model, legacy=args.legacy_import)
+        if model_key not in AI_MODEL_ITEMS:
+            raise ValueError(f"No authority registered for {model_key}")
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
         return 1
     ocr_model_value = model_annotation_value(
         client.base_url, model_key, IWAC_OCR_MODEL_PROPERTY_ID, "AI Model - OCR"
@@ -186,7 +195,7 @@ def main() -> int:
     if not stats:
         return 1  # operator declined
 
-    return 0 if stats["failed"] == 0 else 1
+    return batch_exit_code(stats)
 
 
 if __name__ == "__main__":

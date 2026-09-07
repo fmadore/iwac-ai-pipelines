@@ -279,6 +279,7 @@ def main() -> int:
         console=console,
         logger=LOGGER,
         verbose=True,
+        model_key=model_option.key,
     )
 
     console.print()

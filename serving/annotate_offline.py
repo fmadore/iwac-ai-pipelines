@@ -57,6 +57,8 @@ from typing import Any, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.llm_provider import LLMConfig, build_llm_client, get_model_option
+from common.checkpoint import sha256_text
+from common.instrument import record_identity
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "AI_sentiment_analysis"))
 from sentiment_core import (  # noqa: E402
@@ -92,7 +94,8 @@ def configure_logging() -> logging.Logger:
 
 
 def load_done(path: Path, prompt_id: str, effort: Optional[str],
-              logger: logging.Logger) -> set:
+              logger: logging.Logger, *, model_id: str | None = None,
+              source_hashes: dict | None = None) -> set:
     """Item ids already annotated *successfully*, by this instrument.
 
     Four things are deliberately not counted as done:
@@ -126,6 +129,10 @@ def load_done(path: Path, prompt_id: str, effort: Optional[str],
             continue
         if record.get("reasoning_effort") != effort:
             other_depth += 1
+            continue
+        if model_id is None or record_identity(record)["model_id"] != model_id:
+            continue
+        if source_hashes is None or record.get("source_sha256") != source_hashes.get(record.get("item_id")):
             continue
         if (record.get("result") or {}).get("analysis_error"):
             errored += 1
@@ -175,7 +182,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> int:
     args = build_argument_parser().parse_args()
     logger = configure_logging()
 
@@ -214,7 +221,9 @@ def main() -> None:
             panel_reasoning(PANEL_MEMBER_KEY).get("reasoning_effort"),
         )
     # Resume is keyed on the instrument, so it has to know the depth first.
-    done = load_done(output, prompt_id, reasoning.get("reasoning_effort"), logger)
+    source_hashes = {a["item_id"]: sha256_text(a["content"]) for a in articles}
+    done = load_done(output, prompt_id, reasoning.get("reasoning_effort"), logger,
+                     model_id=option.model, source_hashes=source_hashes)
 
     # One attempt must fit inside the per-article budget with room for retries;
     # xhigh calls were measured past 300s on L40s, so this is not theoretical.
@@ -273,6 +282,7 @@ def main() -> None:
             "prompt": prompt_id,
             "model": option.model,
             "model_key": option.key,
+            "source_sha256": source_hashes[article["item_id"]],
             "reasoning_effort": reasoning.get("reasoning_effort"),
             "language": article.get("language"),
             "seconds": round(elapsed, 2),
@@ -308,7 +318,8 @@ def main() -> None:
     logger.info("finished: %d written, %d failed, %.1f min total (%.1f articles/hour)",
                 counters["written"], counters["failed"], total_min,
                 counters["written"] / max(total_min / 60, 1e-9))
+    return int(counters["failed"] > 0)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

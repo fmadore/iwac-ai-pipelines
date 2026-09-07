@@ -28,6 +28,16 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def sha256_file(path: Path) -> str:
+    """Hash large source files without reading them all into memory."""
+    with Path(path).open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def fingerprint(value: Any) -> str:
+    return sha256_text(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+
+
 def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
     """Write *content* beside *path* and atomically replace the destination."""
     path = Path(path)
@@ -69,7 +79,7 @@ class JsonCheckpoint:
                 raise CheckpointMismatch(
                     f"Checkpoint is unreadable: {path}. Use --force to replace it."
                 ) from exc
-            if payload.get("version") != CHECKPOINT_FORMAT_VERSION:
+            if not isinstance(payload, dict) or payload.get("version") != CHECKPOINT_FORMAT_VERSION:
                 raise CheckpointMismatch(
                     f"Checkpoint version differs: {path}. Use --force to replace it."
                 )
@@ -94,6 +104,11 @@ class JsonCheckpoint:
 
     def mark(self, key: str, fingerprint: str) -> None:
         self.entries[str(key)] = fingerprint
+        self.save()
+
+    def invalidate(self, key: str) -> None:
+        """Revoke eligibility before attempting to replace an existing artifact."""
+        self.entries.pop(str(key), None)
         self.save()
 
     def save(self) -> None:

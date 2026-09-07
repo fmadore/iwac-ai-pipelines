@@ -552,6 +552,10 @@ def _prepare_checkpointed_output(
     items: List[Dict[str, Any]],
     force: bool,
 ) -> tuple[List[Dict[str, Any]], bool, int]:
+    from common.checkpoint import fingerprint
+    context = {**context, "source_sha256": fingerprint({str(item["o:id"]): {
+        "title": get_value(item, "dcterms:title"), "content": get_value(item, "bibo:content"),
+    } for item in items})}
     output_path = Path(output_csv)
     checkpoint_path = output_path.with_suffix(output_path.suffix + ".checkpoint.json")
     if output_path.exists() and not checkpoint_path.exists() and not force:
@@ -630,12 +634,12 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
     output_dir = args.output_dir or os.path.join(SCRIPT_DIR, 'output')
     os.makedirs(output_dir, exist_ok=True)
     output_csv = _build_output_path(item_set_ids, output_dir, model_option.key)
+    from common.run_context import model_context
     items, resume, resumed_items = _prepare_checkpointed_output(
         output_csv,
         context={
             "pipeline": "ner-csv-v2",
-            "model_key": model_option.key,
-            "model_id": model_option.model,
+            **model_context(model_option, config.llm_config),
             "prompt_sha256": sha256_text(get_ner_system_prompt()),
             "item_set_ids": item_set_ids,
             "spatial_filter": spatial_filter,

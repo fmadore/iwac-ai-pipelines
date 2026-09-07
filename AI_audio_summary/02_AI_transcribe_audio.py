@@ -625,7 +625,7 @@ class AudioTranscriber(TranscriberBase):
 
         if not media_files:
             self.print_no_files_warning()
-            return
+            return 1
 
         files_to_process, files_to_retry, files_complete = self._classify_media_files(
             media_files, output_folder,
@@ -638,8 +638,7 @@ class AudioTranscriber(TranscriberBase):
 
         # In resume mode, only process files with failed segments
         if resume_mode:
-            self._resume_failed_segments(files_to_retry, custom_prompt, output_folder, segment_minutes)
-            return
+            return self._resume_failed_segments(files_to_retry, custom_prompt, output_folder, segment_minutes)
 
         all_files_to_process = self._select_normal_work(
             files_to_process, files_to_retry,
@@ -647,7 +646,7 @@ class AudioTranscriber(TranscriberBase):
 
         if not all_files_to_process:
             console.print("[green]✓[/] All files are already transcribed successfully!")
-            return
+            return 0
 
         # Display files table
         self.print_files_table(all_files_to_process, with_status=True)
@@ -673,12 +672,13 @@ class AudioTranscriber(TranscriberBase):
         )
 
         self.print_summary_table(len(media_files), successful_transcriptions, failed_transcriptions, output_folder)
+        return int(failed_transcriptions > 0)
 
     def _resume_failed_segments(self, files_to_retry, custom_prompt, output_folder, segment_minutes):
         """Resume mode: retry only failed segments in existing transcriptions."""
         if not files_to_retry:
             console.print("[green]✓[/] No failed segments to retry. All transcriptions are complete!")
-            return
+            return 0
 
         total_failed = sum(len(item[2]) for item in files_to_retry)
         console.print(
@@ -702,6 +702,7 @@ class AudioTranscriber(TranscriberBase):
                     successful_retries += successful
                     failed_retries += failed
                 except QuotaExhaustedError:
+                    failed_retries += 1
                     console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
                     console.print("[red]Partial results have been saved.[/]")
                     break
@@ -721,6 +722,7 @@ class AudioTranscriber(TranscriberBase):
         summary_table.add_row("Successful retries", f"[green]{successful_retries}[/]")
         summary_table.add_row("Still failing", f"[red]{failed_retries}[/]" if failed_retries > 0 else "0")
         console.print(summary_table)
+        return int(failed_retries > 0)
 
 
 def parse_args():
@@ -877,14 +879,13 @@ def main() -> int:
         show_transcription_configuration(args, selected_model, split_segments)
 
         # Transcribe all audio files (optionally split into segments)
-        transcriber.transcribe_all_audio_files(
+        return transcriber.transcribe_all_audio_files(
             audio_folder=args.audio_folder,
             output_folder=args.output_folder,
             split_segments=split_segments,
             segment_minutes=args.segment_minutes,
             resume_mode=args.resume
         )
-        return 0
 
     except ValueError as e:
         console.print(f"\n[red]✗ Configuration Error:[/] {e}")

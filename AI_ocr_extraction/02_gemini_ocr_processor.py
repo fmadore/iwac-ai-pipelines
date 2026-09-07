@@ -175,6 +175,7 @@ def main() -> int:
         rate_limiter=RateLimiter(args.rpm, logger=logging.getLogger(__name__)),
         console=console,
         logger=logging.getLogger(__name__),
+        model_key=model_option.key,
     )
     console.print("[green]✓[/] Processor initialized")
 

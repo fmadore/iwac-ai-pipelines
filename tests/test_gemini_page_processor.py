@@ -52,7 +52,7 @@ def make_processor(response=None, policy=None, side_effect=None):
     processor = GeminiPageProcessor(
         client,
         "gemini-flash-latest",
-        MagicMock(),
+        gemini_utils.types.GenerateContentConfig(),
         policy or PagePolicy(user_prompt="Transcribe."),
         console=quiet_console(),
     )
@@ -160,6 +160,7 @@ def test_no_output_file_when_every_page_fails(tmp_path):
     """
     processor, _ = make_processor(make_response(None, "FinishReason.RECITATION"))
     output = tmp_path / "doc.txt"
+    (tmp_path / "doc.pdf").write_bytes(b"synthetic source")
 
     with patch("common.gemini_page_processor.PdfPageSource", return_value=fake_page_source(2)):
         result = processor.process_pdf(tmp_path / "doc.pdf", output)
@@ -175,20 +176,23 @@ def test_partial_success_writes_only_good_pages(tmp_path):
         side_effect=[make_response("good"), make_response(None, "FinishReason.RECITATION")],
     )
     output = tmp_path / "doc.txt"
+    (tmp_path / "doc.pdf").write_bytes(b"synthetic source")
 
     with patch("common.gemini_page_processor.PdfPageSource", return_value=fake_page_source(2)), \
          patch.object(processor, "process_page_upload", return_value=None):
         result = processor.process_pdf(tmp_path / "doc.pdf", output)
 
-    assert output.read_text(encoding="utf-8") == "good"
+    assert not output.exists()
+    assert result.output_file.read_text(encoding="utf-8") == "good"
     assert result.successful_pages == 1
     assert result.failed_pages == [2]
-    assert result.ok is True
+    assert result.ok is False
 
 
 def test_quota_exhaustion_saves_partial_then_raises(tmp_path):
     processor, _ = make_processor(None)
     output = tmp_path / "doc.txt"
+    (tmp_path / "doc.pdf").write_bytes(b"synthetic source")
 
     def pages(page_bytes, page_num):
         if page_num == 1:
@@ -201,7 +205,8 @@ def test_quota_exhaustion_saves_partial_then_raises(tmp_path):
             processor.process_pdf(tmp_path / "doc.pdf", output)
 
     # Partial results must survive the abort.
-    assert output.read_text(encoding="utf-8") == "first page"
+    assert not output.exists()
+    assert (tmp_path / "partial" / "doc.txt").read_text(encoding="utf-8") == "first page"
 
 
 def test_direct_multimodal_client_has_finite_timeout(monkeypatch):

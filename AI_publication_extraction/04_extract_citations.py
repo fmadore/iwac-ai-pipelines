@@ -437,7 +437,13 @@ def main() -> int:
         # than regenerated. Otherwise the set an operator reviewed is not the
         # set that gets written, and every dry run costs another extraction.
         cached_path = OUTPUT_DIR / f"citations_{item_id}.json"
-        if cached_path.exists() and not args.re_extract:
+        from common.artifacts import artifact_matches, commit_artifact, invalidate_artifact
+        from common.checkpoint import sha256_file, sha256_text
+        from common.run_context import model_context
+        cache_context = {"pipeline": "citations-v2", **model_context(model_option, config),
+                         "prompt_sha256": sha256_text(prompt)}
+        source_hash = sha256_file(path)
+        if cached_path.exists() and not args.re_extract and artifact_matches(cached_path, cache_context, source_hash):
             citations = [
                 Citation(**entry)
                 for entry in json.loads(cached_path.read_text(encoding="utf-8"))
@@ -447,6 +453,7 @@ def main() -> int:
                 f"({len(citations)} works) — pass --re-extract to redo[/]"
             )
         else:
+            invalidate_artifact(cached_path)
             sidecar = json.loads(path.read_text(encoding="utf-8"))
             citations = extract_for_item(llm(), sidecar, prompt)
             if citations:
@@ -457,6 +464,8 @@ def main() -> int:
                     encoding="utf-8",
                 )
             logging.info("item %s: %d cited works", item_id, len(citations))
+            if citations:
+                commit_artifact(cached_path, context=cache_context, source_sha256=source_hash)
 
         results[item_id] = citations
         if not citations:

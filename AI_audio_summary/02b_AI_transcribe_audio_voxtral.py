@@ -283,7 +283,7 @@ class VoxtralTranscriber(TranscriberBase):
         media_files = self.get_audio_files(audio_folder)
         if not media_files:
             self.print_no_files_warning()
-            return
+            return 1
 
         # Separate already-transcribed files from new ones
         files_to_process = []
@@ -300,7 +300,7 @@ class VoxtralTranscriber(TranscriberBase):
 
         if not files_to_process:
             console.print("[green]✓[/] All files are already transcribed!")
-            return
+            return 0
 
         # Display files table
         self.print_files_table(files_to_process)
@@ -332,6 +332,7 @@ class VoxtralTranscriber(TranscriberBase):
         successful, failed = self.run_processing_loop(files_to_process, _process_item)
 
         self.print_summary_table(len(files_to_process), successful, failed, output_folder)
+        return int(failed > 0)
 
 
 # ---- Interactive selection ------------------------------------------------
@@ -450,7 +451,7 @@ def main():
             requests_per_minute=args.rpm,
         )
 
-        transcriber.transcribe_all_audio_files(
+        return transcriber.transcribe_all_audio_files(
             audio_folder=args.audio_folder,
             output_folder=args.output_folder,
         )
@@ -464,7 +465,8 @@ def main():
 
     except Exception as e:
         console.print(f"\n[red]✗ Unexpected error:[/] {e}")
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -188,22 +188,24 @@ def upload_and_wait_active(
 
     waited = 0.0
     current = uploaded
-    while True:
-        state = current.state.name if current.state else None
-        if state == "ACTIVE":
-            return current
-        if state == "FAILED":
-            delete_uploaded_file(client, current)
-            raise RuntimeError("Gemini file processing failed (state=FAILED)")
-        if state not in (None, "PROCESSING"):
-            delete_uploaded_file(client, current)
-            raise RuntimeError(f"Unexpected Gemini file state: {state}")
-        if waited >= max_wait:
-            delete_uploaded_file(client, current)
-            raise TimeoutError(f"Gemini file not ACTIVE after {max_wait}s (state={state})")
-        time.sleep(poll_interval)
-        waited += poll_interval
-        current = client.files.get(name=uploaded.name)
+    try:
+        while True:
+            state = current.state.name if current.state else None
+            if state == "ACTIVE":
+                return current
+            if state == "FAILED":
+                raise RuntimeError("Gemini file processing failed (state=FAILED)")
+            if state not in (None, "PROCESSING"):
+                raise RuntimeError(f"Unexpected Gemini file state: {state}")
+            if waited >= max_wait:
+                raise TimeoutError(f"Gemini file not ACTIVE after {max_wait}s (state={state})")
+            time.sleep(poll_interval)
+            waited += poll_interval
+            current = client.files.get(name=uploaded.name)
+    except BaseException:
+        # Ownership passes to the caller only after an ACTIVE handle is returned.
+        delete_uploaded_file(client, uploaded)
+        raise
 
 
 def _upload_file(

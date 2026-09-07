@@ -7,6 +7,25 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## 1.2.0 — 2026-09-07
+
+Publication-readiness and recoverability release. See
+[migration and recovery instructions](docs/PUBLICATION.md) before uploading
+outputs generated with earlier versions.
+
+- Persist link-update backups before each archive write, preserve unrelated
+  value annotations, and limit prefetching to bounded batches.
+- Validate output hashes, model provenance, source identity, and companion files
+  at generation/upload boundaries. Legacy OCR, summary, and table-of-contents
+  imports now require an explicit opt-in and model selection.
+- Quarantine incomplete OCR, invalidate failed regeneration attempts, validate
+  extraction caches, and reject mixed offline sentiment instruments.
+- Journal authority creation before POST requests and retain recoverable mappings
+  incrementally. Clean up Gemini uploads when polling fails.
+- Propagate batch failures and quota exhaustion through affected CLI exit codes.
+- Add publication contracts, migration instructions, synthetic offline examples,
+  environment capture, metadata/link checks, and a broader CI test matrix.
+
 ## 1.1.0 — 2026-09-02
 
 Pre-publication release accompanying *When AI Meets the Archive*.

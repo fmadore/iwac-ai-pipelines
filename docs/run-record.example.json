@@ -1,0 +1,8 @@
+{
+  "purpose": "Template: replace nulls with measured publication-run facts",
+  "software": {"commit": null, "version": null, "version_doi": null, "environment_record": null},
+  "source": {"snapshot_revision": null, "retrieved_at": null, "selection": null, "items": null, "sha256": null},
+  "instrument": {"model_id": null, "model_revision": null, "prompt_sha256": null, "configuration": null},
+  "results": {"manifest": null, "completed": null, "failed": null, "excluded": null},
+  "evaluation": {"sample_selection": null, "languages": null, "human_review_procedure": null, "metrics": null}
+}

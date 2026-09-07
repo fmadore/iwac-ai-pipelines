@@ -81,6 +81,7 @@ from common.iwac_config import (
 )
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 
 from segments import GENERATOR_FIELD, read_body, read_header
@@ -501,7 +502,7 @@ def main() -> int:
             return 1  # operator declined
 
         logging.info("Transcription update process completed")
-        return 0 if stats["failed"] == 0 else 1
+        return batch_exit_code(stats)
 
     except ValueError as e:
         console.print(f"\n[red]Configuration Error:[/] {e}")

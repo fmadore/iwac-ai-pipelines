@@ -285,6 +285,7 @@ def cleanup_step1_cache(output_dir: Path) -> None:
         return
     for f in step1_dir.glob('page_*.*'):
         f.unlink()
+    (step1_dir / "context.json").unlink(missing_ok=True)
     try:
         step1_dir.rmdir()
     except OSError:
@@ -519,6 +520,8 @@ def run_extraction_pipeline(
     step1_model_label: str,
     step2_model_label: str,
     schema_note: str,
+    source_path: Optional[Path] = None,
+    model_key: Optional[str] = None,
 ) -> Path:
     """Run both steps for one magazine and manage the cache lifecycle.
 
@@ -533,6 +536,20 @@ def run_extraction_pipeline(
     Returns:
         Path to the final markdown index file.
     """
+    from common.checkpoint import JsonCheckpoint, sha256_file, sha256_text, CheckpointMismatch
+    from common.artifacts import invalidate_artifact, commit_artifact
+    final_json = output_dir / f"{magazine_id}_final_index.json"
+    invalidate_artifact(final_json)
+    cache_dir = step1_cache_dir(output_dir)
+    checkpoint_path = cache_dir / "context.json"
+    context = {"pipeline": "magazine-v2", "source_sha256": sha256_file(source_path) if source_path else None,
+               "extraction_model": step1_model_label, "consolidation_model": step2_model_label,
+               "prompt_sha256": sha256_text(load_extraction_prompt()),
+               "consolidation_prompt_sha256": sha256_text(load_consolidation_prompt()),
+               "schema": PageExtraction.model_json_schema(), "total_pages": total_pages}
+    if list(cache_dir.glob("page_*.json")) and not checkpoint_path.exists():
+        raise CheckpointMismatch(f"Legacy page cache at {cache_dir}; move it aside before regenerating")
+    JsonCheckpoint.open(checkpoint_path, context)
     _step1_file, extractions, error_count = run_step1(
         extract_page,
         total_pages=total_pages,
@@ -577,7 +594,13 @@ def run_extraction_pipeline(
     )
 
     # Success: the final index exists — the per-page cache is no longer needed.
-    cleanup_step1_cache(output_dir)
+    commit_artifact(final_json, context={**context, "model_key": model_key, "model_id": step2_model_label},
+                    source_sha256=context["source_sha256"] or sha256_text(magazine_id),
+                    complete=error_count == 0, companions=[final_file])
+    if error_count == 0:
+        cleanup_step1_cache(output_dir)
+    else:
+        raise TooManyExtractionErrors("Incomplete index saved for review; retry the failed pages before upload")
 
     return final_file
 

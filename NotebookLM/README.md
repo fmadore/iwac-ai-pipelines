@@ -143,3 +143,10 @@ Adjust `MAX_ITEMS_PER_FILE` to change the split threshold (default: 250).
 | Missing environment variables | Check `.env` contains all Omeka credentials |
 | Empty output files | Verify item set contains `bibo:Article` items |
 | Large exports timing out | Export individual item sets instead |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

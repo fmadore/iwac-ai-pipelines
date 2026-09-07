@@ -373,3 +373,19 @@ Add it to `MODEL_REGISTRY` in `common/llm_registry.py` with
 recipe for the mode you will run it in, never from a neighbouring entry; the
 `supported_reasoning_efforts` tuple should list only levels the served model
 really accepts. Then `SERVE_MODEL=<repo-id> sbatch serving/vllm_serve.sbatch`.
+## Publication runs
+
+Set `SERVE_REVISION` to an immutable Hugging Face commit and `VLLM_SPEC` to the
+version verified on your cluster before running setup. Download and serving use
+the same revision; the default `main` is intended for development. Setup saves
+the installed packages and selected revision beside the venv.
+
+Offline annotation resume checks model identity, prompt, reasoning depth and
+source-text hash. Older records without source hashes are recomputed. Use a
+separate output for each instrument/source snapshot: merging rejects mixed
+models, depths, prompts or source revisions before choosing successful attempts.
+The former `--allow-mixed-prompts` override is retired. Failed annotations return
+a nonzero exit code while retaining completed JSONL records.
+
+See the [publication guide](../docs/PUBLICATION.md) for environment capture and
+the research run record.

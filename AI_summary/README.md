@@ -195,3 +195,10 @@ Output *shape* is not set here: it comes from the `BilingualSummary` Pydantic sc
 | "no English summary — French only" | Step 02 failed on those items; re-run it before step 03 |
 | Item ends up with two French values | The French target lost `adopt_untagged`; check `PropertyTarget` in step 03 |
 | Checkpoint provenance error | Expected after editing the prompt or switching model — `--force` to accept |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

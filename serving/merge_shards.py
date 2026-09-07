@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import count_table, key_value_table
+from common.instrument import identity_key
 
 from rich.console import Console
 
@@ -107,6 +108,12 @@ def load_shards(patterns: List[str]) -> Tuple[List[Path], Dict[int, List[Dict[st
 
 def resolve(attempts: Dict[int, List[Dict[str, Any]]]):
     """Split items into the last success, or every attempt when none succeeded."""
+    identities = {identity_key(record) for records in attempts.values() for record in records}
+    if len(identities) > 1:
+        raise ValueError("Shards mix model, reasoning, or prompt identities; merge each instrument separately")
+    for item_id, records in attempts.items():
+        if len({record.get("source_sha256") for record in records}) > 1:
+            raise ValueError(f"Item {item_id} mixes source revisions; select one source snapshot")
     merged: Dict[int, Dict[str, Any]] = {}
     failed: Dict[int, List[Dict[str, Any]]] = {}
     for item_id, records in attempts.items():
@@ -191,10 +198,11 @@ def main() -> int:
     parser.add_argument(
         "--allow-mixed-prompts",
         action="store_true",
-        help="Merge records made under different prompt fingerprints (they are "
-        "different instruments; the default is to refuse)",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
+    if args.allow_mixed_prompts:
+        parser.error("--allow-mixed-prompts is retired; merge each instrument separately")
 
     if not args.dry_run and not args.output:
         parser.error("--output is required unless --dry-run is given")
@@ -216,7 +224,11 @@ def main() -> int:
         )
         return 1
 
-    merged, failed = resolve(attempts)
+    try:
+        merged, failed = resolve(attempts)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 1
     total_attempts = sum(len(r) for r in attempts.values())
     succeeded = len(merged) - len(failed)
 

@@ -86,9 +86,9 @@ def test_live_run_dumps_pre_write_payloads_before_patching(tmp_path):
 
     updater.update_rows(client, ROWS, guard=WriteGuard(backup_dir=tmp_path))
 
-    dumps = list(tmp_path.glob("_pre_write_ner_links_*.json"))
+    dumps = list(tmp_path.glob("_pre_write_ner_links_*.jsonl"))
     assert len(dumps) == 1
-    backup = json.loads(dumps[0].read_text(encoding="utf-8"))
+    backup = [json.loads(line) for line in dumps[0].read_text(encoding="utf-8").splitlines()]
     # The snapshot is the item as fetched, before any link was appended.
     assert backup == [item] or backup[0]["dcterms:spatial"] == [
         {"type": "resource:item", "value_resource_id": 10}

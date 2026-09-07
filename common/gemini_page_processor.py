@@ -49,6 +49,8 @@ from common.gemini_utils import (
     upload_and_wait_active,
 )
 from common.pdf_utils import PdfPageSource
+from common.checkpoint import atomic_write_text, sha256_file
+from common.artifacts import invalidate_artifact, commit_artifact
 from common.rate_limiter import QuotaExhaustedError, RateLimiter, is_quota_exhausted
 
 LOGGER = logging.getLogger(__name__)
@@ -93,6 +95,7 @@ class PdfResult:
     total_pages: int
     successful_pages: int = 0
     failed_pages: List[int] = field(default_factory=list)
+    truncated_pages: List[int] = field(default_factory=list)
     quota_exhausted: bool = False
     output_file: Optional[Path] = None
     output_size: int = 0
@@ -103,12 +106,10 @@ class PdfResult:
 
     @property
     def ok(self) -> bool:
-        """True when at least one page was transcribed and a file was written.
-
-        Deliberately not a size heuristic: a stale file from a previous run, or
-        one full of error markers, must not count as success.
-        """
-        return self.successful_pages > 0 and self.output_file is not None
+        """True only for a complete, untruncated document written this run."""
+        return (self.total_pages > 0 and self.successful_pages == self.total_pages
+                and not self.failed_pages and not self.truncated_pages
+                and not self.quota_exhausted and self.output_file is not None)
 
 
 class GeminiPageProcessor:
@@ -125,6 +126,7 @@ class GeminiPageProcessor:
         console: Optional[Console] = None,
         logger: Optional[logging.Logger] = None,
         verbose: bool = False,
+        model_key: Optional[str] = None,
     ):
         self.client = client
         self.model_name = model_name
@@ -134,6 +136,7 @@ class GeminiPageProcessor:
         self.console = console or Console()
         self.logger = logger or LOGGER
         self.verbose = verbose
+        self.model_key = model_key or model_name
 
     # ---- Request helpers ---------------------------------------------------
 
@@ -307,15 +310,17 @@ class GeminiPageProcessor:
         *,
         progress=None,
     ) -> PdfResult:
-        """Process every page and write the surviving text to *output_file*.
+        """Commit complete OCR, or salvage incomplete text in ``partial/``.
 
-        Pages are buffered and the file is written only if at least one page
-        succeeded, so a failed run never leaves a misleading output file behind.
+        Existing text survives a failed regeneration, but its manifest is
+        invalidated first so a write step cannot upload it as current output.
 
         Raises:
             QuotaExhaustedError: after saving whatever completed, so the caller
                 can stop the batch.
         """
+        invalidate_artifact(output_file)
+        source_hash = sha256_file(pdf_path)
         # Parse the document once, not once per page.
         page_source = PdfPageSource(pdf_path)
         total_pages = len(page_source)
@@ -331,6 +336,8 @@ class GeminiPageProcessor:
                 if text and text.strip():
                     pages.append((page_num, text))
                     result.successful_pages += 1
+                    if TRUNCATION_MARKER in text:
+                        result.truncated_pages.append(page_num)
                 else:
                     result.failed_pages.append(page_num)
 
@@ -358,10 +365,19 @@ class GeminiPageProcessor:
             progress.remove_task(page_task)
 
         if pages:
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-            output_file.write_text(_join_pages(pages), encoding="utf-8")
-            result.output_file = output_file
-            result.output_size = output_file.stat().st_size
+            complete = (result.successful_pages == total_pages and not result.truncated_pages
+                        and not result.quota_exhausted)
+            destination = output_file if complete else output_file.parent / "partial" / output_file.name
+            atomic_write_text(destination, _join_pages(pages))
+            config = self.generation_config
+            context = {"pipeline": "gemini-pages-v2", "model_key": self.model_key, "model_id": self.model_name,
+                       "configuration": config.model_dump(mode="json", exclude_none=True) if hasattr(config, "model_dump") else str(config),
+                       "user_prompt": self.policy.user_prompt, "media_resolution": self.policy.media_resolution}
+            commit_artifact(destination, context=context, source_sha256=source_hash, complete=complete,
+                            details={"total_pages": total_pages, "successful_pages": result.successful_pages,
+                                     "failed_pages": result.failed_pages, "truncated_pages": result.truncated_pages})
+            result.output_file = destination
+            result.output_size = destination.stat().st_size
 
         self._report(result)
 
@@ -498,6 +514,7 @@ def process_pdf_batch(
             )
         except QuotaExhaustedError:
             batch.quota_exhausted = True
+            batch.results.append(PdfResult(pdf_path=pdf_path, total_pages=0, quota_exhausted=True))
             processor.logger.error("Quota exhausted — aborting remaining PDFs.")
             break
         except Exception as exc:

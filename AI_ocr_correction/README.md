@@ -136,4 +136,11 @@ MISTRAL_API_KEY=your_key
 | Token count mismatch | Script falls back to original; check for merged/split words |
 | Historical spellings changed | Adjust prompt with more examples |
 | ALTO namespace errors | Script auto-detects v2/v3/v4; check XML validity |
-| API rate limits | The provider adapters retry transient errors; a daily quota stops the run, and re-running skips files already corrected |
+| API rate limits | The text pipeline stops on quota exhaustion and returns a nonzero status. Reruns skip files only when source, prompt/model/settings and output hashes match; use `--force` to regenerate. This does not describe the separate ALTO processor. |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

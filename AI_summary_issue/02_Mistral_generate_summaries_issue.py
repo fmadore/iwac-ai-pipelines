@@ -306,13 +306,15 @@ def _run_uploaded_magazine(
             raise
 
     final_file = run_extraction_pipeline(
+        source_path=pdf_path,
+        model_key=model_step2.key,
         extract_page=extract_page,
         consolidate=build_text_consolidator(model_step2),
         total_pages=total_pages,
         output_dir=output_dir,
         magazine_id=magazine_id,
-        step1_model_label="Mistral OCR",
-        step2_model_label=model_step2.label,
+        step1_model_label=MISTRAL_OCR_MODEL,
+        step2_model_label=model_step2.model,
         schema_note="Pydantic schema",
     )
     logging.info(f"Pipeline complete for magazine {magazine_id}")

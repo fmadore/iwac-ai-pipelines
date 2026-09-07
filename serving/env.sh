@@ -53,6 +53,8 @@ load_dotenv
 # stops matching. Serving under a different name means passing
 # --served-model-name and editing SELFHOSTED_QWEN38_MODEL to agree.
 SERVE_MODEL="${SERVE_MODEL:-Qwen/Qwen3.8-27B}"
+# Set an immutable Hub commit for a publication run; main is a development default.
+SERVE_REVISION="${SERVE_REVISION:-main}"
 
 SERVE_PORT="${SERVE_PORT:-8000}"
 

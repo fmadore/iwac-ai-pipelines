@@ -197,4 +197,4 @@ def test_batch_live_run_dumps_pre_write_payloads(tmp_path):
         guard=WriteGuard(backup_dir=tmp_path),
     )
 
-    assert len(list(tmp_path.glob("_pre_write_reference_links_*.json"))) == 1
+    assert len(list(tmp_path.glob("_pre_write_reference_links_*.jsonl"))) == 1

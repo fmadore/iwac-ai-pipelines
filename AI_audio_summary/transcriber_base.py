@@ -279,7 +279,7 @@ class TranscriberBase:
         failed = 0
 
         try:
-            for item in items:
+            for index, item in enumerate(items):
                 original_file = item[0]
                 try:
                     console.rule(f"[dim]{original_file.name}[/]", style="dim")
@@ -289,6 +289,7 @@ class TranscriberBase:
                         failed += 1
 
                 except QuotaExhaustedError:
+                    failed += len(items) - index
                     console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
                     console.print("[red]Partial results (if any) have been saved.[/]")
                     console.print("[red]Wait for your quota to reset or upgrade your plan.[/]")

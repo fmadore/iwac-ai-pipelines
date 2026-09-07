@@ -320,13 +320,15 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
         # Step 1 (page loop) + step 2 (consolidation) via the shared skeleton.
         # The page_*.json cache is deleted only after step 2 succeeds.
         final_file = run_extraction_pipeline(
+            source_path=pdf_path,
+            model_key=model_step2.key,
             extract_page=extract_page,
             consolidate=consolidate,
             total_pages=total_pages,
             output_dir=output_dir,
             magazine_id=magazine_id,
-            step1_model_label=summary_from_option(model_step1),
-            step2_model_label=summary_from_option(model_step2),
+            step1_model_label=model_step1.model,
+            step2_model_label=model_step2.model,
             schema_note="JSON schema",
         )
 

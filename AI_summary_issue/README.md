@@ -153,3 +153,10 @@ Edit the prompt files to adjust extraction behavior:
 | API key errors | Check `.env` file exists with valid keys |
 | Empty extractions | PDF may be image-only; ensure it's not password-protected |
 | Rate limits | Script handles automatically; increase `RETRY_DELAY` if persistent |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

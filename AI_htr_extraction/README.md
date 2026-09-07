@@ -106,3 +106,10 @@ Edit the prompt files to adjust transcription behavior:
 | Wrong language detected | Use specific language mode instead of Multilingual |
 | Quota exhausted | Pipeline stops immediately and saves partial results; wait for daily reset |
 | Transient rate limits | Retried automatically with exponential backoff |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

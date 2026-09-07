@@ -41,6 +41,8 @@ from common.checkpoint import (  # noqa: E402
     sha256_text,
 )
 from common.log_redaction import install_credential_redaction
+from common.artifacts import artifact_matches, commit_artifact, invalidate_artifact
+from common.run_context import model_context
 
 # ------------------------------------------------------------------
 # Setup
@@ -163,11 +165,15 @@ def process_txt_files(
     and two threads doing that at once would interleave into a corrupt file.
     """
     if not os.path.exists(input_dir):
+        checkpoint.entries.clear()
+        checkpoint.save()
         console.print(f"[red]✗[/red] Input directory not found: {input_dir}")
-        return 0, 0, 0
+        return 0, 1, 0
     os.makedirs(french_dir, exist_ok=True)
     os.makedirs(english_dir, exist_ok=True)
     txt_files = sorted(f for f in os.listdir(input_dir) if f.endswith('.txt'))
+    checkpoint.entries = {key: value for key, value in checkpoint.entries.items() if key in txt_files}
+    checkpoint.save()
     if not txt_files:
         console.print("[yellow]⚠[/yellow] No .txt files to process.")
         return 0, 0, 0
@@ -178,6 +184,8 @@ def process_txt_files(
     )
 
     checkpoint_lock = threading.Lock()
+    checkpoint.entries = {key: value for key, value in checkpoint.entries.items() if key in txt_files}
+    checkpoint.save()
 
     def handle(fname: str) -> str:
         """Return 'success', 'error' or 'skipped' for one file."""
@@ -188,16 +196,23 @@ def process_txt_files(
         with open(input_path, 'r', encoding='utf-8') as infile:
             original_text = infile.read()
         if not original_text.strip():
+            with checkpoint_lock:
+                checkpoint.invalidate(fname)
+            invalidate_artifact(Path(french_path))
             tqdm.write(f"  [yellow]⚠[/yellow] Skipped (empty): {fname}")
-            return "skipped_empty"
+            return "error"
 
         source_fingerprint = sha256_text(original_text)
         # Both halves must be on disk: a run interrupted between the two writes
         # must regenerate, not resume with a missing translation.
         with checkpoint_lock:
             resumable = checkpoint.matches(fname, source_fingerprint)
-        if resumable and os.path.exists(french_path) and os.path.exists(english_path):
+        if resumable and artifact_matches(Path(french_path), checkpoint.context, source_fingerprint):
             return "skipped"
+
+        with checkpoint_lock:
+            checkpoint.invalidate(fname)
+        invalidate_artifact(Path(french_path))
 
         summary = generate_summary(llm_client, original_text, system_prompt)
         if not summary:
@@ -207,6 +222,8 @@ def process_txt_files(
         french, english = summary
         atomic_write_text(Path(french_path), french)
         atomic_write_text(Path(english_path), english)
+        commit_artifact(Path(french_path), context=checkpoint.context,
+                        source_sha256=source_fingerprint, companions=[Path(english_path)])
         with checkpoint_lock:
             checkpoint.mark(fname, source_fingerprint)
         return "success"
@@ -311,9 +328,8 @@ def main():
                 # Bumped from "french-summary-v2": a monolingual checkpoint must
                 # not resume a bilingual run, or every item it covers would keep
                 # its French file and never get an English one.
-                "pipeline": "bilingual-summary-v3",
-                "model_key": model_option.key,
-                "model_id": model_option.model,
+                "pipeline": "bilingual-summary-v4",
+                **model_context(model_option, LLMConfig(reasoning_effort="low", thinking_level="minimal", text_verbosity="low")),
                 "prompt_sha256": sha256_text(system_prompt),
             },
             reset=args.force,

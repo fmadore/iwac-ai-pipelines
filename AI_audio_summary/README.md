@@ -493,3 +493,10 @@ Create custom transcription modes (Gemini only) by adding `.md` files to `prompt
 | Fluent transcript of the wrong language | Almost certainly a local language `02c_` cannot hear — re-run on `02_` |
 | Quota exhausted | Pipeline stops immediately and saves completed transcriptions; wait for daily reset |
 | Video not converting | Verify ffmpeg is found (`get_ffmpeg_paths()`) and the video format is in `VIDEO_FORMATS` |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

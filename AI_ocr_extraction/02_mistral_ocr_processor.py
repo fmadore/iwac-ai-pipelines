@@ -50,6 +50,8 @@ from common.console_utils import count_table, key_value_table, print_file_table,
 from common.log_redaction import install_credential_redaction
 from common.mistral_ocr import MISTRAL_OCR_MODEL, MistralOcrClient, markdown_to_plain_text
 from common.rate_limiter import QuotaExhaustedError
+from common.artifacts import invalidate_artifact, commit_artifact
+from common.checkpoint import atomic_write_text, sha256_file
 
 console = Console()
 
@@ -95,6 +97,9 @@ def process_pdf(client: MistralOcrClient, pdf_path: Path, output_dir: Path) -> b
     console.rule(f"[bold]📄 {pdf_path.name}[/]")
     console.print(f"  [dim]Size:[/] {pdf_path.stat().st_size / (1024 * 1024):.2f} MB")
 
+    output_file = output_dir / f"{pdf_path.stem}.txt"
+    invalidate_artifact(output_file)
+    source_hash = sha256_file(pdf_path)
     result = client.process_pdf(pdf_path)
     for warning in result.warnings:
         console.print(f"  [yellow]⚠[/] {warning}")
@@ -106,7 +111,10 @@ def process_pdf(client: MistralOcrClient, pdf_path: Path, output_dir: Path) -> b
         return False
 
     output_file = output_dir / f"{pdf_path.stem}.txt"
-    output_file.write_text(text, encoding="utf-8")
+    atomic_write_text(output_file, text)
+    commit_artifact(output_file, context={"pipeline": "mistral-ocr-v1", "model_key": result.model,
+                                        "model_id": result.model}, source_sha256=source_hash,
+                    details={"pages_processed": result.pages_processed})
     empty_pages = sum(1 for page in result.pages if not (page.get("markdown") or "").strip())
     console.print(
         f"  [green]✓[/] {result.pages_processed} pages"

@@ -300,7 +300,7 @@ class VideoProcessor:
         if not video_files:
             console.print("[yellow]⚠[/] No supported video files found in the video folder.")
             console.print(f"[dim]Supported formats: {', '.join(VIDEO_FORMATS.keys())}[/]")
-            return
+            return 1
 
         # Display files table
         files_table = Table(title="📁 Videos to Process", box=box.ROUNDED)
@@ -334,6 +334,7 @@ class VideoProcessor:
                     failed_processes += 1
 
             except QuotaExhaustedError:
+                failed_processes += 1
                 console.print("\n[red bold]API quota exhausted — stopping all processing.[/]")
                 console.print("[red]Partial results (if any) have been saved.[/]")
                 console.print("[red]Wait for your quota to reset or upgrade your plan.[/]")
@@ -360,6 +361,7 @@ class VideoProcessor:
 
         if successful_processes > 0:
             console.print(f"\n[green]✓[/] Output saved in the '[cyan]{output_folder}[/]' folder.")
+        return int(failed_processes > 0)
 
 
 def parse_args():
@@ -481,11 +483,10 @@ def main() -> int:
             processing_prompt=processing_prompt,
         )
 
-        processor.process_all_video_files(
+        return processor.process_all_video_files(
             video_folder=args.video_folder,
             output_folder=args.output_folder
         )
-        return 0
 
     except ValueError as e:
         console.print(f"\n[red]✗ Configuration Error:[/] {e}")

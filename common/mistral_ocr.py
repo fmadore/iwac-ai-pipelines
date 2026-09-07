@@ -574,6 +574,10 @@ class MistralOcrClient:
             all_pages.extend(self._process_part(part, f"{pdf_path.stem}{suffix}.pdf"))
 
         all_pages.sort(key=lambda p: p.get("index", 0))
+        expected_indices = [index for part in parts
+                            for index in range(part.first_page_index, part.first_page_index + part.page_count)]
+        if [page.get("index") for page in all_pages] != expected_indices:
+            raise RuntimeError("Incomplete OCR page coverage; refusing to publish a partial document")
         return OcrResult(
             pages=all_pages,
             model=self.model,

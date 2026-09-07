@@ -68,6 +68,7 @@ EOF
 # json_schema through its guided-decoding backend, which is what
 # generate_structured() sends.
 exec vllm serve "$SERVE_MODEL" \
+  --revision "$SERVE_REVISION" \
   --host 0.0.0.0 \
   --port "$SERVE_PORT" \
   --api-key "$SERVE_API_KEY" \

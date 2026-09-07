@@ -51,6 +51,7 @@ from common.iwac_config import (
     model_annotation_value,
     select_model_key,
 )
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
@@ -267,7 +268,7 @@ def main() -> int:
     if not stats:
         return 1  # operator declined
 
-    return 0 if stats["failed"] == 0 else 1
+    return batch_exit_code(stats)
 
 
 if __name__ == "__main__":

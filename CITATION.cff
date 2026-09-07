@@ -3,8 +3,8 @@ message: >-
   If you use these AI workflows in your research or projects,
   please cite the repository as below.
 title: "IWAC AI Pipelines"
-version: 1.1.0
-date-released: 2026-09-02
+version: 1.2.0
+date-released: 2026-09-07
 abstract: >-
   Python pipelines that apply large language models to the curation of a
   digital archive: OCR extraction and correction, summarization, named-entity
@@ -32,7 +32,7 @@ authors:
     orcid: https://orcid.org/0000-0003-0959-2092
     affiliation: University of Bayreuth
 identifiers:
-  # Concept DOI: always resolves to the newest version, which is what a citation
-  # should point at. Each release also has its own version DOI on Zenodo.
+  # Concept DOI identifies the software across releases. Cite the version DOI
+  # for the exact release used in a research run.
   - type: doi
     value: 10.5281/zenodo.21804210

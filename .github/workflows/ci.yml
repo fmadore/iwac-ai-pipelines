@@ -7,13 +7,24 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.13"
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python }}
 
       - name: Install dependencies
         run: |
@@ -25,3 +36,9 @@ jobs:
 
       - name: Tests
         run: pytest tests/ -q
+
+      - name: Publication metadata and local links
+        run: python scripts/check_publication.py
+
+      - name: Build wheel
+        run: python -m pip wheel . --no-deps --wheel-dir dist

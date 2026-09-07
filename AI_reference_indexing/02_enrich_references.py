@@ -60,6 +60,7 @@ from common.llm_provider import (  # noqa: E402
     get_model_option,
     summary_from_option,
 )
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
 
@@ -372,14 +373,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if column not in fieldnames:
             fieldnames.append(column)
 
+    from common.run_context import model_context
     context = {
         "pipeline": "reference-enrichment-v1",
-        "model_key": model_option.key,
-        "model_id": model_option.model,
+        **model_context(model_option, LLMConfig(reasoning_effort="medium", thinking_level="minimal")),
         "prompt_sha256": sha256_text(system_prompt),
         "input": input_path.name,
         "reindex": args.reindex,
     }
+    from common.checkpoint import fingerprint, sha256_file
+    context["source_sha256"] = sha256_file(input_path)
+    context["authority_sha256"] = fingerprint(titles)
     try:
         checkpoint_path = checkpoint_path_for(output_path)
         if output_path.exists() and not checkpoint_path.exists() and not args.force:
@@ -432,7 +436,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         title="Step 2 Complete",
         border_style="green",
     ))
-    return 0 if stats["failed"] == 0 else 1
+    return batch_exit_code(stats)
 
 
 if __name__ == "__main__":

@@ -137,3 +137,10 @@ The Gemini free tier has strict limits (5 RPM, 100 requests/day). The script han
 - **Processing speed**: ~20-40 seconds per page
 - **Cost**: ~$0.54 per 450-page document (Gemini 3.6 Flash, measured before the 3.7 swap)
 - **Token usage**: Fixed 258 tokens per page for PDF processing
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

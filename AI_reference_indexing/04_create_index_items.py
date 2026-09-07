@@ -24,6 +24,8 @@ import csv
 import os
 import sys
 from datetime import datetime
+import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -48,6 +50,7 @@ from common.iwac_config import (  # noqa: E402
 from common.console_utils import standard_progress  # noqa: E402
 from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 from common.log_redaction import install_credential_redaction
+from common.checkpoint import JsonCheckpoint, fingerprint
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
@@ -135,7 +138,24 @@ def create_authority_items(
     """Create one item per reviewed term; return the mapping and error count."""
     created: list[dict[str, str]] = []
     errors = 0
-    with standard_progress(console) as progress:
+    output_dir = Path(OUTPUT_DIR)
+    journal = None
+    mapping_file = None
+    writer = None
+    if not guard.dry_run:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        journal = JsonCheckpoint.open(
+            output_dir / f"authority_{authority_type}_{fingerprint(client.base_url)[:12]}.json",
+            {"base_url": client.base_url, "authority_type": authority_type, "version": 1},
+        )
+        mapping_path = output_dir / f"newly_created_items_{authority_type}_{datetime.now():%Y%m%dT%H%M%S}_{uuid.uuid4().hex[:8]}.csv"
+        mapping_file = mapping_path.open("x", encoding="utf-8", newline="")
+        writer = csv.DictWriter(mapping_file, fieldnames=["term", "o:id"])
+        writer.writeheader()
+        mapping_file.flush()
+        os.fsync(mapping_file.fileno())
+        console.print(f"[dim]Durable mapping: {mapping_path}[/]")
+    with (mapping_file if mapping_file is not None else nullcontext()), standard_progress(console) as progress:
         task = progress.add_task(
             "[cyan]Checking authority items...[/]" if guard.dry_run
             else "[cyan]Creating authority items...[/]",
@@ -143,23 +163,47 @@ def create_authority_items(
         )
         for row in to_create:
             term = row["Unreconciled Value"].strip()
+            if not term:
+                errors += 1
+                continue
             payload = build_item_payload(term, authority_type, client.base_url)
             if guard.dry_run:
                 console.print(f"  [cyan]would create:[/] {term}")
             else:
-                result = client.create_item(payload)
+                operation = fingerprint(payload)
+                state = journal.entries.get(operation)
+                config = AUTHORITY_TYPE_CONFIG[authority_type]
+                matches = client.search_items_by_property(
+                    DCTERMS_TITLE_PROPERTY_ID, term, per_page=2,
+                    item_set_id=config["item_set"], resource_class_id=config["resource_class"],
+                )
+                if len(matches) > 1:
+                    raise ValueError(f"Ambiguous existing authority for {term!r}; review before creating")
+                if matches:
+                    result = matches[0]
+                elif state:
+                    raise ValueError(f"Unresolved prior creation of {term!r} ({state}); reconcile the journal before retrying")
+                else:
+                    journal.mark(operation, "pending")
+                    result = client.create_item(payload)
                 if result:
-                    new_id = result.get("o:id", "?")
+                    new_id = int(result["o:id"])
+                    journal.mark(operation, str(new_id))
                     created.append({"term": term, "o:id": str(new_id)})
+                    writer.writerow(created[-1])
+                    mapping_file.flush()
+                    os.fsync(mapping_file.fileno())
                     console.print(f"  [green]{chr(10003)}[/] Created: {term} → ID {new_id}")
                 else:
                     errors += 1
                     console.print(f"  [red]{chr(10007)}[/] Failed: {term}")
             progress.update(task, advance=1)
+    if mapping_file is not None:
+        mapping_file.close()
     return created, errors
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Create new index items from reviewed unreconciled CSV")
     parser.add_argument("--input-csv", required=True, help="Path to reviewed unreconciled CSV with Action column")
     parser.add_argument(
@@ -184,13 +228,13 @@ def main():
 
     if not os.path.exists(args.input_csv):
         console.print(f"[red]✗[/] File not found: {args.input_csv}")
-        return
+        return 1
 
     try:
         rows = read_reviewed_rows(args.input_csv)
     except (OSError, ValueError) as exc:
         console.print(f"[red]✗[/] {exc}")
-        return
+        return 1
 
     to_create, to_skip = partition_by_action(rows)
 
@@ -210,7 +254,7 @@ def main():
 
     if not to_create:
         console.print("[yellow]No terms marked 'create'. Nothing to do.[/]")
-        return
+        return 0
 
     if not guard.confirm(
         console,
@@ -220,22 +264,9 @@ def main():
         details=[f"Item set:      {type_config['item_set']}"],
         title="About to create Omeka items",
     ):
-        return
+        return 1
 
     created, errors = create_authority_items(client, to_create, args.type, guard=guard)
-
-    # Write output mapping
-    if created:
-        date_tag = datetime.now().strftime("%Y%m%d")
-        out_filename = f"newly_created_items_{args.type}_{date_tag}.csv"
-        out_path = os.path.join(OUTPUT_DIR, out_filename)
-
-        with open(out_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["term", "o:id"])
-            writer.writeheader()
-            writer.writerows(created)
-
-        console.print(f"\n[green]✓[/] Mapping saved to: {out_filename}")
 
     # Summary
     console.print()
@@ -256,13 +287,14 @@ def main():
             title="Step 4 Dry Run",
             border_style="cyan",
         ))
-        return
+        return 0
     console.print(Panel(
         f"[green]✓[/] Created [cyan]{len(created)}[/] new {args.type} authority items in set {type_config['item_set']}",
         title="Step 4 Complete",
         border_style="green",
     ))
+    return int(errors > 0)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

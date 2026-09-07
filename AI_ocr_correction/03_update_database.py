@@ -30,8 +30,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.iwac_config import BIBO_CONTENT_PROPERTY_ID
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, run_text_updates, updates_from_directory
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 from common.write_guard import WriteGuard, add_write_guard_args
+from common.artifacts import read_artifact
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
@@ -56,6 +58,7 @@ def main() -> int:
         help="Directory of corrected .txt files named <item_id>.txt",
     )
     add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
+    parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest correction files.")
     args = parser.parse_args()
     guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
     backup_dir = guard.backup_dir if guard.backup_enabled else None
@@ -73,6 +76,13 @@ def main() -> int:
         return 1
 
     updates = updates_from_directory(args.txt_dir)
+    if not args.legacy_import:
+        try:
+            for update in updates:
+                read_artifact(args.txt_dir / f"{update.item_id}.txt")
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/]")
+            return 1
     if not updates:
         console.print(f"[yellow]⚠[/] No .txt files found in {args.txt_dir}")
         return 1
@@ -96,7 +106,7 @@ def main() -> int:
     if not stats:
         return 1  # operator declined
 
-    return 0 if stats["failed"] == 0 else 1
+    return batch_exit_code(stats)
 
 
 if __name__ == "__main__":

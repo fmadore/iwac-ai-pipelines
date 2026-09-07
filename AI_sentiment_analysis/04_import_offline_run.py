@@ -105,13 +105,7 @@ def expected_identity(member_key: str) -> Dict[str, str]:
     }
 
 
-def record_identity(record: Dict[str, Any]) -> Dict[str, str]:
-    """The same three fields as an offline annotation record names them."""
-    return {
-        "model_id": str(record.get("model") or ""),
-        "reasoning": str(record.get("reasoning_effort") or ""),
-        "prompt": str(record.get("prompt") or ""),
-    }
+from common.instrument import record_identity
 
 
 def read_offline(path: Path) -> List[Dict[str, Any]]:

@@ -1,0 +1,336 @@
+{
+  "captured_at": "2026-09-07T12:49:56.926891+00:00",
+  "python": "3.13.15",
+  "platform": "Windows",
+  "architecture": "ARM64",
+  "commit": "930b1d79cd52d78b07cd109f788e8f29ca007540",
+  "working_tree_dirty": true,
+  "purpose": "Local validation environment; not a claim about historical publication runs",
+  "packages": {
+    "PyPDF2": {
+      "tested": "3.0.1",
+      "latest_upstream": "3.0.1",
+      "registry": "https://pypi.org/pypi/PyPDF2/json"
+    },
+    "PyYAML": {
+      "tested": "6.0.3",
+      "latest_upstream": "6.0.3",
+      "registry": "https://pypi.org/pypi/PyYAML/json"
+    },
+    "Pygments": {
+      "tested": "2.19.2",
+      "latest_upstream": "2.21.0",
+      "registry": "https://pypi.org/pypi/Pygments/json"
+    },
+    "annotated-types": {
+      "tested": "0.7.0",
+      "latest_upstream": "0.8.0",
+      "registry": "https://pypi.org/pypi/annotated-types/json"
+    },
+    "anyio": {
+      "tested": "4.11.0",
+      "latest_upstream": "4.15.1",
+      "registry": "https://pypi.org/pypi/anyio/json"
+    },
+    "audioop-lts": {
+      "tested": "0.2.2",
+      "latest_upstream": "0.2.2",
+      "registry": "https://pypi.org/pypi/audioop-lts/json"
+    },
+    "cachetools": {
+      "tested": "6.2.2",
+      "latest_upstream": "7.1.8",
+      "registry": "https://pypi.org/pypi/cachetools/json"
+    },
+    "certifi": {
+      "tested": "2025.11.12",
+      "latest_upstream": "2026.7.22",
+      "registry": "https://pypi.org/pypi/certifi/json"
+    },
+    "cffi": {
+      "tested": "2.1.0",
+      "latest_upstream": "2.1.1",
+      "registry": "https://pypi.org/pypi/cffi/json"
+    },
+    "charset-normalizer": {
+      "tested": "3.4.4",
+      "latest_upstream": "3.5.1",
+      "registry": "https://pypi.org/pypi/charset-normalizer/json"
+    },
+    "colorama": {
+      "tested": "0.4.6",
+      "latest_upstream": "0.4.6",
+      "registry": "https://pypi.org/pypi/colorama/json"
+    },
+    "cryptography": {
+      "tested": "46.0.3",
+      "latest_upstream": "50.0.1",
+      "registry": "https://pypi.org/pypi/cryptography/json"
+    },
+    "distro": {
+      "tested": "1.9.0",
+      "latest_upstream": "1.9.0",
+      "registry": "https://pypi.org/pypi/distro/json"
+    },
+    "eval_type_backport": {
+      "tested": "0.3.0",
+      "latest_upstream": "0.4.0",
+      "registry": "https://pypi.org/pypi/eval_type_backport/json"
+    },
+    "google-auth": {
+      "tested": "2.56.2",
+      "latest_upstream": "2.57.1",
+      "registry": "https://pypi.org/pypi/google-auth/json"
+    },
+    "google-genai": {
+      "tested": "2.20.0",
+      "latest_upstream": "2.22.0",
+      "registry": "https://pypi.org/pypi/google-genai/json"
+    },
+    "googleapis-common-protos": {
+      "tested": "1.72.0",
+      "latest_upstream": "1.75.3",
+      "registry": "https://pypi.org/pypi/googleapis-common-protos/json"
+    },
+    "h11": {
+      "tested": "0.16.0",
+      "latest_upstream": "0.16.0",
+      "registry": "https://pypi.org/pypi/h11/json"
+    },
+    "httpcore": {
+      "tested": "1.0.9",
+      "latest_upstream": "1.0.9",
+      "registry": "https://pypi.org/pypi/httpcore/json"
+    },
+    "httpx": {
+      "tested": "0.28.1",
+      "latest_upstream": "0.28.1",
+      "registry": "https://pypi.org/pypi/httpx/json"
+    },
+    "idna": {
+      "tested": "3.11",
+      "latest_upstream": "3.19",
+      "registry": "https://pypi.org/pypi/idna/json"
+    },
+    "importlib_metadata": {
+      "tested": "8.7.0",
+      "latest_upstream": "9.0.1",
+      "registry": "https://pypi.org/pypi/importlib_metadata/json"
+    },
+    "iniconfig": {
+      "tested": "2.3.0",
+      "latest_upstream": "2.3.0",
+      "registry": "https://pypi.org/pypi/iniconfig/json"
+    },
+    "invoke": {
+      "tested": "2.2.1",
+      "latest_upstream": "3.0.3",
+      "registry": "https://pypi.org/pypi/invoke/json"
+    },
+    "jiter": {
+      "tested": "0.12.0",
+      "latest_upstream": "0.16.0",
+      "registry": "https://pypi.org/pypi/jiter/json"
+    },
+    "jsonpath-python": {
+      "tested": "1.1.6",
+      "latest_upstream": "1.1.6",
+      "registry": "https://pypi.org/pypi/jsonpath-python/json"
+    },
+    "markdown-it-py": {
+      "tested": "4.0.0",
+      "latest_upstream": "4.2.0",
+      "registry": "https://pypi.org/pypi/markdown-it-py/json"
+    },
+    "mdurl": {
+      "tested": "0.1.2",
+      "latest_upstream": "0.1.2",
+      "registry": "https://pypi.org/pypi/mdurl/json"
+    },
+    "mistralai": {
+      "tested": "2.8.0",
+      "latest_upstream": "2.9.4",
+      "registry": "https://pypi.org/pypi/mistralai/json"
+    },
+    "openai": {
+      "tested": "2.52.0",
+      "latest_upstream": "3.8.0",
+      "registry": "https://pypi.org/pypi/openai/json"
+    },
+    "opentelemetry-api": {
+      "tested": "1.39.1",
+      "latest_upstream": "1.44.0",
+      "registry": "https://pypi.org/pypi/opentelemetry-api/json"
+    },
+    "opentelemetry-exporter-otlp-proto-common": {
+      "tested": "1.39.1",
+      "latest_upstream": "1.44.0",
+      "registry": "https://pypi.org/pypi/opentelemetry-exporter-otlp-proto-common/json"
+    },
+    "opentelemetry-exporter-otlp-proto-http": {
+      "tested": "1.39.1",
+      "latest_upstream": "1.44.0",
+      "registry": "https://pypi.org/pypi/opentelemetry-exporter-otlp-proto-http/json"
+    },
+    "opentelemetry-proto": {
+      "tested": "1.39.1",
+      "latest_upstream": "1.44.0",
+      "registry": "https://pypi.org/pypi/opentelemetry-proto/json"
+    },
+    "opentelemetry-sdk": {
+      "tested": "1.39.1",
+      "latest_upstream": "1.44.0",
+      "registry": "https://pypi.org/pypi/opentelemetry-sdk/json"
+    },
+    "opentelemetry-semantic-conventions": {
+      "tested": "0.60b1",
+      "latest_upstream": "0.65b0",
+      "registry": "https://pypi.org/pypi/opentelemetry-semantic-conventions/json"
+    },
+    "packaging": {
+      "tested": "26.2",
+      "latest_upstream": "26.3",
+      "registry": "https://pypi.org/pypi/packaging/json"
+    },
+    "pluggy": {
+      "tested": "1.6.0",
+      "latest_upstream": "1.6.0",
+      "registry": "https://pypi.org/pypi/pluggy/json"
+    },
+    "protobuf": {
+      "tested": "6.33.2",
+      "latest_upstream": "7.36.1",
+      "registry": "https://pypi.org/pypi/protobuf/json"
+    },
+    "pyasn1": {
+      "tested": "0.6.1",
+      "latest_upstream": "0.6.4",
+      "registry": "https://pypi.org/pypi/pyasn1/json"
+    },
+    "pyasn1_modules": {
+      "tested": "0.4.2",
+      "latest_upstream": "0.4.2",
+      "registry": "https://pypi.org/pypi/pyasn1_modules/json"
+    },
+    "pycparser": {
+      "tested": "3.0",
+      "latest_upstream": "3.0",
+      "registry": "https://pypi.org/pypi/pycparser/json"
+    },
+    "pydantic": {
+      "tested": "2.13.4",
+      "latest_upstream": "2.13.5",
+      "registry": "https://pypi.org/pypi/pydantic/json"
+    },
+    "pydantic_core": {
+      "tested": "2.46.4",
+      "latest_upstream": "2.48.0",
+      "registry": "https://pypi.org/pypi/pydantic_core/json"
+    },
+    "pydub": {
+      "tested": "0.25.1",
+      "latest_upstream": "0.25.1",
+      "registry": "https://pypi.org/pypi/pydub/json"
+    },
+    "pyparsing": {
+      "tested": "3.3.2",
+      "latest_upstream": "3.3.2",
+      "registry": "https://pypi.org/pypi/pyparsing/json"
+    },
+    "pypdf": {
+      "tested": "6.14.2",
+      "latest_upstream": "6.17.0",
+      "registry": "https://pypi.org/pypi/pypdf/json"
+    },
+    "pytest": {
+      "tested": "9.1.1",
+      "latest_upstream": "9.1.1",
+      "registry": "https://pypi.org/pypi/pytest/json"
+    },
+    "python-dateutil": {
+      "tested": "2.9.0.post0",
+      "latest_upstream": "2.9.0.post0",
+      "registry": "https://pypi.org/pypi/python-dateutil/json"
+    },
+    "python-dotenv": {
+      "tested": "1.2.2",
+      "latest_upstream": "1.2.3",
+      "registry": "https://pypi.org/pypi/python-dotenv/json"
+    },
+    "ratelimit": {
+      "tested": "2.2.1",
+      "latest_upstream": "2.2.1",
+      "registry": "https://pypi.org/pypi/ratelimit/json"
+    },
+    "rdflib": {
+      "tested": "7.6.0",
+      "latest_upstream": "7.6.0",
+      "registry": "https://pypi.org/pypi/rdflib/json"
+    },
+    "requests": {
+      "tested": "2.34.2",
+      "latest_upstream": "2.34.2",
+      "registry": "https://pypi.org/pypi/requests/json"
+    },
+    "rich": {
+      "tested": "15.0.0",
+      "latest_upstream": "15.0.0",
+      "registry": "https://pypi.org/pypi/rich/json"
+    },
+    "rsa": {
+      "tested": "4.9.1",
+      "latest_upstream": "4.9.1",
+      "registry": "https://pypi.org/pypi/rsa/json"
+    },
+    "ruff": {
+      "tested": "0.16.1",
+      "latest_upstream": "0.16.6",
+      "registry": "https://pypi.org/pypi/ruff/json"
+    },
+    "six": {
+      "tested": "1.17.0",
+      "latest_upstream": "1.17.0",
+      "registry": "https://pypi.org/pypi/six/json"
+    },
+    "sniffio": {
+      "tested": "1.3.1",
+      "latest_upstream": "1.3.1",
+      "registry": "https://pypi.org/pypi/sniffio/json"
+    },
+    "tenacity": {
+      "tested": "9.1.2",
+      "latest_upstream": "9.1.4",
+      "registry": "https://pypi.org/pypi/tenacity/json"
+    },
+    "tqdm": {
+      "tested": "4.70.0",
+      "latest_upstream": "4.70.0",
+      "registry": "https://pypi.org/pypi/tqdm/json"
+    },
+    "typing-inspection": {
+      "tested": "0.4.2",
+      "latest_upstream": "0.4.4",
+      "registry": "https://pypi.org/pypi/typing-inspection/json"
+    },
+    "typing_extensions": {
+      "tested": "4.15.0",
+      "latest_upstream": "4.16.0",
+      "registry": "https://pypi.org/pypi/typing_extensions/json"
+    },
+    "urllib3": {
+      "tested": "2.6.2",
+      "latest_upstream": "2.7.0",
+      "registry": "https://pypi.org/pypi/urllib3/json"
+    },
+    "websockets": {
+      "tested": "15.0.1",
+      "latest_upstream": "17.1",
+      "registry": "https://pypi.org/pypi/websockets/json"
+    },
+    "zipp": {
+      "tested": "3.23.0",
+      "latest_upstream": "4.1.0",
+      "registry": "https://pypi.org/pypi/zipp/json"
+    }
+  }
+}

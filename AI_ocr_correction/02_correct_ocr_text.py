@@ -39,6 +39,10 @@ from common.llm_provider import (
 from common.console_utils import standard_progress
 from common.llm_registry import PROVIDER_GEMINI, clamp_thinking_level
 from common.log_redaction import install_credential_redaction
+from common.artifacts import artifact_matches, invalidate_artifact, commit_artifact
+from common.checkpoint import sha256_file, sha256_text, atomic_write_text
+from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
+from common.run_context import model_context
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
@@ -97,6 +101,8 @@ def correct_text_with_llm(client, text: str, system_prompt: str) -> str:
     except Exception as e:
         # Do NOT fall back to the original text: the caller would save it to
         # Corrected_TXT/ and step 03 would upload uncorrected text to Omeka.
+        if is_quota_exhausted(e):
+            raise QuotaExhaustedError(str(e)) from e
         console.print(f"[red]✗[/] Error during API call: {e}")
         raise
 
@@ -116,6 +122,8 @@ def split_text(text: str, max_chars: int = 200000) -> list[str]:
     Returns:
         List of text chunks ready for processing
     """
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive")
     # If text is shorter than limit, return as single chunk
     if len(text) <= max_chars:
         return [text]
@@ -183,9 +191,13 @@ def process_file(
         else:
             corrected_text = correct_text_with_llm(client, original_text, system_prompt)
         
-        output_file_path.write_text(corrected_text, encoding="utf-8")
+        if not corrected_text.strip():
+            return False, "Empty model response"
+        atomic_write_text(output_file_path, corrected_text)
         return True, "Success"
         
+    except QuotaExhaustedError:
+        raise
     except Exception as e:
         return False, str(e)
 
@@ -196,6 +208,7 @@ def process_txt_files(
     output_dir: Path,
     system_prompt: str,
     max_length: int = 200000,
+    *, context: dict | None = None, force: bool = False,
 ) -> tuple[int, int]:
     """
     Process all text files in a directory through the OCR correction pipeline.
@@ -211,6 +224,7 @@ def process_txt_files(
         Tuple of (success_count, error_count)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    context = context or {"pipeline": "ocr-correction-v1", "prompt_sha256": sha256_text(system_prompt), "max_length": max_length}
     
     txt_files = sorted(input_dir.glob("*.txt"))
     
@@ -224,13 +238,22 @@ def process_txt_files(
     with standard_progress(console) as progress:
         task = progress.add_task("Processing files...", total=len(txt_files))
         
-        for txt_file in txt_files:
+        for index, txt_file in enumerate(txt_files):
             output_file = output_dir / txt_file.name
-            success, message = process_file(
-                client, txt_file, output_file, system_prompt, max_length
-            )
+            source_hash = sha256_file(txt_file)
+            if not force and artifact_matches(output_file, context, source_hash):
+                success_count += 1
+                progress.update(task, advance=1)
+                continue
+            invalidate_artifact(output_file)
+            try:
+                success, message = process_file(client, txt_file, output_file, system_prompt, max_length)
+            except QuotaExhaustedError:
+                console.print("[red]Quota exhausted; completed files are safe to resume.[/]")
+                return success_count, error_count + len(txt_files) - index
             
             if success:
+                commit_artifact(output_file, context=context, source_sha256=source_hash)
                 success_count += 1
             else:
                 error_count += 1
@@ -271,7 +294,11 @@ def parse_args() -> argparse.Namespace:
         default=200000,
         help="Maximum text length before chunking (default: 200000)",
     )
-    return parser.parse_args()
+    parser.add_argument("--force", action="store_true", help="Regenerate even matching corrected files.")
+    args = parser.parse_args()
+    if args.max_length <= 0:
+        parser.error("--max-length must be positive")
+    return args
 
 
 def main():
@@ -359,7 +386,10 @@ def main():
     # Process files
     console.rule("[bold cyan]Processing Files")
     success_count, error_count = process_txt_files(
-        client, input_dir, output_dir, system_prompt, args.max_length
+        client, input_dir, output_dir, system_prompt, args.max_length,
+        context={"pipeline": "ocr-correction-v1", **model_context(model_option, config),
+                 "prompt_sha256": sha256_text(system_prompt), "max_length": args.max_length,
+                 "thinking_level": "minimal"}, force=args.force,
     )
     
     # Display summary
@@ -391,5 +421,8 @@ def main():
         )
 
 
+    return int(error_count > 0)
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

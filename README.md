@@ -8,7 +8,7 @@ Python workflows for processing the [Islam West Africa Collection](https://islam
 
 ## Context
 
-The [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) is an open-access digital database documenting Islam and Muslim communities in Benin, Burkina Faso, Côte d'Ivoire, Niger, Nigeria, and Togo since the 1960s. Created by [Frédérick Madore](https://www.frederickmadore.com/) and hosted at the Leibniz-Zentrum Moderner Orient (ZMO) in Berlin, the collection contains over 14,500 items and 28 million words of text.
+The [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) is an open-access digital database documenting Islam and Muslim communities in Benin, Burkina Faso, Côte d'Ivoire, Niger, Nigeria, and Togo since the 1960s. It was created by [Frédérick Madore](https://www.frederickmadore.com/) and is hosted at the Leibniz-Zentrum Moderner Orient (ZMO) in Berlin. The collection grows continuously; research reports should state a dated source snapshot and distinguish documents from authority records when reporting counts.
 
 At this scale, traditional manual processing—metadata tagging, OCR correction, entity identification—is no longer viable. These pipelines use LLMs from Google Gemini, OpenAI, and Mistral, plus open-weights models (Qwen, DeepSeek) reached through OpenRouter, to automate labor-intensive tasks that would otherwise leave much of the corpus inaccessible.
 
@@ -45,6 +45,8 @@ These tools are research aids, not replacements for scholarly judgment. Users sh
 ## Installation
 
 Requires **Python >= 3.11** (3.13+ recommended for the audio pipelines, which rely on `audioop-lts` to replace the `audioop` module removed from the standard library).
+
+On Windows, set `PYTHONUTF8=1` or invoke `python -X utf8` when redirecting output to a file. Audio conversion and splitting require a separately installed FFmpeg; see the audio pipeline README.
 
 ```bash
 git clone https://github.com/fmadore/iwac-ai-pipelines.git
@@ -100,10 +102,23 @@ are created on first run. All of them are git-ignored.
 Every step that writes to Omeka goes through the same gate: `--dry-run` reports
 what would change, the pre-write payload of every item is dumped to a
 `backups/` or `output/` folder first (the only route back from a bulk write),
-and a live run asks for confirmation unless `--yes` is passed. Whatever a
-pipeline writes carries a value annotation naming the model that produced it —
+and a live run asks for confirmation unless `--yes` is passed. Text and link
+updates persist each backup before its PATCH. New authority creation uses a
+durable operation journal and term-to-ID mapping. Model-generated discovery
+text and keyword links carry annotations naming their producer —
 `iwac:ocrModel`, `iwac:summaryModel`, `iwac:transcriptionModel`, and
-`iwac:nerModel` on every subject or place link.
+`iwac:nerModel` on every subject or place link. OCR correction deliberately
+preserves the original OCR annotation; it records correction provenance in its
+local artifact manifest. Citation and detected-language writes have their own
+contracts, described in the pipeline documentation.
+
+OCR, summaries, publication text, corrected text and magazine indexes now have
+hash-validated artifact sidecars. Incomplete OCR is salvaged in `partial/` and
+cannot be uploaded through the normal path. Existing output from older releases
+must be regenerated or explicitly imported with `--legacy-import` after review;
+model-annotating legacy imports also require `--model`. See the
+[pipeline contracts](docs/PIPELINE_CONTRACTS.md) and
+[publication/reproducibility guide](docs/PUBLICATION.md).
 
 Most scripts support both interactive mode and command-line flags:
 
@@ -150,7 +165,7 @@ The approach assumes you have digitized materials and need to make them searchab
 - [YouTube Transcription](AI_youtube_transcription/README.md) — URL-based transcription with language detection, the measured token budget, and the public-video-only limit
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [Publication Extraction](AI_publication_extraction/README.md) — Structured OCR for journal articles, chapters, books and theses: footnotes and bibliography separated from the body, oversized scans split automatically
-- [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Full dataset
+- [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Public projection: full text is retained only where `OCR_is_public` permits it. The private `-full` mirror contains the complete text; these are different access scopes.
 - Individual pipeline directories contain their own documentation
 
 ## Related Resources

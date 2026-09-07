@@ -58,10 +58,13 @@ from common.iwac_config import (
     AI_MODEL_ITEMS,
     IWAC_SUMMARY_MODEL_PROPERTY_ID,
     model_annotation_value,
-    select_model_key,
 )
+from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 from common.write_guard import add_write_guard_args
+from common.artifacts import checkpoint_artifacts, validated_model
+from common.checkpoint import CheckpointMismatch, JsonCheckpoint
+import json
 
 # Credentials ride in Omeka query strings and provider headers; keep them
 # out of anything urllib3 or an SDK decides to log.
@@ -94,6 +97,7 @@ def main() -> int:
         help="AI model that produced the summaries. Prompts interactively when omitted.",
     )
     add_write_guard_args(parser, default_backup_dir=Path(__file__).resolve().parent / "backups")
+    parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest files; requires --model.")
     args = parser.parse_args()
 
     try:
@@ -111,8 +115,25 @@ def main() -> int:
     logging.info(f"Resolved {SUMMARY_TERM} to property ID {description_property_id}")
 
     # Which model wrote these summaries? Recorded as an iwac:summaryModel annotation.
-    model_key = args.model or select_model_key(default=DEFAULT_MODEL_KEY)
-    if model_key is None:
+    pipeline_dir = Path(__file__).resolve().parent
+    french_folder = pipeline_dir / FRENCH_DIR
+    english_folder = pipeline_dir / ENGLISH_DIR
+    try:
+        if args.legacy_import:
+            eligible = sorted(french_folder.glob("*.txt"))
+        else:
+            checkpoint_path = french_folder / ".summary_checkpoint.json"
+            payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            checkpoint = JsonCheckpoint.open(checkpoint_path, payload["context"])
+            eligible = checkpoint_artifacts(checkpoint)
+        if not eligible:
+            raise CheckpointMismatch("No completed summaries to upload")
+        model_key = validated_model(eligible, requested=args.model, legacy=args.legacy_import)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logging.error(str(exc))
+        return 1
+    if model_key not in AI_MODEL_ITEMS:
+        logging.error("No Omeka authority registered for model %s", model_key)
         return 1
     model = AI_MODEL_ITEMS[model_key]
     annotation = model_annotation_value(
@@ -152,6 +173,8 @@ def main() -> int:
         return 1
 
     updates = updates_from_directory(french_folder)
+    eligible_names = {path.name for path in eligible}
+    updates = [update for update in updates if f"{update.item_id}.txt" in eligible_names]
     english_texts = texts_from_directory(english_folder)
     if not updates:
         logging.warning(f"No .txt files found in {french_folder}")
@@ -200,7 +223,7 @@ def main() -> int:
     if not stats:
         return 1  # operator declined
 
-    return 0 if stats["failed"] == 0 else 1
+    return batch_exit_code(stats)
 
 
 if __name__ == "__main__":

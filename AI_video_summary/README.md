@@ -93,3 +93,10 @@ Edit prompt files in `prompts/` to adjust:
 | Upload fails | Check internet connection; script retries automatically |
 | Quota exhausted | Pipeline stops immediately and saves completed results; wait for daily reset |
 | Transient rate limits | Retried automatically with exponential backoff (3 attempts) |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

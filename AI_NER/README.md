@@ -179,3 +179,10 @@ Changes take effect on the next extraction run.
 | API errors | Verify API key and quota in `.env` |
 | Too many unreconciled | Review `*_unreconciled_*.csv`, add missing authorities |
 | Wrong entity splits | Adjust examples in `ner_system_prompt.md` |
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

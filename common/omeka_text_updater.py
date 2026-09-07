@@ -36,7 +36,9 @@ Usage:
 
 import copy
 import json
+import os
 import threading
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -202,7 +204,11 @@ def apply_text_value(item_data: Dict[str, Any], target: PropertyTarget, text: st
 
     annotation = {target.annotation_term: [dict(target.annotation_value)]}
     if not _annotation_matches(value.get("@annotation"), annotation):
-        value["@annotation"] = annotation
+        stored = value.get("@annotation")
+        value["@annotation"] = {
+            **({k: v for k, v in stored.items() if not k.startswith("o:")} if isinstance(stored, dict) else {}),
+            **annotation,
+        }
         changed = True
 
     return changed
@@ -266,12 +272,9 @@ def open_backup(
 ) -> Iterator[Optional[BackupSink]]:
     """Yield a sink that appends pre-write item payloads to a JSONL file.
 
-    ``write_guard.WriteGuard.dump_backup`` buffers every payload and writes once
-    at the end. That is right for a few hundred items and wrong for a corpus
-    pass: it holds ~50 MB of OCR in memory for 12k articles, and a crash at item
-    7,000 leaves no backup at all — precisely when one is needed. This writes and
-    flushes each item *before* its PATCH, one JSON object per line, so an
-    interrupted run still has every item it actually touched.
+    Writes, flushes and syncs each item *before* its PATCH, one JSON object per
+    line. A crash leaves the snapshots for completed writes on disk. Unique
+    filenames preserve backups from concurrent or same-second runs.
 
     Yields ``None`` when backups are off or this is a dry run (nothing changes,
     so there is nothing to roll back to), which callers pass straight through.
@@ -283,7 +286,7 @@ def open_backup(
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"_pre_write_{label}_{stamp}.jsonl"
+    path = directory / f"_pre_write_{label}_{stamp}_{uuid.uuid4().hex[:8]}.jsonl"
 
     lock = threading.Lock()  # concurrent writers (the sentiment panel) must not interleave lines
     with path.open("w", encoding="utf-8") as handle:
@@ -292,6 +295,7 @@ def open_backup(
             with lock:
                 handle.write(line)
                 handle.flush()  # the PATCH follows immediately; an unflushed line is no backup
+                os.fsync(handle.fileno())
 
         sink.path = path  # type: ignore[attr-defined]
         yield sink

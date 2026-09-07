@@ -113,3 +113,10 @@ OMEKA_KEY_CREDENTIAL=your_credential
 OPENROUTER_API_KEY=your_key    # the default text model (DeepSeek V4 Flash 0731)
 # or GEMINI_API_KEY / OPENAI_API_KEY / MISTRAL_API_KEY for another --model
 ```
+
+## Publication workflow
+
+See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
+resume identity, incomplete-output handling and Omeka write semantics, and the
+[publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
+release validation.

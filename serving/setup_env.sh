@@ -47,7 +47,10 @@ mkdir -p "$HF_HOME"
 # `hf download` ships with huggingface_hub, which vLLM already depends on.
 # Gated repos would need `hf auth login` first; Qwen3.8 is Apache-2.0 and open,
 # so no token is involved and none should be stored on a shared filesystem.
-hf download "$SERVE_MODEL"
+hf download "$SERVE_MODEL" --revision "$SERVE_REVISION"
+# Save the actual runtime packages beside the venv, not credentials or host state.
+pip freeze > "$VLLM_VENV/validation-requirements.txt"
+printf '%s\n' "$SERVE_MODEL@$SERVE_REVISION" > "$VLLM_VENV/model-revision.txt"
 
 cat <<EOF
 

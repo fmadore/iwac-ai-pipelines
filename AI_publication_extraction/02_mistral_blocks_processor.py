@@ -142,6 +142,11 @@ def process_one(
     size_mb = pdf_path.stat().st_size / 1e6
     console.print(f"  [dim]Size:[/] {size_mb:,.1f} MB")
 
+    from common.artifacts import invalidate_artifact, commit_artifact
+    from common.checkpoint import sha256_file
+    output_file = results_dir / f"{pdf_path.stem}.txt"
+    invalidate_artifact(output_file)
+    source_hash = sha256_file(pdf_path)
     started = time.time()
     result = client.process_pdf(pdf_path)
     elapsed = time.time() - started
@@ -163,6 +168,9 @@ def process_one(
     (results_dir / f"{pdf_path.stem}.json").write_text(
         json.dumps(sidecar, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    commit_artifact(output_file, context={"pipeline": "publication-ocr-v2", "model_key": result.model,
+                                        "model_id": result.model}, source_sha256=source_hash,
+                    companions=[results_dir / f"{pdf_path.stem}.json"])
 
     roles = sidecar["block_roles"]
     console.print(
@@ -245,7 +253,10 @@ def main() -> int:
         wanted = {str(i) for i in args.item_ids}
         pdf_files = [p for p in pdf_files if p.stem.split("_")[0] in wanted]
     if not args.force:
-        pdf_files = [p for p in pdf_files if not (RESULTS_DIR / f"{p.stem}.json").exists()]
+        from common.artifacts import artifact_matches
+        from common.checkpoint import sha256_file
+        context = {"pipeline": "publication-ocr-v2", "model_key": args.model, "model_id": args.model}
+        pdf_files = [p for p in pdf_files if not artifact_matches(RESULTS_DIR / f"{p.stem}.txt", context, sha256_file(p))]
     if args.limit:
         pdf_files = pdf_files[: args.limit]
 
