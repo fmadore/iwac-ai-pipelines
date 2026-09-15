@@ -289,8 +289,17 @@ Two vLLM settings are exported by `env.sh` because the venv has no `nvcc`:
 `VLLM_USE_FLASHINFER_SAMPLER=0` (its sampler JIT-compiles a CUDA kernel) and
 `VLLM_USE_DEEP_GEMM=0` (FP8 models otherwise demand DeepSeek's `deep_gemm`).
 
-Publications using Festus must carry the DFG funding acknowledgement, project
-523317330.
+The centre that runs Festus calls its funding acknowledgement mandatory rather
+than a courtesy, and asks for this wording in any publication reporting work done
+on the cluster:
+
+> Calculations were performed using the festus-cluster of the Bayreuth Centre
+> for High Performance Computing (https://www.bzhpc.uni-bayreuth.de), funded by
+> the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) -
+> 523317330.
+
+Quoted from the [system guide](https://www.hpc.uni-bayreuth.de/clusters/festus/)
+as it read on 15 September 2026; re-check it there rather than here.
 
 ## Notes
 

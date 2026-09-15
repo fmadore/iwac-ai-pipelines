@@ -189,6 +189,25 @@ For the accompanying article:
 
 Madore, Frédérick. "When AI Meets the Archive: Transforming the Islam West Africa Collection with Large Language Models." forthcoming.
 
+## Acknowledgements
+
+Every model here is a vendor API except one. Qwen3.8-27B was served from this
+repository's own vLLM instance on *festus*, the cluster of the Bayreuth Centre
+for High Performance Computing: the reasoning-depth probe of 2026-08-16, the
+full-corpus sentiment pass of 2026-08-17/18 across one L40S and two H100 shards,
+and the retry rounds that ended 2026-08-24.
+
+> Calculations were performed using the festus-cluster of the Bayreuth Centre
+> for High Performance Computing (https://www.bzhpc.uni-bayreuth.de), funded by
+> the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) -
+> 523317330.
+
+The centre calls this mandatory rather than a courtesy, so it belongs in *When AI
+Meets the Archive* and in anything else reporting those runs. Wording checked
+against the [festus system guide](https://www.hpc.uni-bayreuth.de/clusters/festus/)
+on 15 September 2026. `CITATION.cff` has no field for a funding acknowledgement
+under CFF 1.2.0, so it is not recorded there.
+
 ## License
 
 MIT. See individual pipeline directories for additional notes.
