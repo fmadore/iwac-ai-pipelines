@@ -47,6 +47,10 @@ MAX_WORKERS = 5  # Maximum number of concurrent threads for processing items
 #: --resource-class is how you address the whole class.
 ARTICLE_RESOURCE_CLASS_ID = 36
 
+#: The property the summaries land on; --missing-summaries selects the items with
+#: no value on it. Resolved to an ID at runtime, never hardcoded.
+SUMMARY_TERM = "bibo:shortDescription"
+
 #: The summarization prompt is written in French and assumes French input. The
 #: collection also holds Ewé (32), Kabiyè (11) and Dendi (2) articles plus a few
 #: with no language value; a French-prompted model returns confident, unusable
@@ -133,10 +137,30 @@ def process_items(items, output_dir):
 
 
 def fetch_by_resource_class(
-    client: OmekaClient, resource_class_id: int, modified_after: Optional[str] = None
+    client: OmekaClient,
+    resource_class_id: int,
+    modified_after: Optional[str] = None,
+    missing_only: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Every item of a resource class, optionally only those modified since a date."""
-    return client.get_items(resource_class_id=resource_class_id, modified_after=modified_after)
+    """Every item of a resource class, narrowed by date and/or by having no summary.
+
+    ``missing_only`` is the scope an ingest calls for: ``--modified-after`` cannot
+    express it, because the last corpus pass bumped every item's modified date, so
+    a date wide enough to catch the newly uploaded items catches the whole class.
+    Absence of ``bibo:shortDescription`` is the durable question. The property ID
+    is resolved at runtime — IDs differ between Omeka S installs.
+    """
+    filters: Dict[str, Any] = {
+        "resource_class_id": resource_class_id,
+        "modified_after": modified_after,
+    }
+    if missing_only:
+        property_id = client.get_property_id(SUMMARY_TERM)
+        if property_id is None:
+            raise RuntimeError(f"Could not resolve property ID for {SUMMARY_TERM}")
+        filters["property[0][property]"] = property_id
+        filters["property[0][type]"] = "nex"  # "has no value" for this property
+    return client.get_items(**filters)
 
 
 def item_languages(item: Dict[str, Any]) -> List[str]:
@@ -192,6 +216,13 @@ def main():
              "(e.g. 2026-08-01), for an incremental re-run.",
     )
     parser.add_argument(
+        "--missing-summaries", action="store_true",
+        help="With --resource-class: only items with no bibo:shortDescription yet. "
+             "This is the flag for an incremental pass after an ingest — a "
+             "--modified-after date wide enough to catch newly uploaded items also "
+             "catches every item the last corpus pass touched.",
+    )
+    parser.add_argument(
         "--language", nargs="*", default=list(DEFAULT_LANGUAGES), metavar="NAME",
         help="dcterms:language labels to keep (default: %(default)s). "
              "Pass --language with no value to disable filtering.",
@@ -208,12 +239,17 @@ def main():
              "newspaper's consecutive issues rather than a cross-section.",
     )
     args = parser.parse_args()
+    if args.missing_summaries and args.resource_class is None:
+        parser.error("--missing-summaries applies to --resource-class scope only")
 
     client = OmekaClient.from_env()
 
     if args.resource_class is not None:
-        logging.info(f"Fetching every item of resource class {args.resource_class}...")
-        items = fetch_by_resource_class(client, args.resource_class, args.modified_after)
+        scope = " without a summary" if args.missing_summaries else ""
+        logging.info(f"Fetching every item{scope} of resource class {args.resource_class}...")
+        items = fetch_by_resource_class(
+            client, args.resource_class, args.modified_after, args.missing_summaries
+        )
         logging.info(f"Fetched {len(items)} items.")
     else:
         item_set_ids = args.item_set

@@ -41,10 +41,17 @@ That fetches all 12,356 `bibo:Article` items and drops the **51** outside French
 ```bash
 python 01_extract_omeka_content.py --resource-class --sample 200
 python 02_AI_generate_summaries.py --workers 6
+python 01_extract_omeka_content.py --resource-class --missing-summaries          # after an ingest
 python 01_extract_omeka_content.py --resource-class --modified-after 2026-08-01   # incremental re-run
 python 02_AI_generate_summaries.py --service-tier flex   # OpenAI at ~half price, slower; for an overnight pass
 python 03_omeka_update_summaries.py --dry-run
 ```
+
+`--missing-summaries` is the flag for a pass after an ingest, and `--modified-after`
+is not a substitute for it: the last corpus pass bumped every article's modified
+date, so any date wide enough to catch newly uploaded items catches the whole
+class. Absence of `bibo:shortDescription` is the durable question, and it also
+picks up items uploaded *before* the last pass but after its extraction step.
 
 **Measured on a 200-article pilot** (GPT-5.6 Luna, 6 workers): 2 m 22 s, 0 failures, mean 546 FR / 519 EN characters. Extrapolated to 12,305 articles: **~2.4 hours** and **~$7**. Serial — `--workers 1` — would be ~14 hours.
 
