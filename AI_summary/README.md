@@ -30,13 +30,24 @@ python 03_omeka_update_summaries.py --dry-run         # Preview, then drop --dry
 
 ### Running the whole corpus
 
-Articles span **58 item sets and 39 belong to none**, so select them by class, not by item set:
+Most articles belong to no item set at all, and those that do are spread across
+dozens of them, so select them by class:
 
 ```bash
 python 01_extract_omeka_content.py --resource-class
 ```
 
-That fetches all 12,356 `bibo:Article` items and drops the **51** outside French/English (Ewé 32, Kabiyè 11, Dendi 2, plus 6 with no language value), leaving 12,305 — the same scope the sentiment panel uses. For a representative pilot, use `--sample N` rather than `--limit N`: items come back in ID order, so the first N are one newspaper's consecutive issues.
+That fetches every `bibo:Article` item and drops the handful outside
+French/English — Ewé, Kabiyè, Dendi and the occasional item with no language
+value — leaving the same scope the sentiment panel uses. The script reports both
+counts as it runs; ask the archive itself rather than trusting a number written
+here:
+
+```bash
+curl -sS -D - -o /dev/null "https://islam.zmo.de/api/items?resource_class_id=36&per_page=1" | grep -i Omeka-S-Total-Results
+```
+
+For a representative pilot, use `--sample N` rather than `--limit N`: items come back in ID order, so the first N are one newspaper's consecutive issues.
 
 ```bash
 python 01_extract_omeka_content.py --resource-class --sample 200
@@ -53,22 +64,31 @@ date, so any date wide enough to catch newly uploaded items catches the whole
 class. Absence of `bibo:shortDescription` is the durable question, and it also
 picks up items uploaded *before* the last pass but after its extraction step.
 
-**Measured on a 200-article pilot** (GPT-5.6 Luna, 6 workers): 2 m 22 s, 0 failures, mean 546 FR / 519 EN characters. Extrapolated to 12,305 articles: **~2.4 hours** and **~$7**. Serial — `--workers 1` — would be ~14 hours.
+### What a run costs
 
-The cost breakdown matters, because two things make it much cheaper than a naive estimate:
+Rates, not totals: the corpus grows, so multiply these by today's article count
+rather than trusting a headline figure. **Measured over 4,367 articles on
+2026-09-16** (GPT-5.6 Luna, 6 workers, `effort=low`), per article:
 
-| | tokens | rate | cost |
+| | per article | rate | cost per 1,000 articles |
 |---|---:|---|---:|
-| fresh input | 13.3M | $0.20/1M | $2.67 |
-| **cached** input | 16.6M | $0.02/1M | $0.33 |
-| output | 3.5M | $1.20/1M | $4.19 |
-| | | | **$7.19** |
+| fresh input | 869 tok | $0.20/1M | $0.17 |
+| **cached** input | 1,384 tok | $0.02/1M | $0.03 |
+| output | 275 tok | $1.20/1M | $0.33 |
+| | | | **~$0.53** |
 
-**55% of input is cached** — the 5,113-character system prompt is the shared prefix of every request, and 39 of 40 calls hit it. And only ~8% of output is reasoning at `effort=low`, unlike the sentiment panel where reasoning dominates.
+Throughput: **0.64 s per article** generating at 6 workers (~94/min) and
+**0.79 s per item** uploading in step 03. Both scale linearly with the corpus;
+serial — `--workers 1` — should cost about the worker count in wall clock.
+
+Two things make this much cheaper than a naive estimate. **61% of input is
+cached**: the system prompt is the shared prefix of every request, so all but
+the first call in a batch hits it. And only ~6% of output is reasoning at
+`effort=low`, unlike the sentiment panel where reasoning dominates.
 
 > Verify the rate card before quoting a figure. An earlier estimate here said **$50** because it trusted a stale `$1/$6` in `llm_registry.py` (real Luna is `$0.20/$1.20`) and ignored caching — 7× too high. Prices live in the model descriptions in `common/llm_registry.py` and are checked against [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing), not inferred from a tier name.
 
-> **Do not delete the existing summaries first.** `adopt_untagged=True` overwrites them in place, so there is nothing left over to delete; and deleting first turns any mid-run failure into 12,300 articles with no summary at all, where the pipeline as written simply leaves the old one standing.
+> **Do not delete the existing summaries first.** `adopt_untagged=True` overwrites them in place, so there is nothing left over to delete; and deleting first turns any mid-run failure into a corpus with no summaries at all, where the pipeline as written simply leaves the old one standing.
 
 The summarization script runs on GPT-5.6 Luna unless `--model` names another
 registry model (step 03, which uploads, is the one that asks which model wrote
@@ -87,18 +107,18 @@ the script stops instead of mixing runs; use `--force` to replace it.
 
 ## Supported Models
 
-| Model | Provider | Speed | Cost per 1M (in / cached / out) | Full corpus |
+| Model | Provider | Speed | Cost per 1M (in / cached / out) | Per 1,000 articles |
 |-------|----------|-------|------|---|
-| `gpt-5.6-luna` | OpenAI | Fast | $0.20 / $0.02 / $1.20 | **~$7** (default) |
-| `deepseek-v4-flash-0731` | DeepSeek via OpenRouter | Slow | $0.09 / — / $0.18 | ~$3.25 |
+| `gpt-5.6-luna` | OpenAI | Fast | $0.20 / $0.02 / $1.20 | **~$0.53** (default) |
+| `deepseek-v4-flash-0731` | DeepSeek via OpenRouter | Slow | $0.09 / — / $0.18 | ~$0.25 |
 | `gemini-3.7-flash` | Google | Fast | see registry | — |
 | `ministral-14b` | Mistral | Fast | see registry | — |
 
 All models produce comparable summary quality for this task. Luna is the default for
-throughput: measured over the sentiment panel's full-corpus passes, Luna ran 2.7 h
-against DeepSeek V4 Flash 0731's 31.5 h — 0731 has no middle reasoning level, so the
-panel rounds it up to `high`. Since Luna's real price makes the whole corpus ~$7, the
-~$4 saved by DeepSeek does not buy back a ~12× slower run.
+throughput: measured over the sentiment panel's full-corpus passes, Luna ran **~12×
+faster** than DeepSeek V4 Flash 0731 — 0731 has no middle reasoning level, so the
+panel rounds it up to `high`. At roughly half a dollar per thousand articles, the
+~$0.28 per thousand that DeepSeek saves does not buy back that slowdown.
 
 This pipeline is the one text entry point that does **not** default to the shared
 `DEFAULT_TEXT_MODEL_KEY`; every other one still does.
@@ -139,7 +159,7 @@ python 03_omeka_update_summaries.py --no-backup      # not recommended
 
 ### Legacy untagged summaries
 
-The ~12,300 French summaries written before this pipeline became bilingual carry **no `@language` at all**. The French target sets `adopt_untagged=True`, so step 03 claims that existing literal and tags it `fr` on the way past, rather than appending a second French value beside it. The English target deliberately does not: an English write must never claim a value that predates this pipeline.
+The French summaries written before this pipeline became bilingual (August 2026) carry **no `@language` at all**. The French target sets `adopt_untagged=True`, so step 03 claims that existing literal and tags it `fr` on the way past, rather than appending a second French value beside it. The English target deliberately does not: an English write must never claim a value that predates this pipeline.
 
 This only touches items you actually regenerate — step 03 writes what is in the two folders. Items never re-run keep their untagged French summary and gain nothing.
 
@@ -155,13 +175,13 @@ The one constraint that falls on **this** pipeline: never write two literals of 
 
 **Hallucination risk**: AI may occasionally include information not present in the source text. Summaries are aids for discovery, not substitutes for reading originals.
 
-**Language**: Summaries are generated in French and English regardless of source language. The prompt is written in French and assumes French input — the collection holds ~45 Ewé, Kabiyè and Dendi items for which a French-prompted model returns confident but unreliable output. Step 01 drops them by default (`--language` keeps only Français/Anglais); passing `--language` with no value disables that filter and puts them back in scope.
+**Language**: Summaries are generated in French and English regardless of source language. The prompt is written in French and assumes French input — the collection holds a few dozen Ewé, Kabiyè and Dendi items for which a French-prompted model returns confident but unreliable output. Step 01 drops them by default (`--language` keeps only Français/Anglais); passing `--language` with no value disables that filter and puts them back in scope.
 
 **Fidelity**: the prompt forbids adding any fact, place or date the source does not state — including the obvious ones. This is enforcement against a real failure: on a 338-character stub, GPT-5.6 Luna added the city "à Ouagadougou?", question mark included, inferring the organization's seat and flagging its own doubt inside the summary. Both the invented location and uncertainty markers are now explicitly prohibited. Spot-check short and OCR-degraded documents anyway.
 
 **Written for discovery, not for RAG**: these summaries are never embedded — they are read by keyword search and by agents deciding which items are worth opening in full. That is why the prompt no longer says "keyword-rich, not narrative": the corpus shares its vocabulary (*islam*, *musulmans*, *imam*, country names), so a keyword-dense abstract is indistinguishable from forty others and triage collapses. The prompt asks instead for dense, concrete prose carrying the particulars — figures, decisions, named roles — and tells the model **not** to paraphrase the title, subject or spatial fields, which consumers already have beside the summary.
 
-**Length is a budget.** Live summaries average **501 characters** (measured over 300 articles). The prompt targets 400–600 characters *per version* so that each language stands on its own within that, rather than the pair costing double wherever a summary is listed.
+**Length is a budget.** Live summaries average **~510 characters** (524 FR / 499 EN, measured over 4,367 articles). The prompt targets 400–600 characters *per version* so that each language stands on its own within that, rather than the pair costing double wherever a summary is listed.
 
 ## Configuration
 
