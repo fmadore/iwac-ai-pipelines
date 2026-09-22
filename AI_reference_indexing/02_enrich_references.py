@@ -21,7 +21,7 @@ append to the old file unless ``--force`` is passed.
 Usage:
     python 02_enrich_references.py                              # newest items_*.csv, default model
     python 02_enrich_references.py --input output/items_78405_20260902.csv
-    python 02_enrich_references.py --model gpt-5.6-luna
+    python 02_enrich_references.py --model gpt-6-luna
     python 02_enrich_references.py --reindex                    # also items that already have both
     python 02_enrich_references.py --force                      # discard an output made differently
 """

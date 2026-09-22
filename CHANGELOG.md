@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-22 — GPT-6 Luna for text pipelines
+
+- Switch Luna defaults, text model selections and generic OpenAI aliases to
+  `gpt-6-luna`, including summaries and publication citation extraction.
+- Attribute new Luna outputs to Omeka item 125260 (GPT-6.0 Luna).
+- Keep `gpt-5.6-luna` and item 79610 for the unchanged sentiment panel and
+  historical provenance. Existing results and benchmark measurements are not relabeled.
+- Verify Responses API, structured output and reasoning compatibility against
+  https://developers.openai.com/api/docs/models/gpt-6-luna; Standard input/cached
+  input/output rates are $0.10/$0.01/$0.50 per million tokens.
+
+
 Releases are tagged on GitHub and archived on Zenodo (concept DOI
 [10.5281/zenodo.21804210](https://doi.org/10.5281/zenodo.21804210)). The
 second half of this file holds the operational history that used to live as

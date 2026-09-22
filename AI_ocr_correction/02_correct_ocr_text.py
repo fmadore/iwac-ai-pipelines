@@ -9,7 +9,7 @@ Supports multiple models via --model flag:
 - deepseek-v4-flash-0731 (default): DeepSeek official Flash release via OpenRouter
 - gemini-3.7-flash: Gemini 3.7 Flash - fast, cost-effective
 - gemini-pro: Gemini Pro - highest quality
-- gpt-5.6-luna: OpenAI GPT-5.6 Luna - cost-optimized tier
+- gpt-6-luna: OpenAI GPT-6 Luna - cost-optimized tier
 - gpt-5.6-sol: OpenAI GPT-5.6 Sol - flagship tier
 - mistral-large: Mistral Large 3 - multimodal MoE
 """

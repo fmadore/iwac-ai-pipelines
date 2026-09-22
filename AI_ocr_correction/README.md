@@ -57,7 +57,7 @@ python 02_correct_alto_xml.py --model gemini-3.7-flash
 |-------|-------|----------|
 | `gemini-3.7-flash` | Fast | Bulk processing |
 | `gemini-pro` | Slower | Complex documents |
-| `gpt-5.6-luna` | Fast | General use |
+| `gpt-6-luna` | Fast | General use |
 | `gpt-5.6-sol` | Slower | Higher quality |
 | `mistral-large` | Medium | European languages |
 | `ministral-14b` | Fast | Budget option |

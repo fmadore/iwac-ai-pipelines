@@ -130,12 +130,12 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash
 
 | Provider | Key | Notes |
 |----------|-----|-------|
-| OpenAI | `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol` | Text pipelines only. GPT-5.6 tiers: Luna (cheapest), Terra (balanced), Sol (flagship). Legacy `gpt-5-mini` / `gpt-5.1` keys still resolve to Luna / Sol. |
+| OpenAI | `gpt-6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol` | Text pipelines only. GPT-6 Luna (cheapest), GPT-5.6 Terra (balanced), GPT-5.6 Sol (flagship). Legacy `gpt-5-mini` / `gpt-5.1` keys still resolve to Luna / Sol. |
 | Gemini | `gemini-3.7-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
 | Gemini (speech) | `gemini-3.5-transcribe` | Dedicated speech-to-text via the Interactions API, not the model registry: word-level timestamps and speaker diarization, 82 locales including Hausa but none of Mooré, Dioula, Ewé, Kabyè or Dendi. Takes no prompt. Used by `AI_audio_summary/02c`. |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
-| OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the shared text default (`DEFAULT_TEXT_MODEL_KEY`), used by NER, OCR correction and magazine consolidation. Summarization is the one exception and defaults to `gpt-5.6-luna` for throughput. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
+| OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the shared text default (`DEFAULT_TEXT_MODEL_KEY`), used by NER, OCR correction and magazine consolidation. Summarization and publication citation extraction default to `gpt-6-luna` for throughput. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
 | Self-hosted | `qwen3.8-27b-selfhosted` | Any OpenAI-compatible endpoint you run yourself — vLLM on a GPU cluster, or llama.cpp / LM Studio / TGI locally. Text pipelines only. The address comes from `SELFHOSTED_LLM_BASE_URL`, so no model here is tied to one machine; a model on this route is simply reported as unavailable when the variable is unset. See [`serving/`](serving/README.md). |
 
 `deepseek-v4-flash-0731` is pinned to the dated OpenRouter slug

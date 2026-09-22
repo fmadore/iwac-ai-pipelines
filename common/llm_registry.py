@@ -26,7 +26,7 @@ PROVIDER_SELFHOSTED = "selfhosted"
 
 OPENAI_SOL_MODEL = "gpt-5.6-sol"
 OPENAI_TERRA_MODEL = "gpt-5.6-terra"
-OPENAI_LUNA_MODEL = "gpt-5.6-luna"
+OPENAI_LUNA_MODEL = "gpt-6-luna"
 DEFAULT_OPENAI_MODEL = OPENAI_LUNA_MODEL
 OPENAI_FULL_MODEL = OPENAI_SOL_MODEL
 DEFAULT_GEMINI_FLASH = "gemini-flash-latest"
@@ -151,8 +151,14 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     # harmless: the previous "$1/$6" for Luna was 5x the real rate and produced a
     # $50 corpus estimate for a job that costs ~$7. Re-check upstream before
     # quoting any of these; do not infer them from a model's tier name.
+    "gpt-6-luna": ModelOption(
+        "gpt-6-luna", PROVIDER_OPENAI, OPENAI_LUNA_MODEL,
+        "ChatGPT (GPT-6 Luna)",
+        "OpenAI Responses API — cost-optimized tier ($0.10/$0.01/$0.50 per 1M; verified 2026-09-22)",
+    ),
+    # Preserve the exact model for the sentiment panel and historical runs.
     "gpt-5.6-luna": ModelOption(
-        "gpt-5.6-luna", PROVIDER_OPENAI, OPENAI_LUNA_MODEL,
+        "gpt-5.6-luna", PROVIDER_OPENAI, "gpt-5.6-luna",
         "ChatGPT (GPT-5.6 Luna)",
         "OpenAI Responses API — cost-optimized tier ($0.20/$0.02/$1.20 per 1M)",
     ),
@@ -344,21 +350,22 @@ MODEL_ALIASES = {
     "gemini-flash-lite-latest": "gemini-flash-lite",
     "gemini-flash-lite-3.1": "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
-    "openai": "gpt-5.6-luna",
+    "openai": "gpt-6-luna",
     "gpt-5.6": "gpt-5.6-sol",
     "sol": "gpt-5.6-sol",
     "terra": "gpt-5.6-terra",
-    "luna": "gpt-5.6-luna",
+    "luna": "gpt-6-luna",
     "openai:gpt-5.6": "gpt-5.6-sol",
     "openai:gpt-5.6-sol": "gpt-5.6-sol",
     "openai:gpt-5.6-terra": "gpt-5.6-terra",
+    "openai:gpt-6-luna": "gpt-6-luna",
     "openai:gpt-5.6-luna": "gpt-5.6-luna",
-    "gpt-5-mini": "gpt-5.6-luna",
-    "openai:gpt-5-mini": "gpt-5.6-luna",
-    "openai-mini": "gpt-5.6-luna",
-    "gpt-5-nano": "gpt-5.6-luna",
-    "gpt-5.1-mini": "gpt-5.6-luna",
-    "openai:gpt-5.1-mini": "gpt-5.6-luna",
+    "gpt-5-mini": "gpt-6-luna",
+    "openai:gpt-5-mini": "gpt-6-luna",
+    "openai-mini": "gpt-6-luna",
+    "gpt-5-nano": "gpt-6-luna",
+    "gpt-5.1-mini": "gpt-6-luna",
+    "openai:gpt-5.1-mini": "gpt-6-luna",
     "gpt-5.1": "gpt-5.6-sol",
     "openai:gpt-5.1": "gpt-5.6-sol",
     "gpt-5": "gpt-5.6-sol",
@@ -421,7 +428,7 @@ MODEL_ALIASES = {
 # Latest", which cannot be cited. The rolling entry stays in MODEL_REGISTRY for
 # the pipelines that want whatever Flash is current and stamp nothing.
 TEXT_ECONOMY_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-3.7-flash", "ministral-14b",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "ministral-14b",
 ]
 TEXT_OPEN_MODELS: List[str] = [
     "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
@@ -429,11 +436,11 @@ TEXT_OPEN_MODELS: List[str] = [
     "deepseek-v4-flash-0731", "deepseek-v4-pro",
 ]
 TEXT_EXTENDED_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-5.6-luna", "gemini-3.7-flash", "gemma-4",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "gemma-4",
     "mistral-large", "ministral-14b", "mistral-small", "qwen3.5-moe",
 ]
 TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-3.7-flash", "gemini-pro", "gpt-5.6-luna",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-3.7-flash", "gemini-pro", "gpt-6-luna",
     "gpt-5.6-sol", "mistral-large", "ministral-14b", "mistral-small",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]

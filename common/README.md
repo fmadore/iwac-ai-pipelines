@@ -417,7 +417,7 @@ The provider supports these models via the `MODEL_REGISTRY`:
 
 | Key | Provider | Model ID | Label | Description |
 |-----|----------|----------|-------|-------------|
-| `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Cost-optimized tier, $0.20/$0.02/$1.20 per 1M |
+| `gpt-6-luna` | OpenAI | `gpt-6-luna` | ChatGPT (GPT-6 Luna) | Cost-optimized tier, $0.10/$0.01/$0.50 per 1M |
 | `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2/$0.20/$12 per 1M |
 | `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Flagship tier, $5/$0.50/$30 per 1M |
 | `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | **The Flash every tier offers**; version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only |
@@ -447,8 +447,8 @@ For convenience, these aliases are also supported:
 
 | Alias | Resolves To |
 |-------|-------------|
-| `openai` | `gpt-5.6-luna` |
-| `luna` | `gpt-5.6-luna` |
+| `openai` | `gpt-6-luna` |
+| `luna` | `gpt-6-luna` |
 | `terra` | `gpt-5.6-terra` |
 | `sol` | `gpt-5.6-sol` |
 | `gpt-5.6` | `gpt-5.6-sol` |
@@ -469,7 +469,7 @@ entry, `qwen/qwen3.8-27b` the OpenRouter one. Note that the Hugging Face repo id
 `Qwen/Qwen3.8-27B` lowercases to exactly that slug, so pasting it gets you the
 hosted route — ask for the self-hosted entry by its short name.
 
-The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-5.6-luna`, and
+The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-6-luna`, and
 `gpt-5.1` / `gpt-5` → `gpt-5.6-sol`. Their underlying snapshots shut down on
 2026-10-23, so prefer the new tier keys in new code.
 
@@ -963,7 +963,7 @@ A: OpenAI's Responses API uses fixed configuration. Use `reasoning_effort` and `
 A: Enable debug logging: `logging.basicConfig(level=logging.DEBUG)` to see the actual parameters sent to each provider.
 
 **Q: What model keys can I use with `--model`?**  
-A: Use registry keys like `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-3.7-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
+A: Use registry keys like `gpt-6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-3.7-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
 
 **Q: How do I restrict which models a pipeline can use?**  
 A: Use `allowed_keys` in `get_model_option()`:
@@ -977,3 +977,7 @@ See the [pipeline contract](../docs/PIPELINE_CONTRACTS.md) for inputs, outputs,
 resume identity, incomplete-output handling and Omeka write semantics, and the
 [publication guide](../docs/PUBLICATION.md) for legacy-artifact migration and
 release validation.
+
+GPT-6 Luna is the current Luna selection (Omeka item 125260). The explicit
+`gpt-5.6-luna` key and item 79610 remain available for the unchanged sentiment
+panel and historical provenance; they do not alias to GPT-6 Luna.

@@ -125,7 +125,7 @@ three-block overlap so a short form near a boundary keeps its antecedent.
 
 ### Model choice
 
-Step 04 pins `gpt-5.6-luna` rather than the shared `DEFAULT_TEXT_MODEL_KEY`.
+Step 04 pins `gpt-6-luna` rather than the shared `DEFAULT_TEXT_MODEL_KEY`.
 The default routes through OpenRouter, where `require_parameters` narrows the
 eligible backends to those advertising `json_schema` — which is what structured
 extraction needs, and also what leaves it queueing. Measured on 2026-08-18,

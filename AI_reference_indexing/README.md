@@ -26,7 +26,7 @@ python 01_fetch_references.py --item-set-id 78405
 
 # Step 2: Assign keywords (newest items_*.csv, shared default text model)
 python 02_enrich_references.py
-python 02_enrich_references.py --model gpt-5.6-luna      # another registry model
+python 02_enrich_references.py --model gpt-6-luna      # another registry model
 python 02_enrich_references.py --reindex                 # also items that already have both link sets
 
 # Step 3: Reconcile keywords against authorities (newest items_enriched_*.csv, or --input)

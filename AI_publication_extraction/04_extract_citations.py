@@ -25,7 +25,7 @@ existed.
 Usage:
     python 04_extract_citations.py --item-id 5071 --dry-run
     python 04_extract_citations.py --item-id 5071
-    python 04_extract_citations.py --model gpt-5.6-luna --limit 5
+    python 04_extract_citations.py --model gpt-6-luna --limit 5
     python 04_extract_citations.py --extract-only    # write JSON, touch nothing
 
 Requirements:
@@ -95,7 +95,7 @@ CHUNK_OVERLAP_BLOCKS = 3
 #: minutes and then 2 hours, against seconds for the same work on a first-party
 #: endpoint. ``AI_summary`` pins Luna over the same default for the same class
 #: of reason, throughput rather than quality.
-DEFAULT_CITATION_MODEL_KEY = "gpt-5.6-luna"
+DEFAULT_CITATION_MODEL_KEY = "gpt-6-luna"
 
 #: A hung route must fail this chunk, not the run. The shared 300 s default is
 #: sized for magazine-issue consolidation emitting a whole table of contents;

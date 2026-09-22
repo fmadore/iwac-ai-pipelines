@@ -59,7 +59,7 @@ different provenance; use `--force` to replace it deliberately.
 |-------|----------|-------|------|
 | `gemini-3.7-flash` | Google | Fast | Low |
 | `gemma-4` | Google (Gemma 4 31B, open-weights via Gemini API) | Fast | Low |
-| `gpt-5.6-luna` | OpenAI | Fast | Low |
+| `gpt-6-luna` | OpenAI | Fast | Low |
 | `mistral-large` | Mistral | Medium | Medium |
 | `ministral-14b` | Mistral | Fast | Low |
 | `mistral-small` | Mistral (hybrid reasoning) | Fast | Low |
@@ -70,9 +70,8 @@ All models use the same French-language prompt (`ner_system_prompt.md`) optimize
 
 `gemma-4` uses the same `GEMINI_API_KEY` as the Gemini models. Thinking level is `minimal` by default (Gemma 4 accepts only `MINIMAL` or `HIGH`), which matches the low-cost entity-extraction budget used by `gemini-3.7-flash`.
 
-`qwen3.5-moe` and `deepseek-v4-flash-0731` share one `OPENROUTER_API_KEY` and cost
-roughly a tenth of `gpt-5.6-luna`, which is what makes a full-corpus pass
-affordable. Qwen accepts the NER pipeline's `medium` reasoning request directly;
+`qwen3.5-moe` and `deepseek-v4-flash-0731` share one `OPENROUTER_API_KEY`. Compare current rates and measured token usage
+when budgeting a full-corpus pass. Qwen accepts the NER pipeline's `medium` reasoning request directly;
 DeepSeek 0731 supports only `low`, `high`, and `max`, so the shared adapter uses
 its cost-conscious `low` default for NER.
 Because these are open models behind a router, treat a first run as an

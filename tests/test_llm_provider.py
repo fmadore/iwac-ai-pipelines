@@ -32,14 +32,14 @@ def test_alias_normalization():
     # rolling ``gemini-flash``: whatever a bare alias resolves to can end up
     # stamped in an iwac:*Model annotation, and a rolling id cannot be cited.
     assert normalize_model_key("gemini") == "gemini-3.7-flash"
-    assert normalize_model_key("openai") == "gpt-5.6-luna"
+    assert normalize_model_key("openai") == "gpt-6-luna"
     assert normalize_model_key("mistral") == "mistral-large"
     assert normalize_model_key("GEMINI") == "gemini-3.7-flash"
     assert normalize_model_key(None) is None
 
 
 def test_gpt_56_tier_aliases():
-    assert normalize_model_key("luna") == "gpt-5.6-luna"
+    assert normalize_model_key("luna") == "gpt-6-luna"
     assert normalize_model_key("terra") == "gpt-5.6-terra"
     assert normalize_model_key("sol") == "gpt-5.6-sol"
     # The bare id routes to Sol, matching OpenAI's own routing.
@@ -48,10 +48,10 @@ def test_gpt_56_tier_aliases():
 
 def test_retired_openai_keys_map_forward():
     # GPT-5/5.1 snapshots shut down 2026-10-23; old keys must keep resolving.
-    assert normalize_model_key("gpt-5-mini") == "gpt-5.6-luna"
+    assert normalize_model_key("gpt-5-mini") == "gpt-6-luna"
     assert normalize_model_key("gpt-5.1") == "gpt-5.6-sol"
     assert normalize_model_key("gpt-5") == "gpt-5.6-sol"
-    assert get_model_option("gpt-5-mini").model == "gpt-5.6-luna"
+    assert get_model_option("gpt-5-mini").model == "gpt-6-luna"
 
 
 def test_get_model_option_by_key():
@@ -64,10 +64,17 @@ def test_get_model_option_via_alias():
     assert option.key == "gemini-3.7-flash"
 
 
+def test_luna_upgrade_preserves_explicit_historical_model():
+    assert get_model_option("luna").model == "gpt-6-luna"
+    assert get_model_option("openai:gpt-6-luna").model == "gpt-6-luna"
+    assert get_model_option("gpt-5.6-luna").model == "gpt-5.6-luna"
+    assert get_model_option("openai:gpt-5.6-luna").model == "gpt-5.6-luna"
+
+
 def test_allowed_keys_accept_aliases():
     # allowed_keys entries are normalized too: 'gemini' used to be rejected
     # even when the resolved key was allowed.
-    option = get_model_option("gemini", allowed_keys=["gemini-3.7-flash", "gpt-5.6-luna"])
+    option = get_model_option("gemini", allowed_keys=["gemini-3.7-flash", "gpt-6-luna"])
     assert option.key == "gemini-3.7-flash"
 
 
@@ -107,7 +114,7 @@ def test_default_transport_timeout_is_finite(monkeypatch):
     constructor = MagicMock()
     monkeypatch.setattr("common.llm_provider.OpenAI", constructor)
 
-    OpenAIResponsesClient(MODEL_REGISTRY["gpt-5.6-luna"])
+    OpenAIResponsesClient(MODEL_REGISTRY["gpt-6-luna"])
 
     assert constructor.call_args.kwargs["timeout"] == DEFAULT_REQUEST_TIMEOUT_SECONDS
     assert 0 < DEFAULT_REQUEST_TIMEOUT_SECONDS < 600
@@ -160,7 +167,7 @@ def _openai_client_with_stub(monkeypatch, parsed=None, output=None):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr("common.llm_provider.OpenAI", MagicMock())
 
-    client = OpenAIResponsesClient(MODEL_REGISTRY["gpt-5.6-luna"])
+    client = OpenAIResponsesClient(MODEL_REGISTRY["gpt-6-luna"])
     stub = MagicMock()
     stub.responses.parse.return_value = MagicMock(output_parsed=parsed, output=output or [])
     client._client = stub
@@ -182,6 +189,7 @@ def test_structured_output_uses_parse_with_pydantic_model(monkeypatch):
     stub.responses.create.assert_not_called()
     kwargs = stub.responses.parse.call_args.kwargs
     assert kwargs["text_format"] is _Sample
+    assert kwargs["model"] == "gpt-6-luna"
     # No hand-rolled schema smuggled in via text=
     assert "format" not in kwargs.get("text", {})
 

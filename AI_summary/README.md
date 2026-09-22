@@ -90,12 +90,12 @@ the first call in a batch hits it. And only ~6% of output is reasoning at
 
 > **Do not delete the existing summaries first.** `adopt_untagged=True` overwrites them in place, so there is nothing left over to delete; and deleting first turns any mid-run failure into a corpus with no summaries at all, where the pipeline as written simply leaves the old one standing.
 
-The summarization script runs on GPT-5.6 Luna unless `--model` names another
+The summarization script runs on GPT-6 Luna unless `--model` names another
 registry model (step 03, which uploads, is the one that asks which model wrote
 the summaries when `--model` is omitted):
 
 ```bash
-python 02_AI_generate_summaries.py  # GPT-5.6 Luna by default
+python 02_AI_generate_summaries.py  # GPT-6 Luna by default
 ```
 
 Successful files are checkpointed with the exact model ID, prompt hash, and
@@ -109,19 +109,20 @@ the script stops instead of mixing runs; use `--force` to replace it.
 
 | Model | Provider | Speed | Cost per 1M (in / cached / out) | Per 1,000 articles |
 |-------|----------|-------|------|---|
-| `gpt-5.6-luna` | OpenAI | Fast | $0.20 / $0.02 / $1.20 | **~$0.53** (default) |
+| `gpt-6-luna` | OpenAI | Not yet measured | $0.10 / $0.01 / $0.50 | Not yet measured (default) |
 | `deepseek-v4-flash-0731` | DeepSeek via OpenRouter | Slow | $0.09 / — / $0.18 | ~$0.25 |
 | `gemini-3.7-flash` | Google | Fast | see registry | — |
 | `ministral-14b` | Mistral | Fast | see registry | — |
 
-All models produce comparable summary quality for this task. Luna is the default for
-throughput: measured over the sentiment panel's full-corpus passes, Luna ran **~12×
-faster** than DeepSeek V4 Flash 0731 — 0731 has no middle reasoning level, so the
-panel rounds it up to `high`. At roughly half a dollar per thousand articles, the
-~$0.28 per thousand that DeepSeek saves does not buy back that slowdown.
+GPT-6 Luna replaces GPT-5.6 Luna for new summaries as of 2026-09-22.
+The cost and throughput measurements above describe GPT-5.6 Luna; quality,
+token usage and throughput have not yet been measured for GPT-6 Luna.
+Rates are verified against [the model page](https://developers.openai.com/api/docs/models/gpt-6-luna).
+New summaries cite Omeka item **125260**; existing checkpoints retain their
+recorded model. The sentiment panel remains on GPT-5.6 Luna.
 
-This pipeline is the one text entry point that does **not** default to the shared
-`DEFAULT_TEXT_MODEL_KEY`; every other one still does.
+Summaries and publication citation extraction explicitly select Luna; the
+shared `DEFAULT_TEXT_MODEL_KEY` remains DeepSeek V4 Flash 0731.
 
 ## Output
 
@@ -143,7 +144,7 @@ Both land on that one property as two `@language`-tagged literals, `fr` and `en`
 Each summary carries an `iwac:summaryModel` value annotation naming the model that produced it, linked to its authority item (class 244, item set 267). One model produces both renderings, so both literals carry it. Step 03 prompts for the model, or takes `--model`:
 
 ```bash
-python 03_omeka_update_summaries.py --model gpt-5.6-luna --dry-run
+python 03_omeka_update_summaries.py --model gpt-6-luna --dry-run
 ```
 
 Available keys come from `AI_MODEL_ITEMS` in `common/iwac_config.py`. Add a new one there after creating its authority item in Omeka.

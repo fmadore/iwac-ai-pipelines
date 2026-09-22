@@ -166,6 +166,7 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     # that free-tier content is used to improve Google's products. The registry's
     # ``gemma-4`` (Gemini-routed) key is deliberately absent here.
     "gemma-4-openrouter": {"item_id": 111663, "display_title": "Gemma 4 31B"},
+    "gpt-6-luna": {"item_id": 125260, "display_title": "GPT-6.0 Luna"},
     "gpt-5.6-luna": {"item_id": 79610, "display_title": "GPT-5.6 Luna"},
     "mistral-small": {"item_id": 79614, "display_title": "Mistral Small 4"},
     "qwen3.5-moe": {"item_id": 79616, "display_title": "Qwen3.5 122B-A10B"},

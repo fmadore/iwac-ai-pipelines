@@ -2,7 +2,7 @@
 Named Entity Recognition (NER) script for Omeka S metadata extraction.
 
 Supported models:
-  - gpt-5.6-luna: Fast, cost-effective OpenAI model (GPT-5.6 high-volume tier)
+  - gpt-6-luna: Fast, cost-effective OpenAI model (GPT-6 high-volume tier)
   - gemini-3.7-flash: Fast, cost-effective Gemini model
   - gemma-4: Google Gemma 4 31B — open-weights flagship, via Gemini API
   - mistral-large: Mistral Large 3 flagship model
@@ -28,7 +28,7 @@ Output CSV columns: o:id, Title, bibo:content, Subject AI, Spatial AI
 
 Usage examples:
     python 01_NER_AI.py --item-set-id 123
-    python 01_NER_AI.py --item-set-id 123 --model gpt-5.6-luna
+    python 01_NER_AI.py --item-set-id 123 --model gpt-6-luna
     python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash --async
     python 01_NER_AI.py --item-set-id 123 --model gemma-4
     python 01_NER_AI.py --item-set-id 123 --model mistral-large

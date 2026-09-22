@@ -31,7 +31,7 @@ Requirements:
 
 Usage:
     python 03_omeka_update_summaries.py                        # prompts for model
-    python 03_omeka_update_summaries.py --model gpt-5.6-luna
+    python 03_omeka_update_summaries.py --model gpt-6-luna
     python 03_omeka_update_summaries.py --model gemini-3.7-flash --dry-run
 """
 
@@ -81,7 +81,7 @@ ENGLISH_DIR = "Summaries_EN_TXT"
 
 #: Step 02's default; offered as step 03's default answer so the two agree
 #: unless the operator ran 02 with --model.
-DEFAULT_MODEL_KEY = "gpt-5.6-luna"
+DEFAULT_MODEL_KEY = "gpt-6-luna"
 
 console = Console()
 

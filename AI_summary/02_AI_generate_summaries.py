@@ -62,7 +62,7 @@ LEGACY_MODEL_KEYS = LEGACY_CLI_MODEL_KEYS
 #: chosen for throughput — the measured full-corpus sentiment pass ran 2.7 h on
 #: Luna against 31.5 h on DeepSeek V4 Flash 0731, which has no middle reasoning
 #: level and rounds up to ``high``. Override with ``--model``.
-DEFAULT_MODEL_KEY = "gpt-5.6-luna"
+DEFAULT_MODEL_KEY = "gpt-6-luna"
 
 #: Written as ``@language`` on the two Omeka literals in step 03.
 FRENCH_DIR = "Summaries_FR_TXT"
