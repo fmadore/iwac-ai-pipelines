@@ -17,7 +17,7 @@ them:
    read alongside (1), not instead of it.
 3. **Self-consistency** (needs ``--repeats`` > 1 in the pilot) — how often a
    model gives the same answer to the same article twice. DeepSeek V4 runs at
-   the vendor-recommended temperature 1.0 and Qwen3.7 at 0.7, so without this a
+   the vendor-recommended temperature 1.0 and Qwen3.5 at 0.7, so without this a
    low agreement score is ambiguous between "disagrees" and "is noisy".
 
 Reads a local file and prints. Writes nothing anywhere.

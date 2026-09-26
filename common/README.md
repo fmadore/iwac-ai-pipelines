@@ -139,6 +139,26 @@ instead of silently mixing two runs. `atomic_write_text()` writes through a
 temporary file and `os.replace`, so interrupted writes do not leave a partial
 artifact at the final path.
 
+### Output sidecars (`artifacts.py`, `run_context.py`, `outcomes.py`)
+
+A checkpoint says which inputs a run finished; the sidecar says whether a given
+output file may be uploaded. `invalidate_artifact(path)` writes an incomplete
+`<file>.artifact.json` *before* generation starts, and `commit_artifact()`
+replaces it last, with the run context, the source hash, the output hash and the
+hashes of any companion files (the English half of a summary pair). An
+interrupted or failed regeneration therefore leaves old text on disk that no
+write step will accept. `read_artifact()` re-checks every hash; the `03` steps
+call `validated_model()` / `checkpoint_artifacts()`, which refuse a folder
+mixing two models or holding output the checkpoint does not vouch for.
+
+The context recorded is `run_context.model_context(option, config)`: the model
+and the configuration *after* the same clamping the client applies, so a record
+names the thinking level or reasoning effort the provider received, not the one
+the pipeline asked for. `outcomes.batch_exit_code()` makes a batch exit
+non-zero when any requested item failed, was missing, empty or incomplete. See
+[the pipeline contracts](../docs/PIPELINE_CONTRACTS.md) for what each pipeline
+writes.
+
 ---
 
 ## FFmpeg Utilities (`ffmpeg_utils.py`)
@@ -239,7 +259,10 @@ def call_api():
 
 Features:
 - Exponential backoff with random jitter (prevents synchronized retries)
+- A wait the server names ("Please retry in 23.3s", `rate_limiter.retry_delay_seconds`)
+  is used instead when it is longer — a guess shorter than it is a wasted attempt
 - `QuotaExhaustedError` is always re-raised immediately (never retried)
+- `is_retryable=` refines which exceptions are retried (a 400 is not)
 
 ---
 
@@ -270,7 +293,12 @@ Behaviour worth knowing:
 
 - Inline requests are gated on `INLINE_REQUEST_LIMIT_BYTES`, not a hand-picked
   megabyte figure. Larger pages go straight to the Files API.
-- `MAX_TOKENS` salvages the partial transcription and appends a truncation marker.
+- The inline attempt is made once. Any failure there, transient or not, falls
+  through to the Files API path, which is the one that retries (429/500/503 only,
+  with backoff).
+- `MAX_TOKENS` salvages the partial transcription and appends
+  `gemini_utils.TRUNCATION_MARKER` — the same marker audio and YouTube
+  transcripts carry.
 - `RECITATION` calls `PagePolicy.on_blocked` if set, otherwise skips the page.
 - Failures are recorded in `PdfResult`, never written into the output text — an
   `[ERROR: ...]` placeholder in an archival transcript would end up in Omeka.
@@ -297,9 +325,11 @@ target = PropertyTarget(
     annotation_term="iwac:summaryModel",
     annotation_value=model_value,
 )
+add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
+guard = WriteGuard.from_args(parser.parse_args())
 stats = run_text_updates(
     client, updates_from_directory(Path("Summaries_FR_TXT")), target,
-    console=console, dry_run=args.dry_run, require_confirmation=not args.yes,
+    console=console, guard=guard, backup_label="summaries",
 )
 ```
 
@@ -385,7 +415,8 @@ inline rather than guarded with an `if` around each `add_row`.
 ## Streaming Downloader (`downloader.py`)
 
 `stream_download(url, path, timeout=...)` — writes to a `.part` temp file and
-renames on success, checking `Content-Length` where the server provides it. Used
+moves it into place on success (`Path.replace`, so a stale copy is overwritten on
+Windows too), checking `Content-Length` where the server provides it. Used
 by `pdf_downloader.py` and `AI_audio_summary/01`. The temp file is the point:
 these pipelines re-run against the same output directory, and a transfer
 interrupted halfway must not be mistaken for a finished file next time.
@@ -402,11 +433,16 @@ so existing imports remain compatible.
 
 The `LLMConfig` class allows individual scripts to customize AI behavior without modifying the shared provider code. You can now configure:
 
-- **OpenAI**: `reasoning_effort` and `text_verbosity`
+- **OpenAI**: `reasoning_effort`, `text_verbosity` and `service_tier`
 - **Gemini / Gemma**: `thinking_level` ("minimal", "low", "medium", or "high"),
   clamped per model to the rungs that model actually has
-- **Mistral**: no per-script parameters
-- **OpenRouter**: `reasoning_effort` on the models that accept one
+- **Mistral**: `reasoning_effort` on Mistral Small 4 only (`none`/`high`)
+- **OpenRouter / self-hosted**: `reasoning_effort` on the models that accept one
+
+Every client also takes `request_timeout_seconds` (default 300 s) and
+`sdk_max_retries`. Which effort a model actually receives is decided once, by
+`llm_registry.resolve_reasoning_effort()`, for the clients and for the run
+record alike.
 
 `temperature` is deliberately absent from that list. See
 [Temperature](#temperature-dont-set-it) below.
@@ -418,10 +454,11 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | Key | Provider | Model ID | Label | Description |
 |-----|----------|----------|-------|-------------|
 | `gpt-6-luna` | OpenAI | `gpt-6-luna` | ChatGPT (GPT-6 Luna) | Cost-optimized tier, $0.10/$0.01/$0.50 per 1M |
+| `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Kept for the sentiment panel and historical provenance; no alias resolves to it |
 | `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2/$0.20/$12 per 1M |
 | `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Flagship tier, $5/$0.50/$30 per 1M |
 | `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | **The Flash every tier offers**; version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only |
-| `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Rolling alias, currently 3.7; in no tier — use the pinned key unless the run stamps nothing |
+| `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Rolling alias that moves with each Flash release; in no tier — use a pinned key unless the run stamps nothing |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality; rolling, so absent from the OCR document tier |
 | `gemini-3.6-flash` | Gemini | `gemini-3.6-flash` | Gemini 3.6 Flash | Version-pinned; superseded by 3.7, kept for the backlog it already annotated |
@@ -501,7 +538,7 @@ response = llm_client.generate(
 
 ## Structured Outputs
 
-The provider supports **native structured outputs** for OpenAI, Gemini, and Mistral APIs. This guarantees valid JSON responses matching your schema - no manual JSON parsing needed!
+`generate_structured()` returns an instance of a Pydantic model, using each provider's native structured output (and, on the open-model routes, a recovery path for JSON that arrives wrapped). Pipelines use it wherever they read fields back — NER, reference enrichment, citations, sentiment, the magazine index — and `generate()` for free text such as summaries and OCR correction.
 
 ### Using Structured Outputs
 
@@ -533,14 +570,6 @@ print(result.persons)       # ['Emmanuel Macron']
 print(result.locations)     # ['Paris', 'France']
 ```
 
-### Benefits of Structured Outputs
-
-1. **Guaranteed valid JSON**: The API enforces your schema at generation time
-2. **No parsing errors**: Eliminates regex extraction and `json.loads()` failures
-3. **Type safety**: Pydantic validates and types your data automatically
-4. **Better prompts**: Schema descriptions guide the model's output
-5. **Cleaner code**: Remove boilerplate JSON extraction and error handling
-
 ### Never hand-build the JSON schema
 
 Each provider gets the Pydantic class itself, not `model_json_schema()`:
@@ -549,8 +578,13 @@ Each provider gets the Pydantic class itself, not `model_json_schema()`:
 |---|---|
 | OpenAI | `responses.parse(text_format=Model)` |
 | Gemini | `GenerateContentConfig(response_schema=Model)` |
-| Mistral | `chat.parse(response_format=Model)` |
+| Mistral | `chat.parse(response_format=Model)`; with reasoning on, `chat.complete(response_format=response_format_from_pydantic_model(Model))` |
 | OpenRouter / Self-hosted | `chat.completions.create(response_format=type_to_response_format_param(Model))` |
+
+For Gemini, google-genai also accepts `response_json_schema` (full JSON Schema,
+where `response_schema` is converted to Google's OpenAPI subset). The adapters
+still send the class to `response_schema`, which every schema here fits; moving
+means re-checking Gemma 4 on the Gemini route, which nobody has done yet.
 
 This matters for OpenAI in particular. Its `strict` mode requires
 `additionalProperties: false` on every object and *every* property listed in
@@ -570,17 +604,6 @@ could catch. Reintroducing `parse()` on these two clients silently removes the
 recovery below; `test_structured_output_never_delegates_parsing_to_the_sdk`
 guards against it.
 
-### When to Use Structured vs. Text Output
-
-| Use Case | Method | Why |
-|----------|--------|-----|
-| NER extraction | `generate_structured()` | Need consistent JSON structure |
-| Data extraction | `generate_structured()` | Parsing specific fields |
-| Classification | `generate_structured()` | Enum values, confidence scores |
-| Summaries | `generate()` | Free-form text output |
-| Translation | `generate()` | Just need the translated text |
-| Creative writing | `generate()` | Open-ended generation |
-
 ## Configuration Parameters
 
 ### Usage totals
@@ -599,7 +622,10 @@ summary, which NER, summarization and reference enrichment print.
 | `text_verbosity` | `"low"`, `"medium"`, `"high"` | `"low"` | Controls response length and detail |
 | `store` | `True`, `False` | `False` | Whether OpenAI retains the request/response server-side. Off by default: these pipelines send full archival documents |
 
-**Note**: OpenAI's Responses API ignores `temperature` - use `reasoning_effort` and `text_verbosity` instead.
+The Responses client never sends `temperature`: the GPT-5.6 and GPT-6 reasoning
+models do not take one. Use `reasoning_effort` and `text_verbosity`. `service_tier`
+is sent only when set — `"flex"` runs at roughly batch price with slower,
+occasionally refused completions (`AI_summary/02 --service-tier flex`).
 
 ### Temperature: don't set it
 
@@ -613,8 +639,10 @@ value differs sharply between them:
 | Gemini 3.x, Gemma 4 | *nothing at all* | Google: "we strongly recommend keeping the temperature parameter at its default value of `1.0`"; below 1.0 "may lead to unexpected behavior, such as looping or degraded performance" |
 | DeepSeek V4 family | `1.0` | DeepSeek's 0731 card recommends `temperature = 1.0`, with `top_p = 1.0` outside agentic scenarios |
 | Qwen3.5 | `0.7` | Qwen's published non-thinking recipe; Qwen warns near-greedy decoding causes "performance degradation and endless repetitions" |
+| Qwen3.8 | `1.0` | The thinking-mode recipe shipped in its `generation_config.json`; these models always run thinking-on |
 | Mistral Large 3, Ministral 3 | `0.2` | The one vendor here recommending a low value — 0.05-0.20 for non-creative instruct work |
-| GPT-5.6 (all tiers) | n/a | The Responses API ignores it |
+| Mistral Small 4 | `0.3` | Mistral's value for its hybrid reasoning model |
+| GPT-5.6, GPT-6 | *never sent* | The reasoning models do not take one |
 
 Looping is the failure that motivates this. In these pipelines it shows up as a
 transcript repeating a paragraph for the rest of a 90-minute interview, or OCR
@@ -627,8 +655,10 @@ advice to remove them too. When output needs to be constrained, do it with
 explicit rules in the system prompt or with a structured-output schema — not with
 sampling parameters.
 
-`LLMConfig(temperature=...)` still works and still overrides the default. It is
-an escape hatch for a one-off experiment, not something to leave in a script.
+`LLMConfig(temperature=...)` still overrides the default on every route except
+OpenAI. It is an escape hatch for a one-off experiment, not something to leave in
+a script; `build_llm_client()` and `gemini_utils.build_generation_config()` no
+longer accept a bare `temperature=` at all.
 
 ### Gemini Parameters
 
@@ -660,17 +690,22 @@ adding a model: nothing in a model's name predicts which rungs it kept.
 
 ### Mistral Parameters
 
-Mistral takes no per-script parameters; each model's `temperature` comes from
-`MODEL_REGISTRY` (`0.2` for Large 3 and Ministral, `0.3` for Small 4).
+Only Mistral Small 4 takes a per-script parameter: `reasoning_effort`, of which
+it accepts exactly `none` and `high` (`low` and `medium` are 400s). A request for
+`medium` or above is sent as `high` and anything lower as `none`, and the run
+record says so. Large 3 and Ministral 3 are sent no effort at all. Each model's
+`temperature` comes from `MODEL_REGISTRY`.
 
 **Available Mistral Models**:
 - **`mistral-large`**: Mistral Large 3 — flagship 41B active params MoE model
 - **`ministral-14b`**: Ministral 3 14B — fast, cost-effective ($0.2/M tokens)
 - **`mistral-small`**: Mistral Small 4 — hybrid reasoning; accepts `reasoning_effort` `none` or `high`
 
-**Note**: Structured output uses `client.chat.parse()`; when a reasoning effort is
-requested on Small 4 the adapter calls `chat.complete()` and parses the JSON
-itself, because `parse()` does not document how it interacts with thinking chunks.
+**Note**: Structured output uses `client.chat.parse()`. With reasoning on, the
+reply arrives as a list of thinking and text chunks that `parse()` cannot read
+(`TypeError: Unexpected type for message.content`), so the adapter calls
+`chat.complete()` with the same schema — `mistralai.extra.response_format_from_pydantic_model`,
+as `parse()` uses — and validates the text chunk itself.
 
 ### OpenRouter Parameters
 
@@ -770,183 +805,44 @@ the model does not declare degrades to its default rather than being forwarded.
 Setting one up, and the reasoning-depth probe that should precede trusting one,
 are documented in [`serving/README.md`](../serving/README.md).
 
-## Recommended Configurations by Use Case
+## What the pipelines send
 
-### Named Entity Recognition (NER)
-Complex analysis requiring careful reasoning and detailed output.
+These are the configurations in the code, not suggestions. A pipeline picks a
+tier, so each one states every provider's knob and lets the clamps map it.
 
-```python
-config = LLMConfig(
-    reasoning_effort="high",      # OpenAI: careful analysis
-    text_verbosity="medium",       # OpenAI: detailed explanations
-    thinking_level="high",         # Gemini: deep reasoning
-)
-```
+| Pipeline | `reasoning_effort` | `text_verbosity` | `thinking_level` | Other |
+|---|---|---|---|---|
+| `AI_summary/02` | `low` | `low` | `minimal` | `service_tier` from `--service-tier` |
+| `AI_NER/01` | `medium` | `medium` | `minimal` | |
+| `AI_reference_indexing/02` | `medium` | default | `minimal` | |
+| `AI_ocr_correction/02` (text and ALTO) | default | default | `minimal` | |
+| `AI_publication_extraction/04` | `low` | default | `minimal` | `request_timeout_seconds=180` |
+| `AI_summary_issue` consolidation (`magazine_extraction.py`) | `low` | `low` | `minimal` | |
+| `AI_sentiment_analysis/01` | per panel member (`panel_reasoning()`) | | | `sdk_max_retries=0`; the pipeline owns retries |
 
-### OCR Extraction/Correction
-Fast processing with minimal reasoning needed.
-
-```python
-config = LLMConfig(
-    reasoning_effort="low",        # OpenAI: quick processing
-    text_verbosity="low",          # OpenAI: concise output
-    thinking_level="low",          # Gemini: minimal reasoning
-)
-```
-
-### Document Summarization
-Comprehensive analysis with moderate creativity.
-
-```python
-config = LLMConfig(
-    reasoning_effort="medium",     # OpenAI: balanced reasoning
-    text_verbosity="medium",       # OpenAI: detailed summaries
-    thinking_level="medium",       # Gemini: balanced thinking
-)
-```
-
-### Text Classification
-Simple categorization. Constrain the output with a structured-output schema or an
-explicit instruction, not with `temperature=0.0` — near-greedy decoding is what
-Google and Alibaba both warn causes looping.
-
-```python
-config = LLMConfig(
-    reasoning_effort="low",        # OpenAI: quick classification
-    text_verbosity="low",          # OpenAI: just the category
-    thinking_level="minimal",      # Gemini: least reasoning the model offers
-)
-```
-
-`"minimal"` is safe to write even for models that dropped that rung — the clamp
-turns it into their shallowest (`"low"` on Gemini 3.7 Flash and every Pro).
-
-### Translation
-Moderate reasoning with low creativity.
-
-```python
-config = LLMConfig(
-    reasoning_effort="medium",     # OpenAI: consider context
-    text_verbosity="low",          # OpenAI: just the translation
-)
-```
-
-## Per-Request Configuration Override
-
-You can override the client's default config for specific requests:
-
-```python
-# Client with default low settings
-default_config = LLMConfig(reasoning_effort="low", text_verbosity="low")
-llm_client = build_llm_client(model_option, config=default_config)
-
-# Most requests use default
-response = llm_client.generate(system_prompt, "Simple question")
-
-# Override for complex requests
-complex_config = LLMConfig(reasoning_effort="high", text_verbosity="high")
-response = llm_client.generate(
-    system_prompt, 
-    "Complex analysis needed",
-    config=complex_config  # Override just for this request
-)
-```
-
-## Backward Compatibility
-
-Old scripts passing `temperature` still work, but both forms override the model's
-vendor-recommended default, which is rarely what you want — see
-[Temperature](#temperature-dont-set-it):
-
-```python
-# Old way (still supported)
-llm_client = build_llm_client(model_option, temperature=0.5)
-
-# Equivalent
-config = LLMConfig(temperature=0.5)
-llm_client = build_llm_client(model_option, config=config)
-
-# What pipelines should do: say nothing, and inherit the vendor's value
-llm_client = build_llm_client(model_option)
-```
-
-## Implementation Example
-
-Here's a complete example for an NER pipeline:
-
-```python
-import argparse
-from common.llm_provider import (
-    build_llm_client,
-    get_model_option,
-    LLMConfig,
-    summary_from_option,
-)
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", help="Model key (e.g., openai, gemini-3.7-flash)")
-    args = parser.parse_args()
-    
-    # Get model selection
-    model_option = get_model_option(args.model)
-    print(f"Using {summary_from_option(model_option)}")
-    
-    # Configure for NER use case
-    config = LLMConfig(
-        reasoning_effort="high",
-        text_verbosity="medium",
-        thinking_level="high",
-    )
-    
-    # Build client
-    llm_client = build_llm_client(model_option, config=config)
-    
-    # Load prompts
-    with open("ner_system_prompt.md") as f:
-        system_prompt = f.read()
-    
-    # Process items
-    for item in items:
-        if not item.text.strip():
-            continue
-            
-        response = llm_client.generate(
-            system_prompt=system_prompt,
-            user_prompt=f"Extract entities from: {item.text}"
-        )
-        
-        # Process response...
-
-if __name__ == "__main__":
-    main()
-```
-
-## Best Practices
-
-1. **Choose the right effort level**: Don't use `"high"` reasoning for simple tasks — it's slower and more expensive
-2. **Match thinking to model**:
-   - Gemini Flash: `"minimal"` for fast tasks (clamped to `"low"` on 3.7), `"low"`/`"medium"` for balanced work, `"high"` for complex analysis
-   - Gemini Pro: `"low"` for fast tasks, `"high"` for complex analysis
-3. **Don't set temperature**: it belongs to the vendor, and lowering it is a
-   documented cause of looping on Gemini 3 and Qwen — see
-   [Temperature](#temperature-dont-set-it)
-4. **Get consistency from the prompt and the schema**, not from sampling: explicit
-   rules in the system instruction, plus `generate_structured()`
-5. **Log your config**: Always log the configuration used for reproducibility
-6. **Use structured outputs**: For NER, classification, and data extraction, prefer `generate_structured()` over parsing JSON manually
+`"minimal"` is safe to write for models that dropped that rung: the clamp turns it
+into their shallowest (`"low"` on Gemini 3.7 Flash and every Pro). A request can
+also be overridden for one call — `client.generate(system, user, config=LLMConfig(...))`
+merges field by field over the client's own configuration.
 
 ## Adding New Models
 
 To add a new model to the registry:
 
-1. Update `MODEL_REGISTRY` in `llm_registry.py`
-2. Set appropriate defaults (e.g., `default_thinking_level` for Gemini 3 models).
-   Look up the vendor's own sampling recommendation and record it as
-   `default_temperature`, with a comment citing it — leave it unset to send no
-   temperature at all. Don't copy a neighbouring entry's value.
-3. Add aliases if needed in `MODEL_ALIASES`
-4. Update this README with model-specific guidance
+1. Add a `ModelOption` to `MODEL_REGISTRY` in `llm_registry.py`, under a pinned
+   model id where the provider offers one.
+2. Probe the live API for the levels it accepts and record them —
+   `supported_thinking_levels` for Google models, `supported_reasoning_efforts`
+   for everyone else — with a `default_*` inside that set. Nothing in a model's
+   name predicts which rungs it kept; `serving/probe_reasoning.py` does this for
+   OpenAI-compatible routes.
+3. Record the vendor's own sampling recommendation as `default_temperature`, with
+   a comment citing it, or leave it unset to send none. Don't copy a neighbouring
+   entry's value.
+4. Add aliases in `MODEL_ALIASES`, and the key to a tier if pipelines should offer it.
+5. If a write step will stamp it into an `iwac:*Model` annotation, create its
+   Omeka authority item first and add it to `AI_MODEL_ITEMS` in `iwac_config.py`.
+6. Update the tables in this README.
 
 ## Troubleshooting
 
@@ -954,21 +850,21 @@ To add a new model to the registry:
 A: Gemini 3 models use `thinking_level` (e.g., `"low"`, `"high"`), not the older `thinking_budget` parameter. The provider handles this automatically.
 
 **Q: Can I disable thinking for Gemini?**
-A: No. Gemini 3 models always reason to some degree. Use `thinking_level="minimal"` (Flash) or `"low"` (Pro) for the fastest responses.
+A: No. Gemini 3 models always reason to some degree. Ask for `thinking_level="minimal"`; the clamp maps it to the shallowest rung the model has.
 
 **Q: Why isn't OpenAI using my `temperature` setting?**  
-A: OpenAI's Responses API uses fixed configuration. Use `reasoning_effort` and `text_verbosity` instead.
+A: The Responses client never sends one — the GPT-5.6 and GPT-6 reasoning models do not take it. Use `reasoning_effort` and `text_verbosity` instead.
 
 **Q: How do I know which settings were actually used?**  
-A: Enable debug logging: `logging.basicConfig(level=logging.DEBUG)` to see the actual parameters sent to each provider.
+A: The checkpoint or `.artifact.json` beside the output records them, after clamping (`run_context.model_context`). For a live view, `logging.basicConfig(level=logging.DEBUG)` logs each request's parameters and every substitution a clamp makes.
 
 **Q: What model keys can I use with `--model`?**  
 A: Use registry keys like `gpt-6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-3.7-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
 
 **Q: How do I restrict which models a pipeline can use?**  
-A: Use `allowed_keys` in `get_model_option()`:
+A: Pass a tier as `allowed_keys`, so retiring a model stays a one-line change in `llm_registry`:
 ```python
-model_option = get_model_option(args.model, allowed_keys=["gemini-3.7-flash", "gemini-pro"])
+model_option = get_model_option(args.model, allowed_keys=TEXT_ECONOMY_MODELS)
 ```
 
 ## Publication workflow
