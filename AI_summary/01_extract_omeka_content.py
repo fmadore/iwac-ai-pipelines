@@ -32,7 +32,6 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 
@@ -64,6 +63,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Shared Omeka client
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
+from common.console_utils import standard_progress
 from common.log_redaction import install_credential_redaction
 
 # Credentials ride in Omeka query strings and provider headers; keep them
@@ -125,14 +125,16 @@ def process_items(items, output_dir):
     """
     success_count = 0
     skipped_count = 0
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor, standard_progress() as progress:
+        task = progress.add_task("[cyan]Processing items", total=len(items))
         future_to_item = {executor.submit(extract_and_save_content, item, output_dir): item for item in items}
-        for future in tqdm(as_completed(future_to_item), total=len(items), desc="Processing items"):
+        for future in as_completed(future_to_item):
             item_id, success, skipped = future.result()
             if success:
                 success_count += 1
             elif skipped:
                 skipped_count += 1
+            progress.advance(task)
     return success_count, skipped_count
 
 

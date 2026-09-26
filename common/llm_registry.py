@@ -453,6 +453,55 @@ GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.7-flash", "gemini-3.1-pro", "gemm
 LEGACY_CLI_MODEL_KEYS: List[str] = ["gpt-5-mini", "gpt-5.1", "gpt-5", "gpt-5-nano"]
 
 
+def model_defaults(option: ModelOption) -> LLMConfig:
+    """The generation controls a model runs with when a pipeline states none.
+
+    One definition for the clients, which layer the transport deadline on top,
+    and for :func:`common.run_context.model_context`, which records the
+    configuration in a checkpoint. Two copies would let the record drift from
+    what is sent.
+    """
+    return LLMConfig(
+        temperature=option.default_temperature,
+        reasoning_effort=option.default_reasoning_effort,
+        text_verbosity=option.default_text_verbosity,
+        store=option.default_store,
+        thinking_level=option.default_thinking_level,
+    )
+
+
+def resolve_reasoning_effort(option: ModelOption, requested: Optional[str]) -> Optional[str]:
+    """The reasoning effort a request for ``requested`` actually sends, or None.
+
+    ``LLMConfig`` is shared across providers, so a pipeline tuned for one
+    vendor's ladder reaches every other. What happens to an effort the model
+    does not declare depends on the route:
+
+    * **Mistral** accepts only the declared set — ``none``/``high`` on Small 4,
+      where ``low`` and ``medium`` are hard 400s (verified 2026-07-29). A
+      mid-or-higher request rounds up to ``high`` so the model still reasons;
+      anything lower becomes ``none``. A model declaring no ladder is sent none.
+    * **OpenRouter and self-hosted** endpoints fall back to the model's own
+      default: with ``require_parameters`` on, forwarding an undeclared effort
+      can leave the request with no eligible backend.
+    * **OpenAI and Gemini** are returned unchanged. OpenAI takes the effort as
+      asked; Gemini never receives one (its depth is ``thinking_level``).
+    """
+    supported = option.supported_reasoning_efforts
+    if option.provider == PROVIDER_MISTRAL:
+        if not requested or not supported:
+            return None
+        if requested in supported:
+            return requested
+        substitute = "high" if requested in ("medium", "xhigh", "max") else "none"
+        return substitute if substitute in supported else None
+    if option.provider in (PROVIDER_OPENROUTER, PROVIDER_SELFHOSTED):
+        if requested and requested in supported:
+            return requested
+        return option.default_reasoning_effort
+    return requested
+
+
 def supported_thinking_levels_for_model(model_id: str) -> tuple:
     """Levels ``model_id`` accepts, or ``()`` when unconstrained/unknown.
 

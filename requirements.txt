@@ -10,7 +10,7 @@
 
 # --- AI provider APIs --------------------------------------------------------
 google-genai>=2.20,<3       # Google Gemini API. 2.20 floor: 02c needs the Interactions transcription mode types, absent in 2.16
-openai>=1.60,<4             # OpenAI GPT API (Responses API)
+openai>=1.60,<4             # OpenAI Responses API, and the OpenAI-compatible OpenRouter / self-hosted routes
 mistralai>=2.5,<3           # Mistral AI API (Large 3, OCR 4). 2.x layout: import from mistralai.client and mistralai.client.errors
 pydantic>=2.5,<3            # Data validation and structured outputs
 
@@ -22,7 +22,6 @@ requests>=2.31,<3           # HTTP requests for Omeka API
 
 # --- Utilities ---------------------------------------------------------------
 python-dotenv>=1.0,<2       # Environment variable management
-tqdm>=4.66,<5               # Progress bars
 rich>=13,<16                # Console output with colors and formatting
 pydub>=0.25,<1              # Audio processing
 audioop-lts; python_version >= '3.13'   # pydub dependency removed from stdlib in 3.13

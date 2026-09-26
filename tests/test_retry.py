@@ -76,3 +76,34 @@ def test_only_listed_exceptions_are_retried(monkeypatch):
     with pytest.raises(TypeError):
         type_error()
     assert calls["n"] == 1
+
+
+def test_a_stated_wait_outranks_a_shorter_backoff(monkeypatch):
+    """Gemini names the wait a throttle needs; a guess shorter than it is a
+    wasted attempt."""
+    slept = []
+    monkeypatch.setattr("time.sleep", slept.append)
+    calls = {"n": 0}
+
+    @retry_with_backoff(max_retries=2, base_delay=0.01)
+    def throttled():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("429 RESOURCE_EXHAUSTED. Please retry in 23.3s.")
+        return "ok"
+
+    assert throttled() == "ok"
+    assert len(slept) == 1 and 23.3 <= slept[0] <= 25.3
+
+
+def test_an_unstated_wait_keeps_the_backoff(monkeypatch):
+    slept = []
+    monkeypatch.setattr("time.sleep", slept.append)
+
+    @retry_with_backoff(max_retries=2, base_delay=0.01)
+    def flaky():
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError):
+        flaky()
+    assert len(slept) == 1 and slept[0] < 1

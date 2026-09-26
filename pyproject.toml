@@ -35,9 +35,9 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 
-# Last verified green on 2026-08-27 against: google-genai 2.20.0, openai 2.52.0,
-# mistralai 2.8.0, pydantic 2.13.4, pypdf 6.14.2, requests 2.34.2,
-# python-dotenv 1.2.2, tqdm 4.70.0, rich 15.0.0, pytest 9.1.1, ruff 0.16.1.
+# Last verified green on 2026-09-26 against: google-genai 2.25.0, openai 3.19.2,
+# mistralai 2.10.1, pydantic 2.13.5, pypdf 6.19.0, requests 2.34.2,
+# python-dotenv 1.2.3, rich 15.0.0, pytest 9.1.1, ruff 0.16.9.
 # Upgrade with `pip install --upgrade <names>`, not `--upgrade-strategy eager`:
 # eager drags in a cryptography build that has no wheel on Windows ARM64.
 dependencies = [
@@ -57,7 +57,6 @@ dependencies = [
     "requests>=2.31,<3",
     # Utilities
     "python-dotenv>=1.0,<2",
-    "tqdm>=4.66,<5",
     "rich>=13,<16",
     "pydub>=0.25,<1",
     "audioop-lts; python_version >= '3.13'", # pydub dependency removed from stdlib in 3.13

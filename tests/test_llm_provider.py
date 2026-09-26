@@ -850,3 +850,64 @@ def test_mistral_without_reasoning_support_sends_nothing():
     client = MistralClient.__new__(MistralClient)
     client.option = MODEL_REGISTRY["ministral-14b"]
     assert client._resolve_reasoning_effort(LLMConfig(reasoning_effort="medium")) is None
+
+
+def test_mistral_reasoning_path_sends_the_strict_schema():
+    """With reasoning on, ``chat.parse()`` cannot read the reply, so the request
+    goes through ``chat.complete()`` — but with the schema ``parse()`` sends,
+    not a bare ``model_json_schema()`` that omits ``additionalProperties``."""
+    from common.llm_provider import MistralClient
+
+    client = MistralClient.__new__(MistralClient)
+    client.option = MODEL_REGISTRY["mistral-small"]
+    client.config = LLMConfig(reasoning_effort="high")
+    client.usage = MagicMock()
+    stub = MagicMock()
+    stub.chat.complete.return_value.choices = [
+        MagicMock(message=MagicMock(content='{"required_field": "ok", "optional_field": 1}'))
+    ]
+    client._client = stub
+
+    result = client.generate_structured("system", "user", _Sample)
+
+    assert result.required_field == "ok"
+    sent = stub.chat.complete.call_args.kwargs["response_format"]
+    assert sent["json_schema"]["strict"] is True
+    assert sent["json_schema"]["schema"]["additionalProperties"] is False
+    assert stub.chat.complete.call_args.kwargs["reasoning_effort"] == "high"
+
+
+def test_recorded_reasoning_effort_is_the_one_sent():
+    """A checkpoint must name what the provider received.
+
+    Mistral Small 4 has no ``medium``: the client rounds it up to ``high``, so
+    the run record has to say ``high`` too, not drop the field.
+    """
+    from common.run_context import model_context
+
+    option = MODEL_REGISTRY["mistral-small"]
+    recorded = model_context(option, LLMConfig(reasoning_effort="medium"))
+    assert recorded["configuration"]["reasoning_effort"] == "high"
+    recorded = model_context(option, LLMConfig(reasoning_effort="low"))
+    assert recorded["configuration"]["reasoning_effort"] == "none"
+
+
+def test_recorded_configuration_is_unchanged_where_nothing_is_snapped():
+    """Existing checkpoints must still match: only a snapped value may change."""
+    from common.run_context import model_context
+
+    luna = model_context(MODEL_REGISTRY["gpt-6-luna"], LLMConfig(reasoning_effort="medium"))
+    assert luna["configuration"]["reasoning_effort"] == "medium"
+    deepseek = model_context(MODEL_REGISTRY["deepseek-v4-flash-0731"], LLMConfig(reasoning_effort="medium"))
+    assert deepseek["configuration"]["reasoning_effort"] == "low"  # its default
+    # Mistral Large declares no ladder: the request is kept as recorded before.
+    large = model_context(MODEL_REGISTRY["mistral-large"], LLMConfig(reasoning_effort="medium"))
+    assert large["configuration"]["reasoning_effort"] == "medium"
+    assert "request_timeout_seconds" not in large["configuration"]
+
+
+def test_gemini_sends_no_thinking_level_it_was_not_given(monkeypatch):
+    """A rung is never guessed from a model's name."""
+    client = _gemini_client(monkeypatch)
+    kwargs = client._build_generation_config(LLMConfig())
+    assert "thinking_config" not in kwargs

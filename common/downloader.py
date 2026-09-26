@@ -68,7 +68,9 @@ def stream_download(
                     f"Incomplete download: got {part_path.stat().st_size} of {expected} bytes"
                 )
 
-        part_path.rename(file_path)
+        # ``replace``, not ``rename``: on Windows a rename onto an existing
+        # file raises, and a re-download over a stale copy is exactly that.
+        part_path.replace(file_path)
         return file_path
 
     except requests.Timeout:

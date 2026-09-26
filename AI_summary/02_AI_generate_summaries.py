@@ -12,11 +12,11 @@ import os
 import sys
 import logging
 import threading
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Tuple
 from pydantic import BaseModel, Field
-from tqdm import tqdm
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -43,6 +43,7 @@ from common.checkpoint import (  # noqa: E402
 from common.log_redaction import install_credential_redaction
 from common.artifacts import artifact_matches, commit_artifact, invalidate_artifact
 from common.run_context import model_context
+from common.console_utils import standard_progress
 
 # ------------------------------------------------------------------
 # Setup
@@ -184,8 +185,6 @@ def process_txt_files(
     )
 
     checkpoint_lock = threading.Lock()
-    checkpoint.entries = {key: value for key, value in checkpoint.entries.items() if key in txt_files}
-    checkpoint.save()
 
     def handle(fname: str) -> str:
         """Return 'success', 'error' or 'skipped' for one file."""
@@ -199,7 +198,7 @@ def process_txt_files(
             with checkpoint_lock:
                 checkpoint.invalidate(fname)
             invalidate_artifact(Path(french_path))
-            tqdm.write(f"  [yellow]⚠[/yellow] Skipped (empty): {fname}")
+            console.print(f"  [yellow]⚠[/yellow] Skipped (empty): {fname}")
             return "error"
 
         source_fingerprint = sha256_text(original_text)
@@ -216,7 +215,7 @@ def process_txt_files(
 
         summary = generate_summary(llm_client, original_text, system_prompt)
         if not summary:
-            tqdm.write(f"  [red]✗[/red] No summary: {fname}")
+            console.print(f"  [red]✗[/red] No summary: {fname}")
             return "error"
 
         french, english = summary
@@ -231,8 +230,6 @@ def process_txt_files(
     success_count = 0
     error_count = 0
     skipped_count = 0
-    bar = dict(desc="Generating Summaries",
-               bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
 
     def tally(fname: str, outcome: str) -> None:
         nonlocal success_count, error_count, skipped_count
@@ -243,24 +240,29 @@ def process_txt_files(
         elif outcome == "error":
             error_count += 1
 
-    if workers <= 1:
-        for fname in tqdm(txt_files, **bar):
-            try:
-                tally(fname, handle(fname))
-            except Exception as e:
-                tqdm.write(f"  [red]✗[/red] Error processing {fname}: {e}")
-                error_count += 1
-        return success_count, error_count, skipped_count
+    # A corpus pass runs for hours, so the remaining-time column earns its place.
+    with standard_progress(console, show_eta=True) as progress:
+        task = progress.add_task("[cyan]Generating summaries", total=len(txt_files))
+        if workers <= 1:
+            for fname in txt_files:
+                try:
+                    tally(fname, handle(fname))
+                except Exception as e:
+                    console.print(f"  [red]✗[/red] Error processing {fname}: {e}")
+                    error_count += 1
+                progress.advance(task)
+            return success_count, error_count, skipped_count
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(handle, f): f for f in txt_files}
-        for future in tqdm(as_completed(futures), total=len(futures), **bar):
-            fname = futures[future]
-            try:
-                tally(fname, future.result())
-            except Exception as e:
-                tqdm.write(f"  [red]✗[/red] Error processing {fname}: {e}")
-                error_count += 1
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(handle, f): f for f in txt_files}
+            for future in as_completed(futures):
+                fname = futures[future]
+                try:
+                    tally(fname, future.result())
+                except Exception as e:
+                    console.print(f"  [red]✗[/red] Error processing {fname}: {e}")
+                    error_count += 1
+                progress.advance(task)
 
     return success_count, error_count, skipped_count
 
@@ -322,6 +324,13 @@ def main():
                 f"Existing summaries have no provenance checkpoint: {french_dir}. "
                 "Use --force to replace them."
             )
+        # What shapes the output, and so what the checkpoint records. No
+        # temperature: MODEL_REGISTRY holds each vendor's recommendation.
+        generation = LLMConfig(
+            reasoning_effort="low",      # OpenAI: quick summarization
+            text_verbosity="low",        # OpenAI: concise output
+            thinking_level="minimal",    # Gemini: the shallowest level the model offers
+        )
         checkpoint = JsonCheckpoint.open(
             checkpoint_path,
             {
@@ -329,21 +338,19 @@ def main():
                 # not resume a bilingual run, or every item it covers would keep
                 # its French file and never get an English one.
                 "pipeline": "bilingual-summary-v4",
-                **model_context(model_option, LLMConfig(reasoning_effort="low", thinking_level="minimal", text_verbosity="low")),
+                **model_context(model_option, generation),
                 "prompt_sha256": sha256_text(system_prompt),
             },
             reset=args.force,
         )
 
-        # Configure for cost-effective summarization
-        config = LLMConfig(
-            reasoning_effort="low",      # OpenAI: quick summarization
-            text_verbosity="low",        # OpenAI: concise output
-            thinking_level="minimal",    # Gemini: the shallowest level the model offers
+        # Transport only — the same summary whichever tier serves it, so these
+        # stay out of the checkpoint and a flex run resumes a standard one.
+        config = replace(
+            generation,
             service_tier=args.service_tier,
             # Flex completions can queue for minutes; give them the room.
             request_timeout_seconds=900.0 if args.service_tier == "flex" else None,
-            # No temperature: MODEL_REGISTRY holds each vendor's recommendation.
         )
 
         # Display configuration table

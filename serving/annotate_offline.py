@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.llm_provider import LLMConfig, build_llm_client, get_model_option
 from common.checkpoint import sha256_text
 from common.instrument import record_identity
+from common.log_redaction import install_credential_redaction
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "AI_sentiment_analysis"))
 from sentiment_core import (  # noqa: E402
@@ -90,6 +91,9 @@ def configure_logging() -> logging.Logger:
         datefmt="%H:%M:%S",
         stream=sys.stdout,
     )
+    # The endpoint key rides in a Bearer header, and a Slurm log is a file
+    # other people read.
+    install_credential_redaction()
     return logging.getLogger("annotate")
 
 

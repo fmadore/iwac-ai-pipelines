@@ -64,9 +64,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.checkpoint import CheckpointMismatch, JsonCheckpoint, sha256_text
 from common.console_utils import count_table, key_value_table, standard_progress
 from common.gemini_utils import (
+    TRUNCATION_MARKER,
     build_gemini_client,
     build_generation_config,
     extract_text_from_response,
+    finish_reason_name,
 )
 from common.log_redaction import install_credential_redaction
 from common.prompt_loader import discover_prompts, load_prompt_md
@@ -171,17 +173,6 @@ class VideoUnavailable(Exception):
     problem: it means this item needs the downloaded-media path instead, which is
     the one case this pipeline cannot serve.
     """
-
-
-def finish_reason_code(finish_reason: Any) -> str:
-    """Return the bare finish-reason name (e.g. ``MAX_TOKENS``)."""
-    if finish_reason is None:
-        return "UNKNOWN"
-    name = getattr(finish_reason, "name", None)
-    if name:
-        return name
-    text = str(finish_reason)
-    return text.rsplit(".", 1)[-1] if "." in text else text
 
 
 @dataclass
@@ -304,7 +295,7 @@ class YouTubeTranscriber:
         response = self._generate(contents, response_schema=LANGUAGE_SCHEMA, max_output_tokens=2048)
         raw = extract_text_from_response(response)
         if not raw:
-            raise RetryableResponse(finish_reason_code(
+            raise RetryableResponse(finish_reason_name(
                 response.candidates[0].finish_reason if response.candidates else None
             ))
         try:
@@ -415,11 +406,11 @@ class YouTubeTranscriber:
         feedback = getattr(response, "prompt_feedback", None)
         block_reason = getattr(feedback, "block_reason", None) if feedback else None
         if block_reason:
-            raise RetryableResponse(f"prompt-blocked-{finish_reason_code(block_reason)}")
+            raise RetryableResponse(f"prompt-blocked-{finish_reason_name(block_reason)}")
         if not response.candidates:
             raise RetryableResponse("no-candidates")
 
-        code = finish_reason_code(response.candidates[0].finish_reason)
+        code = finish_reason_name(response.candidates[0].finish_reason)
         text = extract_text_from_response(response)
 
         # Checked before MAX_TOKENS, because a looping run is *why* the output was
@@ -437,7 +428,7 @@ class YouTubeTranscriber:
         if code == "MAX_TOKENS":
             if text:
                 console.print("  [yellow]⚠[/] Output truncated (MAX_TOKENS) — partial text kept")
-                return text + "\n\n[... TRANSCRIPTION TRUNCATED — OUTPUT EXCEEDED MAX TOKENS ...]"
+                return text + TRUNCATION_MARKER
             raise RetryableResponse("MAX_TOKENS")
         if text:
             return text

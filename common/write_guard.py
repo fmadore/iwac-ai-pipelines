@@ -37,6 +37,8 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from rich.console import Console
 from rich.panel import Panel
 
+from common.checkpoint import atomic_write_text
+
 
 BACKUP_FILENAME_TIME_FORMAT = "%Y%m%dT%H%M%SZ"
 
@@ -169,8 +171,7 @@ class WriteGuard:
         stamp = (now or datetime.now(timezone.utc)).strftime(BACKUP_FILENAME_TIME_FORMAT)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         path = self.backup_dir / f"_pre_write_{label}_{stamp}.json"
-        path.write_text(
-            json.dumps(captured, indent=1, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        # Atomic: a backup cut short by a full disk or a kill would otherwise
+        # look like a complete record of what the writes replaced.
+        atomic_write_text(path, json.dumps(captured, indent=1, ensure_ascii=False))
         return path

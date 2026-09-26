@@ -352,14 +352,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         console.print(f"[red]✗[/] No items_*.csv found in {OUTPUT_DIR}. Run 01_fetch_references.py first.")
         return 1
 
+    # "minimal" is a request for the shallowest level the model offers; the
+    # adapter snaps it to what the model accepts. No temperature: that is the
+    # vendor's, and lives in MODEL_REGISTRY. One object for the client and the
+    # checkpoint, so the record cannot drift from the request.
+    config = LLMConfig(reasoning_effort="medium", thinking_level="minimal")
     try:
         model_option = get_model_option(args.model, allowed_keys=ALLOWED_MODEL_KEYS)
-        # "minimal" is a request for the shallowest level the model offers; the
-        # adapter snaps it to what the model accepts. No temperature: that is
-        # the vendor's, and lives in MODEL_REGISTRY.
-        llm_client = build_llm_client(
-            model_option, config=LLMConfig(reasoning_effort="medium", thinking_level="minimal")
-        )
+        llm_client = build_llm_client(model_option, config=config)
         rows = read_items(input_path)
     except ValueError as exc:
         console.print(f"[red]✗[/] {exc}")
@@ -376,7 +376,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from common.run_context import model_context
     context = {
         "pipeline": "reference-enrichment-v1",
-        **model_context(model_option, LLMConfig(reasoning_effort="medium", thinking_level="minimal")),
+        **model_context(model_option, config),
         "prompt_sha256": sha256_text(system_prompt),
         "input": input_path.name,
         "reindex": args.reindex,

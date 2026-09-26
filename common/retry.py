@@ -15,7 +15,11 @@ import random
 import time
 from typing import Callable, Optional, TypeVar
 
-from common.rate_limiter import QuotaExhaustedError
+from common.rate_limiter import (
+    TRANSIENT_RETRY_DELAY_CEILING_SECONDS,
+    QuotaExhaustedError,
+    retry_delay_seconds,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +44,9 @@ def retry_with_backoff(
             (e.g. a 400 among retryable API errors).
 
     ``QuotaExhaustedError`` is never retried, regardless of the arguments.
+    When the error states how long to wait ("Please retry in 23.3s", as Gemini
+    throttles do), that wait is used if it is longer than the backoff: guessing
+    short turns one throttle into three.
     """
     if max_retries < 1:
         raise ValueError("max_retries must be at least 1")
@@ -60,6 +67,12 @@ def retry_with_backoff(
                     last_exc = exc
                     if attempt < max_retries:
                         jittered_delay = delay + random.uniform(0, delay * 0.25)
+                        stated = retry_delay_seconds(exc)
+                        if stated is not None:
+                            jittered_delay = max(
+                                jittered_delay,
+                                min(stated, TRANSIENT_RETRY_DELAY_CEILING_SECONDS) + random.uniform(0, 2),
+                            )
                         LOGGER.warning(
                             "%s failed (attempt %d/%d): %s — retrying in %.1fs",
                             func.__name__,

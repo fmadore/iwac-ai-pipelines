@@ -149,7 +149,7 @@ def _entry_points():
     repo_root = Path(__file__).resolve().parent.parent
     candidates = sorted(repo_root.glob("AI_*/*.py")) + sorted(
         repo_root.glob("NotebookLM/*.py")
-    )
+    ) + sorted(repo_root.glob("serving/*.py"))
     for script in candidates:
         source = script.read_text(encoding="utf-8")
         if re.search(r'if __name__ == ["\']__main__["\']', source):

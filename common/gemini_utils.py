@@ -14,6 +14,7 @@ Usage:
         build_generation_config,
         delete_uploaded_file,
         extract_text_from_response,
+        finish_reason_name,
         get_thinking_level,
         upload_and_wait_active,
     )
@@ -37,6 +38,11 @@ LOGGER = logging.getLogger(__name__)
 # the Files API.
 INLINE_REQUEST_LIMIT_BYTES = 18 * 1024 * 1024
 DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS = 600.0
+
+#: Appended to text salvaged from a ``MAX_TOKENS`` response, so a reader can
+#: tell a cut from a silence. One string for OCR, HTR, audio and YouTube, so a
+#: search of the archive for truncated output finds all of them.
+TRUNCATION_MARKER = "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
 
 
 def build_gemini_client(
@@ -85,6 +91,10 @@ def get_thinking_level(model_name: str, override: Optional[str] = None) -> str:
     and ``gemini-flash-latest`` rolled onto it, so the old unconditional
     ``"minimal"`` became a 400 on every Flash call this module serves.
 
+    The default asks for ``minimal`` — as little as the model offers — and the
+    registry's ``supported_thinking_levels`` turns that into ``low`` on the
+    models without a MINIMAL rung. Nothing is inferred from the model's name.
+
     Args:
         model_name: The full model ID (e.g. ``gemini-pro-latest``).
         override: An explicit level to use instead of the default. Still
@@ -93,8 +103,7 @@ def get_thinking_level(model_name: str, override: Optional[str] = None) -> str:
     Returns:
         A lowercase thinking-level string accepted by *model_name*.
     """
-    requested = override or ("low" if "pro" in model_name.lower() else "minimal")
-    return clamp_thinking_level(model_name, requested)
+    return clamp_thinking_level(model_name, override or "minimal")
 
 
 def build_generation_config(
@@ -105,7 +114,6 @@ def build_generation_config(
     max_output_tokens: int = 65_535,
     response_mime_type: str = "text/plain",
     response_schema=None,
-    temperature: Optional[float] = None,
     media_resolution: Optional[str] = None,
 ) -> types.GenerateContentConfig:
     """Build a ``GenerateContentConfig`` with consistent defaults.
@@ -114,13 +122,13 @@ def build_generation_config(
     system instructions so that each pipeline does not have to repeat
     this boilerplate.
 
+    There is deliberately no ``temperature``: Google recommends sending none
+    for Gemini 3, because a value below the 1.0 default "may lead to unexpected
+    behavior, such as looping or degraded performance" — for these pipelines, a
+    transcript repeating a paragraph or OCR stalling on one line. Constrain
+    output through the system instruction instead.
+
     Args:
-        temperature: Optional sampling temperature (0.0 is honored). Leave unset:
-            Google recommends sending no temperature for Gemini 3, because a
-            value below the 1.0 default "may lead to unexpected behavior, such
-            as looping or degraded performance" — for these pipelines that means
-            a transcript repeating a paragraph or OCR stalling on one line.
-            Constrain output through the system instruction instead.
         media_resolution: Optional media resolution name, e.g. ``"HIGH"``
             for handwriting/archival scans where fine detail matters.
     """
@@ -138,8 +146,6 @@ def build_generation_config(
     if response_schema is not None:
         kwargs["response_schema"] = response_schema
         kwargs["response_mime_type"] = "application/json"
-    if temperature is not None:
-        kwargs["temperature"] = temperature
     if media_resolution is not None:
         kwargs["media_resolution"] = getattr(
             types.MediaResolution, f"MEDIA_RESOLUTION_{media_resolution.upper()}"
@@ -241,6 +247,21 @@ def delete_uploaded_file(client, uploaded_file) -> None:
         client.files.delete(name=name)
     except Exception as exc:
         LOGGER.debug("Could not delete uploaded file %s: %s", name, exc)
+
+
+def finish_reason_name(finish_reason) -> str:
+    """Return the bare finish-reason name, e.g. ``MAX_TOKENS``.
+
+    Tolerates a ``types.FinishReason`` (or ``BlockedReason``) enum, a plain
+    string such as ``"FinishReason.RECITATION"``, or ``None`` (``UNKNOWN``).
+    """
+    if finish_reason is None:
+        return "UNKNOWN"
+    name = getattr(finish_reason, "name", None)
+    if name:
+        return name
+    text = str(finish_reason)
+    return text.rsplit(".", 1)[-1] if "." in text else text
 
 
 def extract_text_from_response(response) -> str:
