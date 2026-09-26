@@ -55,6 +55,7 @@ from common.outcomes import batch_exit_code
 from common.log_redaction import install_credential_redaction
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
+from common.write_guard import WriteGuard, add_write_guard_args
 
 from youtube_source import HEADER_GENERATOR, looping_reason, read_transcript
 
@@ -164,24 +165,9 @@ def main() -> int:
         help="Also upload transcripts whose header records a failed window. "
              "A gap is invisible once the text is a single Omeka value.",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Fetch each item and report what would change, but write nothing.",
-    )
-    parser.add_argument(
-        "--yes", action="store_true",
-        help="Skip the interactive confirmation before writing.",
-    )
-    parser.add_argument(
-        "--backup-dir", type=Path, default=None,
-        help="Where each item's pre-write JSON is dumped before its PATCH "
-             "(default: <pipeline>/backups). The only route back from a bulk overwrite.",
-    )
-    parser.add_argument(
-        "--no-backup", action="store_true",
-        help="Do not dump pre-write payloads. Not recommended.",
-    )
+    add_write_guard_args(parser, default_backup_dir=SCRIPT_DIR / "backups")
     args = parser.parse_args()
+    guard = WriteGuard.from_args(args)
 
     if not args.transcriptions_dir.exists():
         console.print(
@@ -249,8 +235,6 @@ def main() -> int:
         TRANSCRIPTION_MODEL_TERM, model["display_title"], model["item_id"],
     )
 
-    backup_dir = None if args.no_backup else (args.backup_dir or SCRIPT_DIR / "backups")
-
     confirm_lines = [f"Source folder:    {args.transcriptions_dir}"]
     if held_back:
         confirm_lines.append(f"Held back:        {len(held_back)} incomplete")
@@ -258,11 +242,9 @@ def main() -> int:
     stats = run_text_updates(
         client, updates, target,
         console=console,
-        dry_run=args.dry_run,
-        require_confirmation=not args.yes,
+        guard=guard,
         extra_confirm_lines=confirm_lines,
         description="Updating transcriptions...",
-        backup_dir=backup_dir,
         backup_label="youtube_transcriptions",
     )
     if not stats:

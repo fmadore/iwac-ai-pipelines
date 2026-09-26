@@ -339,57 +339,63 @@ class GeminiTranscribeTranscriber(TranscriberBase):
         the 429 arrives with the wait Google wants. Sleeping that stated delay
         is the difference between a run that paces itself and one that burns
         its retries guessing four seconds at a time.
+
+        The file is uploaded once and reused by every attempt: a throttled
+        request leaves the upload valid, and re-sending twenty minutes of audio
+        to wait out a 23-second throttle is pure cost. It is deleted when the
+        loop ends, however it ends.
         """
         mime_type = get_mime_type(audio_path)
         last_error: Optional[Exception] = None
+        uploaded = None
 
-        for attempt in range(max_retries):
-            uploaded = None
-            try:
-                self.rate_limiter.wait()
-                uploaded = upload_and_wait_active(self.client, audio_path, mime_type=mime_type)
-                return self.client.interactions.create(
-                    model=MODEL,
-                    input=[{
-                        "type": "audio",
-                        "uri": uploaded.uri,
-                        "mime_type": uploaded.mime_type or mime_type,
-                    }],
-                    generation_config={"transcription_config": self._transcription_config()},
-                )
-            except Exception as e:
-                # A daily/billing quota is not a transient 429: retrying it burns
-                # the run instead of saving what completed.
-                if is_quota_exhausted(e):
-                    raise QuotaExhaustedError(str(e)) from e
-                last_error = e
-                if attempt < max_retries - 1:
-                    stated = retry_delay_seconds(e)
-                    if stated is not None:
-                        # Pad it: the server names when the budget *starts* to
-                        # clear, and a 30,000-token request needs more of it
-                        # back than a small one.
-                        wait_time = stated + 5 + random.uniform(0, 2)
-                        reason = f"throttled, server asked for {stated:.0f}s"
+        try:
+            for attempt in range(max_retries):
+                try:
+                    self.rate_limiter.wait()
+                    if uploaded is None:
+                        uploaded = upload_and_wait_active(self.client, audio_path, mime_type=mime_type)
+                    return self.client.interactions.create(
+                        model=MODEL,
+                        input=[{
+                            "type": "audio",
+                            "uri": uploaded.uri,
+                            "mime_type": uploaded.mime_type or mime_type,
+                        }],
+                        generation_config={"transcription_config": self._transcription_config()},
+                    )
+                except Exception as e:
+                    # A daily/billing quota is not a transient 429: retrying it burns
+                    # the run instead of saving what completed.
+                    if is_quota_exhausted(e):
+                        raise QuotaExhaustedError(str(e)) from e
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        stated = retry_delay_seconds(e)
+                        if stated is not None:
+                            # Pad it: the server names when the budget *starts* to
+                            # clear, and a 30,000-token request needs more of it
+                            # back than a small one.
+                            wait_time = stated + 5 + random.uniform(0, 2)
+                            reason = f"throttled, server asked for {stated:.0f}s"
+                        else:
+                            wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
+                            reason = "backing off"
+                        console.print(f"[red]✗[/] Error transcribing [cyan]{audio_path.name}[/]: {e}")
+                        console.print(
+                            f"[yellow]⏳[/] {reason}; retrying in {wait_time:.1f}s... "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
+                        time.sleep(wait_time)
                     else:
-                        wait_time = 2 ** (attempt + 1) + random.uniform(0, 2)
-                        reason = "backing off"
-                    console.print(f"[red]✗[/] Error transcribing [cyan]{audio_path.name}[/]: {e}")
-                    console.print(
-                        f"[yellow]⏳[/] {reason}; retrying in {wait_time:.1f}s... "
-                        f"(attempt {attempt + 1}/{max_retries})"
-                    )
-                    time.sleep(wait_time)
-                else:
-                    console.print(
-                        f"[red]✗[/] Error transcribing [cyan]{audio_path.name}[/] "
-                        f"after {max_retries} attempts: {last_error}"
-                    )
-            finally:
-                if uploaded is not None:
-                    delete_uploaded_file(self.client, uploaded)
-
-        return None
+                        console.print(
+                            f"[red]✗[/] Error transcribing [cyan]{audio_path.name}[/] "
+                            f"after {max_retries} attempts: {last_error}"
+                        )
+            return None
+        finally:
+            if uploaded is not None:
+                delete_uploaded_file(self.client, uploaded)
 
     def transcribe_audio(self, audio_path: Path) -> Optional[Tuple[str, dict]]:
         """Transcribe one file, splitting it first if it exceeds the cap.

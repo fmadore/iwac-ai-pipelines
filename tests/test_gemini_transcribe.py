@@ -407,17 +407,38 @@ def test_quota_exhaustion_stops_the_run_instead_of_retrying():
 
 
 def test_uploads_are_deleted_even_when_the_request_fails():
-    """Leaked multi-hour uploads waste Files API quota until they expire."""
+    """Leaked multi-hour uploads waste Files API quota until they expire.
+
+    One upload serves every attempt: a throttled request leaves it valid, and
+    re-sending the audio to wait out a throttle is pure cost.
+    """
     worker = build()
     worker.rate_limiter = MagicMock()
     uploaded = MagicMock()
     worker.client.interactions.create.side_effect = RuntimeError("nope")
-    with patch.object(transcribe, "upload_and_wait_active", return_value=uploaded), \
+    with patch.object(transcribe, "upload_and_wait_active", return_value=uploaded) as upload, \
             patch.object(transcribe, "is_quota_exhausted", return_value=False), \
             patch.object(transcribe, "delete_uploaded_file") as delete, \
             patch.object(transcribe.time, "sleep"):
         assert worker._create_interaction(Path("a.mp3"), max_retries=2) is None
-    assert delete.call_count == 2
+    assert worker.client.interactions.create.call_count == 2
+    assert upload.call_count == 1
+    delete.assert_called_once_with(worker.client, uploaded)
+
+
+def test_a_failed_upload_is_retried_before_anything_is_deleted():
+    worker = build()
+    worker.rate_limiter = MagicMock()
+    uploaded = MagicMock()
+    worker.client.interactions.create.return_value = "interaction"
+    with patch.object(transcribe, "upload_and_wait_active",
+                      side_effect=[RuntimeError("upload died"), uploaded]) as upload, \
+            patch.object(transcribe, "is_quota_exhausted", return_value=False), \
+            patch.object(transcribe, "delete_uploaded_file") as delete, \
+            patch.object(transcribe.time, "sleep"):
+        assert worker._create_interaction(Path("a.mp3"), max_retries=2) == "interaction"
+    assert upload.call_count == 2
+    delete.assert_called_once_with(worker.client, uploaded)
 
 
 # ---------------------------------------------------------------------------
