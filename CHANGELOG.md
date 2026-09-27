@@ -7,6 +7,36 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## 2026-09-26 — One logging setup; Gemini 3.8 Flash and GPT-6 Sol registered
+
+### Logging
+- `common.log_redaction.configure_logging()` replaces the 23 hand-written
+  `logging.basicConfig` calls, eight of them wrapped in a script's own
+  `setup_logging()` or `configure_logging()`. It always installs credential redaction and holds `httpx` at
+  WARNING below DEBUG — httpx, under the OpenAI, Mistral and Gemini SDKs, logged
+  one line per request, 12,000 of them on a summary pass.
+- Every entry point calls it in `main()`. Five scripts (HTR, Gemini OCR and
+  publication steps 01, 02 and 04) used to create `log/` and open a log file at
+  import, so a test importing them wrote into the repository.
+  Scripts that never configured logging now call it at WARNING, which keeps them
+  as quiet as before. A test forbids `logging.basicConfig` in any entry point.
+
+### Models
+- `gemini-3.8-flash`: registered with `low`/`medium`/`high` from Google's
+  documentation — not yet probed live — and offered only where no model is
+  stamped: `TEXT_FULL_MODELS` (OCR correction) and the video summary. `gemini`
+  and `flash` still mean 3.7 Flash, which has an authority item.
+- `gpt-6-sol` takes the Sol slot as GPT-6 Luna took Luna's: `sol` and the
+  retired `gpt-5` / `gpt-5.1` keys resolve to it, and it replaces GPT-5.6 Sol in
+  `TEXT_FULL_MODELS`. `gpt-5.6-sol` stays reachable by its own key and `gpt-5.6`.
+- The video summary's model menu is built from one `ALLOWED_MODELS` table.
+
+### Tracking
+- `docs/PENDING.md` lists what is unfinished and what closes each item: the live
+  probes and authority items both models need before promotion, the 2026-10-23
+  GPT-5 shutdown and the 2027-01-01 Gemini 3.8 Flash price change, and the code
+  changes from the review that need a decision.
+
 ## 2026-09-26 — Review: provenance, efficiency, shared helpers
 
 ### Provenance

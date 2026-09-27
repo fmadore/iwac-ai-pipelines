@@ -62,7 +62,7 @@ modules in depth; the rest are only described here:
 | `run_context.py` | `model_context()`: the model and configuration a run *sends*, after the same clamping the client applies — what checkpoints and sidecars record |
 | `outcomes.py` | `batch_exit_code()`: failed, missing, empty or incomplete requested items make a batch exit non-zero |
 | `instrument.py` | The model/reasoning/prompt identity that offline sentiment annotation, shard merging and cache import compare |
-| `log_redaction.py` | `install_credential_redaction()`, called by every entry point: masks Omeka and provider keys in anything urllib3 or an SDK logs, since Omeka only accepts credentials as query parameters and `requests` echoes the URL in its error messages |
+| `log_redaction.py` | `configure_logging()`, called at the top of every entry point's `main()` and never at import: root logger, `httpx` held at WARNING, and credential redaction, which masks Omeka and provider keys in anything urllib3 or an SDK logs — Omeka only accepts credentials as query parameters and `requests` echoes the URL in its error messages |
 | `console_utils.py` | `standard_progress()`, `key_value_table()`, `count_table()` — one definition of the rich furniture every pipeline prints |
 | `downloader.py` | `stream_download()` — streaming download via a `.part` temp file, used by the PDF and media downloaders |
 | `prompt_loader.py` | Discovery and interactive selection for pipelines holding several `prompts/*.md` |
@@ -249,14 +249,18 @@ progress bars and the standard tables. Beyond that, match the surrounding code.
 
 Scripts put the repo root on `sys.path` with one canonical line —
 `sys.path.insert(0, str(Path(__file__).resolve().parent.parent))`. `insert`, not
-`append`: with `append`, a same-named module earlier on the path shadows `common`.
+`append`: with `append`, a same-named module earlier on the path shadows `common`. Logging
+is set up by `configure_logging()` in `main()`, never by `logging.basicConfig`
+or at import.
 Text pipelines do not call `load_dotenv()` themselves — `llm_provider` loads it
 on import and `OmekaClient.from_env()` again; multimodal scripts that read a
 key before building any client still do. `main()` returns an exit code. A
 library module never touches `sys.stdout` on import.
 
 Incident history belongs in `CHANGELOG.md`, not beside the constant it
-explains: the code states the rule, the changelog tells the story.
+explains: the code states the rule, the changelog tells the story. Work left
+unfinished goes in `docs/PENDING.md` with what closes it; read it before adding
+or promoting a model, and remove an entry once it is done.
 
 Written output is calibrated to the task: a changelog entry, a README section or a
 docstring covers the substance and stops. No filler sections, no redundant summary

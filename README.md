@@ -130,8 +130,8 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash
 
 | Provider | Key | Notes |
 |----------|-----|-------|
-| OpenAI | `gpt-6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol` | Text pipelines only. GPT-6 Luna (cheapest), GPT-5.6 Terra (balanced), GPT-5.6 Sol (flagship). Legacy `gpt-5-mini` / `gpt-5.1` keys still resolve to Luna / Sol. |
-| Gemini | `gemini-3.7-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
+| OpenAI | `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-terra` | Text pipelines only. GPT-6 Luna (cheapest), GPT-5.6 Terra (balanced), GPT-6 Sol (large; OCR correction only until it has an authority item). `gpt-5.6-sol` and `gpt-5.6-luna` stay reachable by key. Legacy `gpt-5-mini` / `gpt-5.1` keys resolve to Luna / Sol. |
+| Gemini | `gemini-3.7-flash`, `gemini-3.8-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal. 3.8 Flash is offered only where nothing is stamped (OCR correction, video summary) until it has an authority item |
 | Gemini (speech) | `gemini-3.5-transcribe` | Dedicated speech-to-text via the Interactions API, not the model registry: word-level timestamps and speaker diarization, 82 locales including Hausa but none of Mooré, Dioula, Ewé, Kabyè or Dendi. Takes no prompt. Used by `AI_audio_summary/02c`. |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
 | Mistral | `mistral-large`, `ministral-14b`, `mistral-small` | Text pipelines (Small 4 reasons at `none` or `high` only); pinned `mistral-ocr-4-1` and `voxtral-mini-2602` for OCR and audio |
@@ -167,6 +167,7 @@ The approach assumes you have digitized materials and need to make them searchab
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [Publication Extraction](AI_publication_extraction/README.md) — Structured OCR for journal articles, chapters, books and theses: footnotes and bibliography separated from the body, oversized scans split automatically
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Public projection: full text is retained only where `OCR_is_public` permits it. The private `-full` mirror contains the complete text; these are different access scopes.
+- [Pending work](docs/PENDING.md) — what is unfinished and what closes each item: models awaiting a live probe or an authority item, dated deadlines, measurements owed
 - Individual pipeline directories contain their own documentation
 
 ## Related Resources

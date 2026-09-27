@@ -24,12 +24,13 @@ PROVIDER_OPENROUTER = "openrouter"
 #: never written down in this file. See ``serving/README.md``.
 PROVIDER_SELFHOSTED = "selfhosted"
 
-OPENAI_SOL_MODEL = "gpt-5.6-sol"
+OPENAI_SOL_MODEL = "gpt-6-sol"
 OPENAI_TERRA_MODEL = "gpt-5.6-terra"
 OPENAI_LUNA_MODEL = "gpt-6-luna"
 DEFAULT_OPENAI_MODEL = OPENAI_LUNA_MODEL
 OPENAI_FULL_MODEL = OPENAI_SOL_MODEL
 DEFAULT_GEMINI_FLASH = "gemini-flash-latest"
+DEFAULT_GEMINI_38_FLASH = "gemini-3.8-flash"
 DEFAULT_GEMINI_37_FLASH = "gemini-3.7-flash"
 DEFAULT_GEMINI_36_FLASH = "gemini-3.6-flash"
 DEFAULT_GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
@@ -167,10 +168,21 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "ChatGPT (GPT-5.6 Terra)",
         "OpenAI Responses API — balanced tier ($2/$0.20/$12 per 1M)",
     ),
+    # GPT-6 Sol takes the Sol slot as GPT-6 Luna took Luna's: the generic
+    # aliases and the full tier move to it, and the explicit 5.6 key stays.
+    # Rates from OpenAI's model page via its launch coverage (2026-09-22): input
+    # doubles and output rises 1.5x on a request above 272K input tokens. Not
+    # yet called live from this repo, and it has no Omeka authority item, so it
+    # sits only where nothing is stamped — see docs/PENDING.md.
+    "gpt-6-sol": ModelOption(
+        "gpt-6-sol", PROVIDER_OPENAI, OPENAI_SOL_MODEL,
+        "ChatGPT (GPT-6 Sol)",
+        "OpenAI Responses API — large tier ($2/$0.20/$10 per 1M; 2026-09-22 pricing)",
+    ),
     "gpt-5.6-sol": ModelOption(
-        "gpt-5.6-sol", PROVIDER_OPENAI, OPENAI_SOL_MODEL,
+        "gpt-5.6-sol", PROVIDER_OPENAI, "gpt-5.6-sol",
         "ChatGPT (GPT-5.6 Sol)",
-        "OpenAI Responses API — flagship tier ($5/$0.50/$30 per 1M)",
+        "OpenAI Responses API — previous flagship tier ($5/$0.50/$30 per 1M)",
     ),
     # Gemini 3.7 Flash dropped MINIMAL: the level its two predecessors defaulted
     # to is now a 400 on this model, and because ``gemini-flash-latest`` rolled
@@ -178,6 +190,20 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     # the floor for both. See ``supported_thinking_levels`` and
     # ``clamp_thinking_level`` — pipelines still ask for MINIMAL meaning "as
     # little as this model allows", and the clamp is what makes that true.
+    # Gemini 3.8 Flash (GA 2026-09-02). LOW/MEDIUM/HIGH, no MINIMAL, per Google's
+    # model page and the ``thinking_level`` reference — documented, but not yet
+    # probed live as ``supported_thinking_levels`` requires (docs/PENDING.md).
+    # The clamp makes a request for "minimal" safe either way. Google warns it spends
+    # more tokens by design on complex tasks, and its introductory $0.75/$3.75
+    # becomes $1.50/$7.50 per 1M on 2027-01-01. No Omeka authority item yet, so
+    # it stays out of the tiers a write step stamps from.
+    "gemini-3.8-flash": ModelOption(
+        "gemini-3.8-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_38_FLASH,
+        "Gemini 3.8 Flash",
+        "Google Gemini 3.8 Flash — version-pinned; $0.75/$3.75 per 1M until 2026-12-31",
+        default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high"),
+    ),
     "gemini-3.7-flash": ModelOption(
         "gemini-3.7-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_37_FLASH,
         "Gemini 3.7 Flash", "Google Gemini 3.7 Flash — version-pinned Flash",
@@ -186,7 +212,7 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     ),
     "gemini-flash": ModelOption(
         "gemini-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_FLASH,
-        "Gemini Flash", "Google Gemini Flash — latest stable rolling alias",
+        "Gemini Flash", "Google Gemini Flash — rolling alias for the newest Flash",
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
     ),
@@ -346,19 +372,23 @@ MODEL_ALIASES = {
     "gemini": "gemini-3.7-flash",
     "flash": "gemini-3.7-flash",
     "gemini-3.7": "gemini-3.7-flash",
+    # The bare "gemini"/"flash" stay on 3.7 until 3.8 has an authority item: a
+    # bare alias is what an operator types, and its output gets stamped.
+    "gemini-3.8": "gemini-3.8-flash",
     "flash-lite": "gemini-flash-lite",
     "gemini-flash-lite-latest": "gemini-flash-lite",
     "gemini-flash-lite-3.1": "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
     "openai": "gpt-6-luna",
     "gpt-5.6": "gpt-5.6-sol",
-    "sol": "gpt-5.6-sol",
+    "sol": "gpt-6-sol",
     "terra": "gpt-5.6-terra",
     "luna": "gpt-6-luna",
     "openai:gpt-5.6": "gpt-5.6-sol",
     "openai:gpt-5.6-sol": "gpt-5.6-sol",
     "openai:gpt-5.6-terra": "gpt-5.6-terra",
     "openai:gpt-6-luna": "gpt-6-luna",
+    "openai:gpt-6-sol": "gpt-6-sol",
     "openai:gpt-5.6-luna": "gpt-5.6-luna",
     "gpt-5-mini": "gpt-6-luna",
     "openai:gpt-5-mini": "gpt-6-luna",
@@ -366,12 +396,12 @@ MODEL_ALIASES = {
     "gpt-5-nano": "gpt-6-luna",
     "gpt-5.1-mini": "gpt-6-luna",
     "openai:gpt-5.1-mini": "gpt-6-luna",
-    "gpt-5.1": "gpt-5.6-sol",
-    "openai:gpt-5.1": "gpt-5.6-sol",
-    "gpt-5": "gpt-5.6-sol",
-    "openai:gpt-5": "gpt-5.6-sol",
-    "openai-5": "gpt-5.6-sol",
-    "openai-5.1": "gpt-5.6-sol",
+    "gpt-5.1": "gpt-6-sol",
+    "openai:gpt-5.1": "gpt-6-sol",
+    "gpt-5": "gpt-6-sol",
+    "openai:gpt-5": "gpt-6-sol",
+    "openai-5": "gpt-6-sol",
+    "openai-5.1": "gpt-6-sol",
     "gemini-flash-latest": "gemini-flash",
     "gemini-3.5-flash": "gemini-flash",
     "gemini-3-flash-preview": "gemini-flash",
@@ -439,9 +469,11 @@ TEXT_EXTENDED_MODELS: List[str] = [
     DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "gemma-4",
     "mistral-large", "ministral-14b", "mistral-small", "qwen3.5-moe",
 ]
+# The one tier with room for models that have no authority item yet: OCR
+# correction, its only user, writes no model annotation of its own.
 TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-3.7-flash", "gemini-pro", "gpt-6-luna",
-    "gpt-5.6-sol", "mistral-large", "ministral-14b", "mistral-small",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-3.7-flash", "gemini-3.8-flash", "gemini-pro",
+    "gpt-6-luna", "gpt-6-sol", "mistral-large", "ministral-14b", "mistral-small",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]
 # Both Gemini entries are pinned, unlike the text tiers above, because this is

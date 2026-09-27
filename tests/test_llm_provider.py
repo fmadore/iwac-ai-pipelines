@@ -41,7 +41,7 @@ def test_alias_normalization():
 def test_gpt_56_tier_aliases():
     assert normalize_model_key("luna") == "gpt-6-luna"
     assert normalize_model_key("terra") == "gpt-5.6-terra"
-    assert normalize_model_key("sol") == "gpt-5.6-sol"
+    assert normalize_model_key("sol") == "gpt-6-sol"
     # The bare id routes to Sol, matching OpenAI's own routing.
     assert normalize_model_key("gpt-5.6") == "gpt-5.6-sol"
 
@@ -49,8 +49,8 @@ def test_gpt_56_tier_aliases():
 def test_retired_openai_keys_map_forward():
     # GPT-5/5.1 snapshots shut down 2026-10-23; old keys must keep resolving.
     assert normalize_model_key("gpt-5-mini") == "gpt-6-luna"
-    assert normalize_model_key("gpt-5.1") == "gpt-5.6-sol"
-    assert normalize_model_key("gpt-5") == "gpt-5.6-sol"
+    assert normalize_model_key("gpt-5.1") == "gpt-6-sol"
+    assert normalize_model_key("gpt-5") == "gpt-6-sol"
     assert get_model_option("gpt-5-mini").model == "gpt-6-luna"
 
 
@@ -720,7 +720,7 @@ def test_gemini_37_flash_has_no_minimal_rung():
 
 
 def test_rolling_flash_alias_tracks_37s_ladder():
-    """``gemini-flash-latest`` resolves to 3.7, so it lost MINIMAL too."""
+    """``gemini-flash-latest`` follows the newest Flash; 3.7 and 3.8 both lack MINIMAL."""
     option = MODEL_REGISTRY["gemini-flash"]
     assert "minimal" not in option.supported_thinking_levels
     assert option.default_thinking_level == "LOW"
@@ -911,3 +911,38 @@ def test_gemini_sends_no_thinking_level_it_was_not_given(monkeypatch):
     client = _gemini_client(monkeypatch)
     kwargs = client._build_generation_config(LLMConfig())
     assert "thinking_config" not in kwargs
+
+
+# --- Gemini 3.8 Flash and GPT-6 Sol -----------------------------------------
+
+
+def test_gemini_38_flash_has_no_minimal_rung():
+    """Google's documentation: low/medium/high, MINIMAL is a validation error."""
+    option = MODEL_REGISTRY["gemini-3.8-flash"]
+    assert option.model == "gemini-3.8-flash"
+    assert option.supported_thinking_levels == ("low", "medium", "high")
+    assert option.default_temperature is None
+    assert clamp_thinking_level("gemini-3.8-flash", "minimal") == "low"
+
+
+def test_gpt_6_sol_takes_the_sol_slot_and_keeps_5_6_reachable():
+    assert get_model_option("sol").model == "gpt-6-sol"
+    assert get_model_option("openai:gpt-6-sol").model == "gpt-6-sol"
+    assert get_model_option("gpt-5.6-sol").model == "gpt-5.6-sol"
+    assert get_model_option("gpt-5.6").model == "gpt-5.6-sol"
+
+
+def test_models_without_authority_items_stay_out_of_stamping_tiers():
+    """Neither has an Omeka authority item yet, so neither may sit where a run's
+    model is stamped — only in the correction tier, which stamps nothing."""
+    from common.iwac_config import AI_MODEL_ITEMS
+    from common.llm_registry import GEMINI_DOCUMENT_MODELS
+
+    for key in ("gemini-3.8-flash", "gpt-6-sol"):
+        assert key not in AI_MODEL_ITEMS
+        assert key in TEXT_FULL_MODELS
+        for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, GEMINI_DOCUMENT_MODELS):
+            assert key not in tier
+    # The bare aliases an operator types still mean the stampable Flash.
+    assert normalize_model_key("gemini") == "gemini-3.7-flash"
+    assert normalize_model_key("gemini-3.8") == "gemini-3.8-flash"

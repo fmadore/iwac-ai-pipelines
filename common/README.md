@@ -50,7 +50,8 @@ The client includes:
 - **Environment-based configuration** via `python-dotenv`
 - Credentials go in the query string (Omeka offers no header alternative), and
   `requests` echoes the URL in error messages: every entry point calls
-  `common.log_redaction.install_credential_redaction()` so logs stay masked
+  `common.log_redaction.configure_logging()`, which installs the redaction, so
+  logs stay masked
 
 ### Environment Variables
 
@@ -392,6 +393,28 @@ which callers pass straight through.
 
 ---
 
+## Logging (`log_redaction.py`)
+
+Every entry point sets up logging with one call at the top of `main()`:
+
+```python
+from common.log_redaction import configure_logging
+
+configure_logging(log_file=SCRIPT_DIR / "log" / "ocr.log", terminal=False)  # file only
+configure_logging(logging.WARNING)                                         # quiet script
+configure_logging(logging.INFO, console=console)                            # through rich
+```
+
+It configures the root logger, installs credential redaction on every handler
+(Omeka keys ride in query strings, and urllib3 logs whole URLs), and holds
+`httpx` at WARNING unless the level is DEBUG — httpx sits under the OpenAI,
+Mistral and Gemini SDKs and otherwise logs one line per request. It is never
+called at import: a script a test imports must not open log files in the
+repository. It uses `logging.basicConfig`, so a process that already has
+handlers (pytest does) is left as it is.
+
+---
+
 ## Console Utilities (`console_utils.py`)
 
 One definition of the rich furniture every pipeline prints.
@@ -456,8 +479,10 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gpt-6-luna` | OpenAI | `gpt-6-luna` | ChatGPT (GPT-6 Luna) | Cost-optimized tier, $0.10/$0.01/$0.50 per 1M |
 | `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Kept for the sentiment panel and historical provenance; no alias resolves to it |
 | `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2/$0.20/$12 per 1M |
-| `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Flagship tier, $5/$0.50/$30 per 1M |
-| `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | **The Flash every tier offers**; version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only |
+| `gpt-6-sol` | OpenAI | `gpt-6-sol` | ChatGPT (GPT-6 Sol) | Large tier, $2/$0.20/$10 per 1M (input 2x, output 1.5x above 272K input tokens); in the correction tier only until it has an authority item |
+| `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Previous flagship, $5/$0.50/$30 per 1M; reachable by its own key and `gpt-5.6` |
+| `gemini-3.8-flash` | Gemini | `gemini-3.8-flash` | Gemini 3.8 Flash | Version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only; $0.75/$3.75 per 1M until 2026-12-31, then $1.50/$7.50. In the correction tier and video summary only until it has an authority item |
+| `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | **The Flash every stamping tier offers**; version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only |
 | `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Rolling alias that moves with each Flash release; in no tier — use a pinned key unless the run stamps nothing |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality; rolling, so absent from the OCR document tier |
@@ -487,10 +512,11 @@ For convenience, these aliases are also supported:
 | `openai` | `gpt-6-luna` |
 | `luna` | `gpt-6-luna` |
 | `terra` | `gpt-5.6-terra` |
-| `sol` | `gpt-5.6-sol` |
+| `sol` | `gpt-6-sol` |
 | `gpt-5.6` | `gpt-5.6-sol` |
 | `gemini` | `gemini-3.7-flash` |
 | `flash` | `gemini-3.7-flash` |
+| `gemini-3.8` | `gemini-3.8-flash` |
 | `mistral` | `mistral-large` |
 | `ministral` | `ministral-14b` |
 | `qwen` | `qwen3.5-moe` |
@@ -507,7 +533,7 @@ entry, `qwen/qwen3.8-27b` the OpenRouter one. Note that the Hugging Face repo id
 hosted route — ask for the self-hosted entry by its short name.
 
 The retired OpenAI keys still resolve: `gpt-5-mini` → `gpt-6-luna`, and
-`gpt-5.1` / `gpt-5` → `gpt-5.6-sol`. Their underlying snapshots shut down on
+`gpt-5.1` / `gpt-5` → `gpt-6-sol`. Their underlying snapshots shut down on
 2026-10-23, so prefer the new tier keys in new code.
 
 See `MODEL_ALIASES` in `llm_registry.py` for the full list of legacy aliases.
@@ -680,6 +706,7 @@ would otherwise have broken OCR, HTR, audio, video and every text tier at once.
 
 | Model | Thinking Levels | Default | Best For |
 |-------|----------------|---------|----------|
+| Gemini 3.8 Flash | `"low"`, `"medium"`, `"high"` | `"low"` | From Google's documentation; not yet probed live |
 | Gemini 3.7 Flash | `"low"`, `"medium"`, `"high"` | `"low"` | Fast processing, bulk tasks |
 | Gemini 3.6 Flash / Flash-Lite | `"minimal"`, `"low"`, `"medium"`, `"high"` | `"minimal"` | Cheapest bulk work |
 | Gemini Pro | `"low"`, `"medium"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
@@ -859,7 +886,7 @@ A: The Responses client never sends one — the GPT-5.6 and GPT-6 reasoning mode
 A: The checkpoint or `.artifact.json` beside the output records them, after clamping (`run_context.model_context`). For a live view, `logging.basicConfig(level=logging.DEBUG)` logs each request's parameters and every substitution a clamp makes.
 
 **Q: What model keys can I use with `--model`?**  
-A: Use registry keys like `gpt-6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-3.7-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
+A: Use registry keys like `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-terra`, `gemini-3.7-flash`, `gemini-3.8-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
 
 **Q: How do I restrict which models a pipeline can use?**  
 A: Pass a tier as `allowed_keys`, so retiring a model stays a one-line change in `llm_registry`:
