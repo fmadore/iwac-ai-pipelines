@@ -44,8 +44,10 @@ from rich.console import Console
 
 from common.gemini_utils import (
     INLINE_REQUEST_LIMIT_BYTES,
+    TRUNCATION_MARKER,
     delete_uploaded_file,
     extract_text_from_response,
+    finish_reason_name,
     upload_and_wait_active,
 )
 from common.pdf_utils import PdfPageSource
@@ -59,8 +61,6 @@ LOGGER = logging.getLogger(__name__)
 # particular programming errors — must surface immediately instead of being
 # retried (a NameError was once retried with backoff here for months).
 RETRYABLE_API_CODES = (429, 500, 503)
-
-TRUNCATION_MARKER = "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
 
 
 @dataclass
@@ -173,9 +173,9 @@ class GeminiPageProcessor:
 
         candidate = response.candidates[0]
         finish_reason = candidate.finish_reason
-        reason = str(finish_reason)
+        reason = finish_reason_name(finish_reason)
 
-        if reason == "FinishReason.RECITATION":
+        if reason == "RECITATION":
             if self.policy.on_blocked is not None:
                 self.console.print(
                     f"  [yellow]⚠[/] Page {page_num}: copyright detection triggered, trying alternative..."
@@ -189,7 +189,7 @@ class GeminiPageProcessor:
             self.logger.warning("Page %d: RECITATION — Gemini blocked output", page_num)
             return None
 
-        if reason == "FinishReason.MAX_TOKENS":
+        if reason == "MAX_TOKENS":
             # Partial text is still valuable for a transcription; keep it and
             # mark the cut rather than discarding the page.
             partial = extract_text_from_response(response)

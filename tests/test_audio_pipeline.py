@@ -562,3 +562,28 @@ def test_the_transcribe_header_resolves_to_its_authority_item():
 
     assert updater.annotation_key_for("Google gemini-3.5-transcribe") == "gemini-3.5-transcribe"
     assert AI_MODEL_ITEMS["gemini-3.5-transcribe"]["item_id"] == 113077
+
+
+# --- A failed segment is not uploaded as speech ------------------------------
+
+def test_a_recording_with_a_failed_segment_is_held_back(tmp_path):
+    """Joined into one value, a missing twenty minutes is invisible — and the
+    marker itself would be indexed as though someone had said it."""
+    failed = "[Segment 2/3 | 00:20:00–00:40:00] TRANSCRIPTION FAILED (MAX_TOKENS)"
+    make_transcript(tmp_path, "iwac-audio-0001-1", "Google gemini-3.7-flash",
+                    body=f"[Segment 1/3 | 00:00:00–00:20:00] Bismillah.\n\n{failed}")
+    make_transcript(tmp_path, "iwac-audio-0002-1", "Google gemini-3.7-flash")
+
+    kept, held_back = updater.hold_back_incomplete(groups_for(tmp_path), include_incomplete=False)
+
+    assert list(kept) == ["iwac-audio-0002"]
+    assert held_back == [("iwac-audio-0001", "incomplete (failed segment 2)")]
+
+
+def test_include_incomplete_uploads_it_anyway(tmp_path):
+    make_transcript(tmp_path, "iwac-audio-0001-1", "Google gemini-3.7-flash",
+                    body="[Segment 1] TRANSCRIPTION FAILED (API-503)")
+
+    kept, held_back = updater.hold_back_incomplete(groups_for(tmp_path), include_incomplete=True)
+
+    assert list(kept) == ["iwac-audio-0001"] and held_back == []

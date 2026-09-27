@@ -23,6 +23,7 @@ Requirements:
 
 import argparse
 import sys
+import logging
 from pathlib import Path
 
 from rich.console import Console
@@ -43,13 +44,9 @@ from common.iwac_config import (
     model_annotation_value,
 )
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.write_guard import WriteGuard, add_write_guard_args
 from common.artifacts import validated_model
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 
 CONTENT_TERM = "bibo:content"
 OCR_MODEL_TERM = "iwac:ocrModel"
@@ -69,6 +66,7 @@ def main() -> int:
     add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
     parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest output; requires --model.")
     args = parser.parse_args()
+    configure_logging(logging.WARNING)
     guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
     backup_dir = guard.backup_dir if guard.backup_enabled else None
 

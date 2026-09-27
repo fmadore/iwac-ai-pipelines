@@ -224,6 +224,11 @@ def read_body(path: Path) -> str:
     return _split(Path(path).read_text(encoding="utf-8"))[1]
 
 
+def failed_segments_in(path: Path) -> List[int]:
+    """Segment numbers a transcription file still marks ``TRANSCRIPTION FAILED``."""
+    return sorted({int(m) for m in _FAILED_SEGMENT_RE.findall(path.read_text(encoding="utf-8"))})
+
+
 def check_existing_transcription(
     original_file: Path,
     output_dir: Path,

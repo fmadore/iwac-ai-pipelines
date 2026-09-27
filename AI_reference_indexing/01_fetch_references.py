@@ -17,6 +17,7 @@ import argparse
 import csv
 import os
 import sys
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List
@@ -39,11 +40,7 @@ from common.iwac_config import (  # noqa: E402
     TOPIC_AUTHORITY_ITEM_SETS,
 )
 from common.console_utils import standard_progress  # noqa: E402
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -127,6 +124,7 @@ def main():
     parser = argparse.ArgumentParser(description="Fetch items and authority indices for reference indexing")
     parser.add_argument("--item-set-id", required=True, help="Comma-separated Omeka item set IDs")
     args = parser.parse_args()
+    configure_logging(logging.WARNING)
 
     console.print(Panel(
         "[bold]Reference Indexing — Step 1[/bold]\n"

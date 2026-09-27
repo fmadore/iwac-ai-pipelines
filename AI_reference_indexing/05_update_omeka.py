@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import logging
 from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -36,13 +37,9 @@ from common.link_update_cli import (  # noqa: E402
     update_reconciled_item,
     update_reconciled_items as _update_reconciled_items,
 )
-from common.log_redaction import install_credential_redaction  # noqa: E402
+from common.log_redaction import configure_logging  # noqa: E402
 from common.omeka_client import OmekaClient  # noqa: E402
 from common.write_guard import WriteGuard  # noqa: E402
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 BACKUP_LABEL = "reference_links"
@@ -82,6 +79,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_argument_parser().parse_args(argv)
+    configure_logging(logging.WARNING)
     return run_link_update(
         args,
         output_dir=OUTPUT_DIR,

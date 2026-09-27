@@ -47,7 +47,7 @@ from rich.panel import Panel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import count_table, key_value_table, print_file_table, standard_progress
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.mistral_ocr import MISTRAL_OCR_MODEL, MistralOcrClient, markdown_to_plain_text
 from common.rate_limiter import QuotaExhaustedError
 from common.artifacts import invalidate_artifact, commit_artifact
@@ -140,15 +140,7 @@ def main() -> int:
     """Batch-process every PDF in PDF/ through Mistral OCR."""
     args = build_parser().parse_args()
 
-    LOG_DIR.mkdir(exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        filename=LOG_DIR / "ocr_mistral.log",
-    )
-    # Credentials ride in Omeka query strings and provider headers; keep them
-    # out of anything urllib3 or an SDK decides to log.
-    install_credential_redaction()
+    configure_logging(log_file=LOG_DIR / "ocr_mistral.log", terminal=False)
 
     console.print(Panel(
         "[bold]AI-Powered PDF OCR using Mistral Document AI[/bold]\n"

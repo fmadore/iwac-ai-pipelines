@@ -57,14 +57,12 @@ from common.iwac_config import (
     DCTERMS_TITLE_PROPERTY_ID,
     LANGUAGE_LABELS_BY_CODE,
 )
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.omeka_client import OmekaClient
 from common.omeka_link_updater import ResourceLinkSpec, update_item_resource_links
 from common.write_guard import WriteGuard, add_write_guard_args
 
 from youtube_source import DetectedLanguage, parse_detected_languages
-
-install_credential_redaction()
 
 console = Console()
 LOGGER = logging.getLogger(__name__)
@@ -92,19 +90,6 @@ class ItemLanguages:
     resolved: Dict[str, int] = field(default_factory=dict)
     #: Labels with no authority record — reported, never created.
     unresolved: List[str] = field(default_factory=list)
-
-
-def setup_logging(log_folder: Path) -> None:
-    log_folder.mkdir(exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_folder / "language_update.log", mode="a", encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
-    install_credential_redaction()
 
 
 def read_report(path: Path, *, shares: Sequence[str]) -> List[ItemLanguages]:
@@ -318,7 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     guard = WriteGuard.from_args(args, default_backup_dir=BACKUP_DIR)
-    setup_logging(SCRIPT_DIR / "log")
+    configure_logging(log_file=SCRIPT_DIR / "log" / "language_update.log")
 
     console.print(Panel(
         "Correct dcterms:language from the languages step 02 heard. Appends only — "

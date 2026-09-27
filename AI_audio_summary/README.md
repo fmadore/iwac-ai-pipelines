@@ -24,7 +24,9 @@ Omeka S or local files → Download media → AI transcription → Update databa
 3. **Update** (`03_omeka_transcription_updater.py`): Store transcripts in Omeka S
    as `bibo:content`, annotated with the model that produced them. Only the
    transcript is uploaded — each file's metadata header stays on disk, because
-   `bibo:content` is the archive's indexed full text
+   `bibo:content` is the archive's indexed full text. A recording with a segment
+   still marked `TRANSCRIPTION FAILED` is held back until `02 --resume` fills it
+   (or `--include-incomplete` is passed)
 
 ## Quick Start
 
@@ -185,8 +187,9 @@ the per-request cap, not to the token budget, and splitting triggers on the cap:
 under it, one request always beats several.
 
 What handles the throttle is `common/rate_limiter.retry_delay_seconds()` — the
-429 names its own wait, and `02c` sleeps it. `--rpm` cannot help: it meters
-requests, and the cap counts tokens.
+429 names its own wait, and `02c` sleeps it, reusing the upload it already made
+rather than sending the audio again. `--rpm` cannot help: it meters requests,
+and the cap counts tokens.
 
 The 429 that reports this says *"You exceeded your current quota, please check
 your plan and billing details"* — word for word what an exhausted daily quota
@@ -378,7 +381,7 @@ final segment shows `–end`:
 ...
 ```
 
-A segment that fails is marked `[Segment <n>/<total> | <start>–<end>] TRANSCRIPTION FAILED` and can be re-run with `--resume` (which preserves the header).
+A segment that fails is marked `[Segment <n>/<total> | <start>–<end>] TRANSCRIPTION FAILED` and can be re-run with `--resume` (which preserves the header). Until it is, step 03 holds the recording back: joined into one `bibo:content` value, a missing twenty minutes would be invisible and the marker would be indexed as speech. `03 --include-incomplete` uploads it anyway.
 
 ### Voxtral
 
@@ -444,12 +447,8 @@ Thank you for having me. I'm happy to be here...
 
 ## Requirements
 
-**Optional** (for audio splitting and video conversion):
-```bash
-pip install pydub
-```
-
-FFmpeg must also be installed. The shared `common/ffmpeg_utils.py` module auto-discovers it via `FFMPEG_PATH`/`FFPROBE_PATH` env vars, `PATH`, or common Windows install locations. To install ffmpeg:
+`pydub` (audio splitting) is installed with the project. FFmpeg is needed for
+splitting and video conversion and must be installed separately. The shared `common/ffmpeg_utils.py` module auto-discovers it via `FFMPEG_PATH`/`FFPROBE_PATH` env vars, `PATH`, or common Windows install locations. To install ffmpeg:
 
 ```bash
 # Windows

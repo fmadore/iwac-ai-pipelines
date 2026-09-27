@@ -3,9 +3,9 @@ Shared PDF utilities for pipelines that process documents page by page.
 
 Used by OCR extraction, HTR extraction, and magazine article extraction.
 
-Prefer :class:`PdfPageSource` for page loops: :func:`extract_pdf_page` re-parses
-the entire source document on every call, so extracting N pages that way costs N
-full parses. On a 100-page magazine that dominates the local runtime.
+:class:`PdfPageSource` parses the source document once and serves every page
+from it; re-parsing per page costs N full parses for N pages, which on a
+100-page magazine dominates the local runtime.
 
 Usage:
     from common.pdf_utils import PdfPageSource
@@ -34,12 +34,7 @@ def _single_page_bytes(reader: PdfReader, page_number: int) -> bytes:
 
 
 class PdfPageSource:
-    """Serve single-page PDF bytes from a document parsed once.
-
-    The per-page output is identical to :func:`extract_pdf_page`; the difference
-    is that the source document is parsed a single time rather than once per
-    page.
-    """
+    """Serve single-page PDF bytes from a document parsed once."""
 
     def __init__(self, pdf_path: Path) -> None:
         self.pdf_path = Path(pdf_path)
@@ -70,23 +65,4 @@ def get_pdf_page_count(pdf_path: Path) -> int:
         return len(reader.pages)
     except Exception as exc:
         LOGGER.error("Error reading page count from %s: %s", pdf_path, exc)
-        raise
-
-
-def extract_pdf_page(pdf_path: Path, page_number: int) -> bytes:
-    """Extract a single page from a PDF as bytes (0-indexed).
-
-    Returns a minimal single-page PDF document. For more than one page from the
-    same file, use :class:`PdfPageSource` instead — this function re-parses the
-    whole document on every call.
-    """
-    try:
-        return _single_page_bytes(PdfReader(str(pdf_path)), page_number)
-    except Exception as exc:
-        LOGGER.error(
-            "Error extracting page %d from %s: %s",
-            page_number + 1,
-            pdf_path,
-            exc,
-        )
         raise

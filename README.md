@@ -130,11 +130,11 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash
 
 | Provider | Key | Notes |
 |----------|-----|-------|
-| OpenAI | `gpt-6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol` | Text pipelines only. GPT-6 Luna (cheapest), GPT-5.6 Terra (balanced), GPT-5.6 Sol (flagship). Legacy `gpt-5-mini` / `gpt-5.1` keys still resolve to Luna / Sol. |
-| Gemini | `gemini-3.7-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal |
+| OpenAI | `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-terra` | Text pipelines only. GPT-6 Luna (cheapest), GPT-5.6 Terra (balanced), GPT-6 Sol (large; OCR correction only until it has an authority item). `gpt-5.6-sol` and `gpt-5.6-luna` stay reachable by key. Legacy `gpt-5-mini` / `gpt-5.1` keys resolve to Luna / Sol. |
+| Gemini | `gemini-3.7-flash`, `gemini-3.8-flash`, `gemini-flash-lite`, `gemini-pro` | Text and multimodal. 3.8 Flash is offered only where nothing is stamped (OCR correction, video summary) until it has an authority item |
 | Gemini (speech) | `gemini-3.5-transcribe` | Dedicated speech-to-text via the Interactions API, not the model registry: word-level timestamps and speaker diarization, 82 locales including Hausa but none of Mooré, Dioula, Ewé, Kabyè or Dendi. Takes no prompt. Used by `AI_audio_summary/02c`. |
 | Gemma  | `gemma-4` | Google Gemma 4 31B open-weights flagship, served via the Gemini API (shares `GEMINI_API_KEY`); text + image only, no audio. Supports only `MINIMAL` or `HIGH` thinking levels. Currently wired into NER and OCR extraction. |
-| Mistral | `mistral-large`, `ministral-14b` | Text pipelines; dedicated OCR and audio transcription endpoints |
+| Mistral | `mistral-large`, `ministral-14b`, `mistral-small` | Text pipelines (Small 4 reasons at `none` or `high` only); pinned `mistral-ocr-4-1` and `voxtral-mini-2602` for OCR and audio |
 | OpenRouter | `deepseek-v4-flash-0731` (default), Qwen and legacy/quality options | DeepSeek V4 Flash 0731 is the shared text default (`DEFAULT_TEXT_MODEL_KEY`), used by NER, OCR correction and magazine consolidation. Summarization and publication citation extraction default to `gpt-6-luna` for throughput. It is text-only: PDF/image/audio/video extraction still uses the modality-specific Gemini, Mistral, or Voxtral APIs. Requests are routed only to backends that do not retain data. |
 | Self-hosted | `qwen3.8-27b-selfhosted` | Any OpenAI-compatible endpoint you run yourself — vLLM on a GPU cluster, or llama.cpp / LM Studio / TGI locally. Text pipelines only. The address comes from `SELFHOSTED_LLM_BASE_URL`, so no model here is tied to one machine; a model on this route is simply reported as unavailable when the variable is unset. See [`serving/`](serving/README.md). |
 
@@ -143,7 +143,8 @@ python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash
 `deepseek-flash` resolve to it. Every DeepSeek Flash run goes to that release:
 the earlier `deepseek-v4-flash` preview sits in no model tier, so no pipeline
 offers it and no `--model` accepts it. Its registry entry is kept for the
-archive alone, so the annotations it already wrote stay attributable.
+archive alone, so an old pilot payload that names its slug still resolves; the
+sentiment values it wrote were deleted from Omeka on 2026-08-07.
 
 ## Adapting for Other Projects
 
@@ -166,6 +167,7 @@ The approach assumes you have digitized materials and need to make them searchab
 - [Reference Indexing](AI_reference_indexing/README.md) — Subject and spatial keyword assignment for scholarly references
 - [Publication Extraction](AI_publication_extraction/README.md) — Structured OCR for journal articles, chapters, books and theses: footnotes and bibliography separated from the body, oversized scans split automatically
 - [IWAC on Hugging Face](https://huggingface.co/datasets/fmadore/islam-west-africa-collection) — Public projection: full text is retained only where `OCR_is_public` permits it. The private `-full` mirror contains the complete text; these are different access scopes.
+- [Pending work](docs/PENDING.md) — what is unfinished and what closes each item: models awaiting a live probe or an authority item, dated deadlines, measurements owed
 - Individual pipeline directories contain their own documentation
 
 ## Related Resources

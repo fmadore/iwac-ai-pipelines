@@ -116,3 +116,12 @@ def test_pdf_downloader_delegates_here(tmp_path):
         assert PDFDownloader.download_pdf("http://x/7.pdf", target) == target
 
     assert target.read_bytes() == b"%PDF-ok"
+
+
+def test_a_redownload_replaces_a_stale_copy(tmp_path):
+    """``Path.rename`` onto an existing file raises on Windows."""
+    target = tmp_path / "123.pdf"
+    target.write_bytes(b"stale")
+    with patch.object(downloader.requests, "get", return_value=make_response([b"fresh"])):
+        assert stream_download("http://x/123.pdf", target) == target
+    assert target.read_bytes() == b"fresh"

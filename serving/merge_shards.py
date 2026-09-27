@@ -38,6 +38,7 @@ prompts are two different instruments, and merging them into one file would
 hide that; the script refuses unless ``--allow-mixed-prompts`` says otherwise.
 """
 import sys
+import logging
 import json
 import glob
 import argparse
@@ -48,6 +49,7 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import count_table, key_value_table
 from common.instrument import identity_key
+from common.log_redaction import configure_logging
 
 from rich.console import Console
 
@@ -177,6 +179,7 @@ def rounds_of(attempts: Dict[int, List[Dict[str, Any]]]) -> List[Tuple[int, int,
 
 
 def main() -> int:
+    configure_logging(logging.WARNING)
     parser = argparse.ArgumentParser(
         description="Merge offline annotation shards and log what never succeeded."
     )

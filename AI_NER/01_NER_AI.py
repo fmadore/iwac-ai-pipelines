@@ -92,15 +92,8 @@ from common.llm_provider import (  # noqa: E402
     PROVIDER_OPENROUTER,
     PROVIDER_SELFHOSTED,
 )
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 
-# ---------------------------------------------------------------------------
-# Logging & Environment
-# ---------------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -684,6 +677,7 @@ async def async_main(args) -> None:
     summarize(stats, setup.output_csv, setup.llm_client.usage)
 
 def main() -> None:
+    configure_logging()
     args = parse_arguments()
     try:
         if getattr(args, 'async', False):

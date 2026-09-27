@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import key_value_table, standard_progress
 from common.downloader import stream_download
 from common.iwac_config import REFERENCE_RESOURCE_CLASSES
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.omeka_client import OmekaClient
 
 console = Console()
@@ -56,14 +56,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PDF_DIR = SCRIPT_DIR / "PDF"
 OUTPUT_DIR = SCRIPT_DIR / "output"
 LOG_DIR = SCRIPT_DIR / "log"
-LOG_DIR.mkdir(exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    filename=LOG_DIR / "fetch.log",
-)
-install_credential_redaction()
 
 #: Large scans are the norm here (one thesis is 276 MB), so the per-file
 #: timeout is far longer than the shared default.
@@ -235,6 +227,7 @@ def main() -> int:
         help=f"Where PDFs are written (default: {PDF_DIR}).",
     )
     args = parser.parse_args()
+    configure_logging(log_file=LOG_DIR / "fetch.log", terminal=False)
 
     console.print(Panel(
         "[bold]Discover scholarly references and download their PDFs[/]\n\n"

@@ -14,15 +14,16 @@ The approach:
 
 Supports multiple models via --model flag:
 - deepseek-v4-flash-0731 (default): DeepSeek official Flash release via OpenRouter
-- gemini-3.7-flash: Gemini 3.7 Flash - fast, cost-effective
+- gemini-3.7-flash / gemini-3.8-flash: Gemini Flash, version-pinned
 - gemini-pro: Gemini Pro - highest quality
 - gpt-6-luna: OpenAI GPT-6 Luna - cost-optimized tier
-- gpt-5.6-sol: OpenAI GPT-5.6 Sol - flagship tier
+- gpt-6-sol: OpenAI GPT-6 Sol - large tier
 - mistral-large: Mistral Large 3 - multimodal MoE
 """
 
 import argparse
 import sys
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -48,11 +49,7 @@ from common.llm_provider import (
 )
 from common.console_utils import standard_progress
 from common.llm_registry import PROVIDER_GEMINI, clamp_thinking_level
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 # Load environment variables
 
@@ -660,6 +657,7 @@ Examples:
 def main():
     """Main execution function."""
     args = parse_args()
+    configure_logging(logging.WARNING)
 
     # Display welcome banner
     console.print(

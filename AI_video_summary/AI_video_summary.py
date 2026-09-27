@@ -35,11 +35,7 @@ from common.ffmpeg_utils import VIDEO_FORMATS, get_mime_type
 from common.prompt_loader import select_prompt_interactive
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted
 from common.retry import retry_with_backoff
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 from rich.console import Console
 from rich.panel import Panel
@@ -64,6 +60,16 @@ DEFAULT_PROMPT = """
 # Transient Gemini API errors worth retrying with backoff
 RETRYABLE_API_CODES = (429, 500, 503)
 
+#: The models on offer, in menu order, with the note shown beside each. This
+#: pipeline writes nothing to Omeka, so a model with no authority item — Gemini
+#: 3.8 Flash today — can be offered here before anywhere that stamps one.
+ALLOWED_MODELS = {
+    "gemini-pro-latest": "Higher quality, best for detailed transcription",
+    "gemini-3.7-flash": "Faster, good for summaries",
+    "gemini-3.8-flash": "Newest Flash; spends more tokens by design on hard material",
+}
+DEFAULT_MODEL = "gemini-pro-latest"
+
 
 def _is_retryable_api_error(exc: BaseException) -> bool:
     """Retry predicate: transient Gemini API errors only."""
@@ -74,7 +80,7 @@ class VideoProcessor:
     def __init__(
         self,
         api_key=None,
-        model="gemini-pro-latest",
+        model=DEFAULT_MODEL,
         requests_per_minute: Optional[int] = None,
         processing_prompt: Optional[str] = None,
     ):
@@ -83,8 +89,7 @@ class VideoProcessor:
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use. Either 'gemini-pro-latest' or 'gemini-3.7-flash'.
-                                   Default is 'gemini-pro-latest'.
+            model (str, optional): One of ``ALLOWED_MODELS``; default ``DEFAULT_MODEL``.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
             processing_prompt: The processing prompt to use (selected in ``main()``);
                 falls back to ``DEFAULT_PROMPT``.
@@ -381,7 +386,7 @@ Examples:
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-pro-latest", "gemini-3.7-flash"],
+        choices=list(ALLOWED_MODELS),
         default=None,
         help="Model to use for processing (default: interactive selection)"
     )
@@ -419,17 +424,18 @@ def select_model_interactive():
     models_table.add_column("#", style="cyan", justify="right")
     models_table.add_column("Model", style="green")
     models_table.add_column("Description", style="dim")
-    models_table.add_row("1", "gemini-pro-latest", "Higher quality, best for detailed transcription")
-    models_table.add_row("2", "gemini-3.7-flash", "Faster, good for summaries")
+    keys = list(ALLOWED_MODELS)
+    for number, model in enumerate(keys, start=1):
+        models_table.add_row(str(number), model, ALLOWED_MODELS[model])
     console.print(models_table)
 
     model_choice = console.input(
-        "\n[bold]Select a model (1 or 2) or press Enter for default (gemini-pro-latest):[/] "
+        f"\n[bold]Select a model (1-{len(keys)}) or press Enter for default ({DEFAULT_MODEL}):[/] "
     ).strip()
 
-    if model_choice == '2':
-        return 'gemini-3.7-flash'
-    return 'gemini-pro-latest'
+    if model_choice.isdigit() and 1 <= int(model_choice) <= len(keys):
+        return keys[int(model_choice) - 1]
+    return DEFAULT_MODEL
 
 
 def main() -> int:
@@ -437,6 +443,7 @@ def main() -> int:
     Main function to run the video processing script.
     """
     args = parse_args()
+    configure_logging(logging.WARNING)
 
     # Display welcome banner
     console.print(Panel(

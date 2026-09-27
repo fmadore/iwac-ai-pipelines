@@ -17,7 +17,7 @@ them:
    read alongside (1), not instead of it.
 3. **Self-consistency** (needs ``--repeats`` > 1 in the pilot) — how often a
    model gives the same answer to the same article twice. DeepSeek V4 runs at
-   the vendor-recommended temperature 1.0 and Qwen3.7 at 0.7, so without this a
+   the vendor-recommended temperature 1.0 and Qwen3.5 at 0.7, so without this a
    low agreement score is ambiguous between "disagrees" and "is noisy".
 
 Reads a local file and prints. Writes nothing anywhere.
@@ -28,6 +28,7 @@ Usage
     python AI_sentiment_analysis/03_pilot_report.py cache/pilot/pilot_<ts>.json
 """
 import sys
+import logging
 import json
 import argparse
 from pathlib import Path
@@ -42,16 +43,12 @@ from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from sentiment_core import (  # noqa: E402
     CENTRALITE_ORDER,
     POLARITE_ORDER,
     SUBJECTIVITE_ORDER,
 )
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 
 console = Console()
 
@@ -316,6 +313,7 @@ def show_caveats(manifest: Dict[str, Any], repeats: int) -> None:
 
 def main() -> int:
     args = build_argument_parser().parse_args()
+    configure_logging(logging.WARNING)
     path = resolve_pilot_path(args.pilot_file)
 
     if path is None or not path.exists():

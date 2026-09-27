@@ -46,6 +46,7 @@ MP4, MPEG, MOV, AVI, FLV, MPG, WebM, WMV, 3GPP
 | Model | Speed | Quality | Best For |
 |-------|-------|---------|----------|
 | `gemini-3.7-flash` | Faster | Good | Summaries, shorter videos |
+| `gemini-3.8-flash` | Faster | Newer Flash | Spends more tokens by design; introductory price until 2026-12-31 |
 | `gemini-pro-latest` | Slower | Higher | Detailed transcription, complex scenes |
 
 ## Output Format

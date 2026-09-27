@@ -25,6 +25,11 @@ step joins them under one identifier.
 The header is not lost by being stripped — it is where the
 ``iwac:transcriptionModel`` annotation below is read from, and it stays on disk.
 
+A recording with a segment still marked ``TRANSCRIPTION FAILED`` is held back
+unless ``--include-incomplete`` is passed: once joined into one ``bibo:content``
+value, a missing twenty minutes is invisible, and the marker itself would be
+indexed as speech. ``02 --resume`` retries the failed segments in place.
+
 Each value written carries an ``iwac:transcriptionModel`` annotation naming the
 model that produced it, so a transcript's provenance survives outside the file
 header on disk. ``--model`` is deliberately optional: three of the four models
@@ -41,6 +46,7 @@ Usage:
     python 03_omeka_transcription_updater.py --dry-run
     python 03_omeka_transcription_updater.py --model gemini-3.7-flash
     python 03_omeka_transcription_updater.py --no-model-annotation --yes
+    python 03_omeka_transcription_updater.py --include-incomplete --dry-run
 
 Requirements:
     - Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL
@@ -82,9 +88,10 @@ from common.iwac_config import (
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
+from common.write_guard import WriteGuard, add_write_guard_args
 
-from segments import GENERATOR_FIELD, read_body, read_header
+from segments import GENERATOR_FIELD, failed_segments_in, read_body, read_header
 
 CONTENT_TERM = 'bibo:content'
 TRANSCRIPTION_MODEL_TERM = 'iwac:transcriptionModel'
@@ -240,6 +247,33 @@ def search_item_by_identifier(client: OmekaClient, identifier: str) -> Optional[
     return items[0] if items else None
 
 
+Groups = Dict[str, List[Tuple[Path, Optional[int]]]]
+
+
+def hold_back_incomplete(
+    groups: Groups, *, include_incomplete: bool
+) -> Tuple[Groups, List[Tuple[str, str]]]:
+    """Split off recordings whose transcript still has a failed segment.
+
+    Returns the groups to upload and ``(identifier, reason)`` for the rest. An
+    unreadable file is held back too: its text is not what would be uploaded.
+    """
+    kept: Groups = {}
+    held_back: List[Tuple[str, str]] = []
+    for identifier, files in groups.items():
+        try:
+            failed = sorted({n for path, _ in files for n in failed_segments_in(path)})
+        except OSError as exc:
+            held_back.append((identifier, f"unreadable ({exc})"))
+            continue
+        if failed and not include_incomplete:
+            listed = ", ".join(str(n) for n in failed)
+            held_back.append((identifier, f"incomplete (failed segment {listed})"))
+            continue
+        kept[identifier] = files
+    return kept, held_back
+
+
 class TranscriptionProcessor:
     """Processes transcription files and matches them to Omeka items."""
 
@@ -339,24 +373,6 @@ class TranscriptionProcessor:
         return '\n'.join(contents).strip()
 
 
-def setup_logging(log_folder: Path) -> None:
-    """Configure logging with file and console handlers."""
-    log_folder.mkdir(exist_ok=True)
-    log_file = log_folder / 'transcription_update.log'
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, mode='a', encoding='utf-8'),
-            logging.StreamHandler()
-        ]
-    )
-    # Credentials ride in Omeka query strings and provider headers; keep them
-    # out of anything urllib3 or an SDK decides to log.
-    install_credential_redaction()
-
-
 def resolve_updates(
     client: OmekaClient,
     processor: "TranscriptionProcessor",
@@ -405,28 +421,18 @@ def main() -> int:
              "only option for a model with no Omeka authority item — Voxtral today.",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Fetch each item and report what would change, but write nothing.",
+        "--include-incomplete", action="store_true",
+        help="Also upload recordings with a segment still marked TRANSCRIPTION "
+             "FAILED. A gap is invisible once the text is a single Omeka value.",
     )
-    parser.add_argument(
-        "--yes", action="store_true",
-        help="Skip the interactive confirmation before writing.",
-    )
-    parser.add_argument(
-        "--backup-dir", type=Path, default=None,
-        help="Where each item's pre-write JSON is dumped before its PATCH "
-             "(default: <pipeline>/backups). The only route back from a bulk overwrite.",
-    )
-    parser.add_argument(
-        "--no-backup", action="store_true",
-        help="Do not dump pre-write payloads. Not recommended.",
-    )
+    add_write_guard_args(parser, default_backup_dir=SCRIPT_DIR / 'backups')
     args = parser.parse_args()
+    guard = WriteGuard.from_args(args)
 
     if args.model and args.no_model_annotation:
         parser.error("--model and --no-model-annotation contradict each other.")
 
-    setup_logging(SCRIPT_DIR / 'log')
+    configure_logging(log_file=SCRIPT_DIR / 'log' / 'transcription_update.log')
     transcriptions_folder = SCRIPT_DIR / 'Transcriptions'
 
     console.print(Panel(
@@ -444,6 +450,21 @@ def main() -> int:
 
         if not groups:
             console.print(f"\n[yellow]No transcription files found in: [cyan]{transcriptions_folder}[/][/]")
+            return 0
+
+        groups, held_back = hold_back_incomplete(groups, include_incomplete=args.include_incomplete)
+        if held_back:
+            console.print(f"[yellow]⚠[/] {len(held_back)} recording(s) held back:")
+            for identifier, reason in held_back[:10]:
+                console.print(f"    [dim]{identifier}: {reason}[/]")
+            if len(held_back) > 10:
+                console.print(f"    [dim]… and {len(held_back) - 10} more[/]")
+            console.print(
+                "[dim]  Retry them with 02_AI_transcribe_audio.py --resume, or pass "
+                "--include-incomplete to upload them as they are.[/]"
+            )
+        if not groups:
+            console.print("\n[yellow]No complete transcriptions to upload.[/]")
             return 0
 
         files_table = Table(title="Identifiers to Process", box=box.ROUNDED)
@@ -486,16 +507,16 @@ def main() -> int:
         if unresolved:
             console.print(f"[yellow]⚠[/] {unresolved} identifier(s) had no matching Omeka item")
 
-        backup_dir = None if args.no_backup else (args.backup_dir or SCRIPT_DIR / 'backups')
+        confirm_lines = [f"Source folder:    {transcriptions_folder}"]
+        if held_back:
+            confirm_lines.append(f"Held back:        {len(held_back)} incomplete")
 
         stats = run_text_updates(
             client, updates, content_target(annotation),
             console=console,
-            dry_run=args.dry_run,
-            require_confirmation=not args.yes,
-            extra_confirm_lines=[f"Source folder:    {transcriptions_folder}"],
+            guard=guard,
+            extra_confirm_lines=confirm_lines,
             description="Updating transcriptions...",
-            backup_dir=backup_dir,
             backup_label="audio_transcriptions",
         )
         if not stats:

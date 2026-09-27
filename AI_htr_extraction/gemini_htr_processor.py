@@ -47,19 +47,10 @@ from common.gemini_utils import (
 )
 from common.llm_provider import get_model_option, summary_from_option
 from common.rate_limiter import QuotaExhaustedError, RateLimiter, is_quota_exhausted
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 
 script_dir = Path(__file__).resolve().parent
-log_dir = script_dir / 'log'
-log_dir.mkdir(exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename=log_dir / 'htr_gemini.log',
-)
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+LOG_FILE = script_dir / 'log' / 'htr_gemini.log'
 LOGGER = logging.getLogger(__name__)
 
 # Handwriting needs the finest stroke detail available. ULTRA_HIGH is only
@@ -214,6 +205,7 @@ def select_language_interactive() -> str:
 def main() -> int:
     """Orchestrate the page-by-page PDF HTR process."""
     args = parse_args()
+    configure_logging(log_file=LOG_FILE, terminal=False)
 
     console.print(Panel(
         "Process handwritten PDFs page-by-page without image conversion",

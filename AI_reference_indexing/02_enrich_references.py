@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import logging
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -61,12 +62,8 @@ from common.llm_provider import (  # noqa: E402
     summary_from_option,
 )
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction  # noqa: E402
+from common.log_redaction import configure_logging  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
-
-# Credentials ride in provider headers; keep them out of anything an SDK
-# decides to log.
-install_credential_redaction()
 
 console = Console()
 
@@ -339,6 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    configure_logging(logging.WARNING)
 
     console.print(Panel(
         "[bold]Reference Indexing — Step 2[/bold]\n"
@@ -352,14 +350,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         console.print(f"[red]✗[/] No items_*.csv found in {OUTPUT_DIR}. Run 01_fetch_references.py first.")
         return 1
 
+    # "minimal" is a request for the shallowest level the model offers; the
+    # adapter snaps it to what the model accepts. No temperature: that is the
+    # vendor's, and lives in MODEL_REGISTRY. One object for the client and the
+    # checkpoint, so the record cannot drift from the request.
+    config = LLMConfig(reasoning_effort="medium", thinking_level="minimal")
     try:
         model_option = get_model_option(args.model, allowed_keys=ALLOWED_MODEL_KEYS)
-        # "minimal" is a request for the shallowest level the model offers; the
-        # adapter snaps it to what the model accepts. No temperature: that is
-        # the vendor's, and lives in MODEL_REGISTRY.
-        llm_client = build_llm_client(
-            model_option, config=LLMConfig(reasoning_effort="medium", thinking_level="minimal")
-        )
+        llm_client = build_llm_client(model_option, config=config)
         rows = read_items(input_path)
     except ValueError as exc:
         console.print(f"[red]✗[/] {exc}")
@@ -376,7 +374,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from common.run_context import model_context
     context = {
         "pipeline": "reference-enrichment-v1",
-        **model_context(model_option, LLMConfig(reasoning_effort="medium", thinking_level="minimal")),
+        **model_context(model_option, config),
         "prompt_sha256": sha256_text(system_prompt),
         "input": input_path.name,
         "reindex": args.reindex,

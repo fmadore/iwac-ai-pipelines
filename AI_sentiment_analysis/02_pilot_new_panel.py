@@ -54,7 +54,6 @@ from typing import Dict, Any, List, Optional
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.logging import RichHandler
 from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -62,7 +61,7 @@ from common.omeka_client import OmekaClient
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
 from common.checkpoint import atomic_write_text
 from common.console_utils import standard_progress
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
@@ -113,19 +112,6 @@ DEFAULT_SAMPLE_SIZE = 200
 DEFAULT_SEED = 42
 PER_PAGE = 100
 ITEMS_PER_SAMPLED_PAGE = 10
-
-
-def configure_logging() -> logging.Logger:
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
-    )
-    # Credentials ride in Omeka query strings and provider headers; keep them
-    # out of anything urllib3 or an SDK decides to log.
-    install_credential_redaction()
-    return logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -513,7 +499,8 @@ def show_summary(
 
 
 def main() -> int:
-    logger = configure_logging()
+    configure_logging(logging.WARNING, console=console)
+    logger = logging.getLogger(__name__)
     console.print(Panel.fit(
         "[bold cyan]Sentiment Panel Pilot[/bold cyan]\n"
         "[dim]Candidate models vs the generation-1 annotations — "

@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 import os
 import logging
-from dataclasses import dataclass
 import re
-from typing import Any, Dict, List, Optional, Type, TypeVar
+import threading
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Type, TypeVar
 
 from dotenv import load_dotenv
 
@@ -46,6 +47,13 @@ try:  # pragma: no cover - optional dependency
     from mistralai.client import Mistral  # type: ignore
 except Exception:  # pragma: no cover - import guard
     Mistral = None  # type: ignore
+
+# The converter ``chat.parse()`` applies on the way out, so the reasoning path
+# below sends the same schema the non-reasoning path does.
+try:  # pragma: no cover - optional dependency
+    from mistralai.extra import response_format_from_pydantic_model  # type: ignore
+except Exception:  # pragma: no cover - import guard
+    response_format_from_pydantic_model = None  # type: ignore
 
 # Optional Pydantic import for structured outputs
 try:  # pragma: no cover - optional dependency
@@ -83,8 +91,10 @@ from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     THINKING_LEVELS,
     clamp_thinking_level,
     get_model_option,
+    model_defaults,
     normalize_model_key,
     prompt_for_model_choice,
+    resolve_reasoning_effort,
     summary_from_option,
 )
 
@@ -104,6 +114,9 @@ class UsageTotals:
     cached_input_tokens: int = 0
     reasoning_tokens: int = 0
     cost_usd: Optional[float] = None
+    # Pipelines share one client across worker threads, and ``+=`` on an
+    # attribute is a read-modify-write that loses counts under contention.
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
 
     def add(
         self,
@@ -114,13 +127,14 @@ class UsageTotals:
         reasoning_tokens: Any = None,
         cost_usd: Any = None,
     ) -> None:
-        self.requests += 1
-        self.input_tokens += _as_int(input_tokens)
-        self.output_tokens += _as_int(output_tokens)
-        self.cached_input_tokens += _as_int(cached_input_tokens)
-        self.reasoning_tokens += _as_int(reasoning_tokens)
-        if isinstance(cost_usd, (int, float)) and not isinstance(cost_usd, bool):
-            self.cost_usd = (self.cost_usd or 0.0) + float(cost_usd)
+        with self._lock:
+            self.requests += 1
+            self.input_tokens += _as_int(input_tokens)
+            self.output_tokens += _as_int(output_tokens)
+            self.cached_input_tokens += _as_int(cached_input_tokens)
+            self.reasoning_tokens += _as_int(reasoning_tokens)
+            if isinstance(cost_usd, (int, float)) and not isinstance(cost_usd, bool):
+                self.cost_usd = (self.cost_usd or 0.0) + float(cost_usd)
 
     def summary(self) -> str:
         """One line for a run summary, e.g. ``12 calls · 40,120 in / 3,800 out tokens · $0.0210``."""
@@ -163,16 +177,10 @@ class BaseLLMClient:
         self.option = option
         #: What this client has consumed so far — see :class:`UsageTotals`.
         self.usage = UsageTotals()
-        # Fill in defaults from ModelOption when not explicitly set
-        model_defaults = LLMConfig(
-            temperature=option.default_temperature,
-            reasoning_effort=option.default_reasoning_effort,
-            text_verbosity=option.default_text_verbosity,
-            store=option.default_store,
-            thinking_level=option.default_thinking_level,
+        defaults = LLMConfig(
             request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
-        )
-        self.config = (config or LLMConfig()).merged_over(model_defaults)
+        ).merged_over(model_defaults(option))
+        self.config = (config or LLMConfig()).merged_over(defaults)
 
     def _get_effective_config(self, config: Optional[LLMConfig]) -> LLMConfig:
         """Merge a per-request config with client defaults."""
@@ -279,26 +287,15 @@ class OpenAIResponsesClient(BaseLLMClient):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            text={
-                "format": {"type": "text"},
-                "verbosity": text_verbosity,
-            },
+            text={"verbosity": text_verbosity},
             reasoning={"effort": reasoning_effort},
-            tools=[],
             store=bool(effective_config.store),
             **self._tier_kwargs(effective_config),
         )
         self._record_usage(response)
-        raw_output = getattr(response, "output_text", None)
-        if raw_output:
-            return raw_output.strip()
-        segments: List[str] = []
-        for seg in getattr(response, "output", []) or []:
-            if isinstance(seg, dict):
-                content = seg.get("content")
-                if isinstance(content, str):
-                    segments.append(content)
-        return "\n".join(filter(None, segments)).strip()
+        # ``output_text`` is the SDK's join of every text part of the response;
+        # reasoning items carry none, so nothing else needs walking.
+        return (getattr(response, "output_text", None) or "").strip()
 
     def generate_structured(
         self,
@@ -404,18 +401,14 @@ class GeminiGenerateContentClient(BaseLLMClient):
         if genai_types is None:
             return gen_config_kwargs
 
-        try:
-            thinking_level = effective_config.thinking_level
-            if thinking_level is None:
-                # Fallback based on model type
-                model_lower = self.option.model.lower()
-                is_pro_model = "pro" in model_lower
-                is_gemma_model = "gemma" in model_lower
-                if is_gemma_model:
-                    thinking_level = "HIGH"
-                else:
-                    thinking_level = "LOW" if is_pro_model else "MINIMAL"
+        thinking_level = effective_config.thinking_level
+        if thinking_level is None:
+            # Every Gemini entry in MODEL_REGISTRY declares a default level, so
+            # this is a model nobody has configured: send nothing and let it
+            # use its own default rather than guess a rung from its name.
+            return gen_config_kwargs
 
+        try:
             # Snap to a rung this model actually has. Gemma 4 offers only
             # MINIMAL/HIGH; Gemini 3.7 Flash and every Pro dropped MINIMAL.
             requested = thinking_level
@@ -536,19 +529,14 @@ class MistralClient(BaseLLMClient):
         effort is genuinely not comparable.
         """
         requested = effective_config.reasoning_effort
-        supported = self.option.supported_reasoning_efforts
-        if not requested or not supported:
-            return None
-        if requested in supported:
-            return requested
-        substitute = "high" if requested in ("medium", "xhigh", "max") else "none"
-        if substitute in supported:
+        effort = resolve_reasoning_effort(self.option, requested)
+        if effort is not None and effort != requested:
             LOGGER.debug(
                 "%s accepts only %s; requested effort %r sent as %r",
-                self.option.model, "/".join(supported), requested, substitute,
+                self.option.model, "/".join(self.option.supported_reasoning_efforts),
+                requested, effort,
             )
-            return substitute
-        return None
+        return effort
 
     def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
         if Mistral is None:
@@ -675,14 +663,7 @@ class MistralClient(BaseLLMClient):
         response = self._client.chat.complete(
             model=self.option.model,
             messages=messages,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_schema.__name__,
-                    "strict": True,
-                    "schema": response_schema.model_json_schema(),
-                },
-            },
+            response_format=_mistral_response_format(response_schema),
             **common,
         )
         self._record_usage(response)
@@ -741,16 +722,14 @@ class OpenRouterClient(BaseLLMClient):
         it, and otherwise degrades to the model's own default.
         """
         requested = effective_config.reasoning_effort
-        supported = self.option.supported_reasoning_efforts
-        if requested and requested in supported:
-            return requested
-        if requested and requested != self.option.default_reasoning_effort:
+        effort = resolve_reasoning_effort(self.option, requested)
+        if requested and requested != effort:
             LOGGER.debug(
                 "%s does not accept reasoning effort %r (accepts %s); using %r",
-                self.option.model, requested, ", ".join(supported) or "none",
-                self.option.default_reasoning_effort,
+                self.option.model, requested,
+                ", ".join(self.option.supported_reasoning_efforts) or "none", effort,
             )
-        return self.option.default_reasoning_effort
+        return effort
 
     def _extra_body(self, effective_config: LLMConfig) -> Dict[str, Any]:
         """Build the OpenRouter-only part of the request body."""
@@ -989,6 +968,25 @@ class SelfHostedClient(OpenRouterClient):
         return {}
 
 
+def _mistral_response_format(response_schema: Type[T]) -> Any:
+    """Render a Pydantic model as the ``response_format`` ``chat.parse()`` sends.
+
+    Strict mode wants ``additionalProperties: false`` on every object, which a
+    bare ``model_json_schema()`` does not emit; the SDK's own converter does.
+    The hand-built fallback exists only for an SDK that has moved the helper.
+    """
+    if response_format_from_pydantic_model is not None:
+        return response_format_from_pydantic_model(response_schema)  # type: ignore[misc]
+    return {  # pragma: no cover - only on an SDK without the helper
+        "type": "json_schema",
+        "json_schema": {
+            "name": response_schema.__name__,
+            "strict": True,
+            "schema": response_schema.model_json_schema(),  # type: ignore[attr-defined]
+        },
+    }
+
+
 def _response_format_param(response_schema: Type[T]) -> Dict[str, Any]:
     """Render a Pydantic model as an OpenAI ``response_format`` payload.
 
@@ -1056,35 +1054,13 @@ def _extract_json_payload(text: str) -> str:
     return text
 
 
-def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None, temperature: Optional[float] = None) -> BaseLLMClient:
-    """Build an LLM client with optional configuration.
+def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None) -> BaseLLMClient:
+    """Build the client for ``option``'s provider.
 
-    Args:
-        option: Model selection from MODEL_REGISTRY
-        config: Optional LLMConfig for customizing behavior
-        temperature: Deprecated - overrides the model's vendor-recommended default,
-                     which is rarely what you want (see LLMConfig). Kept only for
-                     backward compatibility.
-
-    Returns:
-        Configured LLM client ready for generate() calls
-
-    Example:
-        # Simple usage with defaults
-        client = build_llm_client(option)
-
-        # High-quality reasoning for complex tasks
-        config = LLMConfig(reasoning_effort="high", text_verbosity="medium")
-        client = build_llm_client(option, config=config)
-
-        # Fast processing with minimal thinking
-        config = LLMConfig(thinking_level="minimal")
-        client = build_llm_client(option, config=config)
+    ``config`` overrides the model's registry defaults field by field; leave
+    ``temperature`` out of it (see CLAUDE.md). For example
+    ``build_llm_client(option, config=LLMConfig(thinking_level="minimal"))``.
     """
-    # Backward compatibility: convert temperature to config
-    if temperature is not None:
-        config = (config or LLMConfig()).merged_over(LLMConfig(temperature=temperature))
-
     if option.provider == PROVIDER_OPENAI:
         return OpenAIResponsesClient(option, config)
     if option.provider == PROVIDER_GEMINI:

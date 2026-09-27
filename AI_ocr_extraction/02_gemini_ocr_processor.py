@@ -53,20 +53,10 @@ from common.gemini_page_processor import GeminiPageProcessor, PagePolicy, proces
 from common.gemini_utils import build_generation_config, build_gemini_client, get_thinking_level
 from common.llm_provider import GEMINI_DOCUMENT_MODELS, LLMConfig, get_model_option, summary_from_option
 from common.rate_limiter import RateLimiter
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 
-# Set up logging configuration for tracking OCR operations and errors
 script_dir = Path(__file__).resolve().parent
-log_dir = script_dir / 'log'
-log_dir.mkdir(exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename=log_dir / 'ocr_gemini_pdf.log',
-)
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+LOG_FILE = script_dir / 'log' / 'ocr_gemini_pdf.log'
 
 # User request sent alongside each page; the system instruction carries the
 # detailed OCR rules.
@@ -113,6 +103,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     """Orchestrate the page-by-page PDF OCR process."""
     args = parse_args()
+    configure_logging(log_file=LOG_FILE, terminal=False)
 
     console.print(Panel(
         "[bold]AI-Powered PDF OCR using Google Gemini[/bold]\n"

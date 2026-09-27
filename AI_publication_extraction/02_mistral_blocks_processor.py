@@ -58,7 +58,7 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import key_value_table
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.mistral_ocr import (
     MISTRAL_OCR_MODEL,
     MistralOcrClient,
@@ -73,14 +73,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PDF_DIR = SCRIPT_DIR / "PDF"
 RESULTS_DIR = SCRIPT_DIR / "OCR_Results"
 LOG_DIR = SCRIPT_DIR / "log"
-LOG_DIR.mkdir(exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    filename=LOG_DIR / "ocr_blocks.log",
-)
-install_credential_redaction()
 
 #: Bumped when the block→text rules change, so ``--force`` is not the only way
 #: to tell an old sidecar from one this version would produce.
@@ -229,6 +221,7 @@ def main() -> int:
         "--pdf-dir", type=Path, default=PDF_DIR, help=f"Source directory (default: {PDF_DIR})."
     )
     args = parser.parse_args()
+    configure_logging(log_file=LOG_DIR / "ocr_blocks.log", terminal=False)
 
     console.print(Panel(
         "[bold]Structured OCR for scholarly publications[/]\n"

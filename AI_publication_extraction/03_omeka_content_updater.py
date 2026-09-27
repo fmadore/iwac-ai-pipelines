@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import logging
 from pathlib import Path
 from typing import List
 
@@ -48,7 +49,7 @@ from common.iwac_config import (
     model_annotation_value,
 )
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.write_guard import add_write_guard_args
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import (
@@ -67,8 +68,6 @@ BACKUP_DIR = SCRIPT_DIR / "output"
 CONTENT_TERM = "bibo:content"
 OCR_MODEL_TERM = "iwac:ocrModel"
 DEFAULT_MODEL_KEY = "mistral-ocr-4-1"
-
-install_credential_redaction()
 
 
 def _sidecar_note(updates: List[TextUpdate]) -> str:
@@ -109,6 +108,7 @@ def main() -> int:
     add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
     parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest files; requires --model.")
     args = parser.parse_args()
+    configure_logging(logging.WARNING)
 
     console.print(Panel(
         "[bold]Write extracted publication text to Omeka S[/]\n\n"

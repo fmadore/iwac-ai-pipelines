@@ -55,7 +55,7 @@ from common.console_utils import key_value_table, standard_progress
 from common.iwac_config import BIBO_CITES_PROPERTY_ID
 from common.llm_provider import LLMConfig, build_llm_client, get_model_option
 from common.llm_registry import TEXT_ECONOMY_MODELS
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.omeka_client import OmekaClient
 from common.write_guard import WriteGuard, add_write_guard_args
 
@@ -65,14 +65,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = SCRIPT_DIR / "OCR_Results"
 OUTPUT_DIR = SCRIPT_DIR / "output"
 LOG_DIR = SCRIPT_DIR / "log"
-LOG_DIR.mkdir(exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    filename=LOG_DIR / "citations.log",
-)
-install_credential_redaction()
 
 PROMPT_PATH = SCRIPT_DIR / "citation_extraction_prompt.md"
 CITES_TERM = "bibo:cites"
@@ -363,6 +355,7 @@ def main() -> int:
     )
     add_write_guard_args(parser, default_backup_dir=OUTPUT_DIR)
     args = parser.parse_args()
+    configure_logging(log_file=LOG_DIR / "citations.log", terminal=False)
 
     console.print(Panel(
         "[bold]Extract cited works from scholarly apparatus[/]\n\n"

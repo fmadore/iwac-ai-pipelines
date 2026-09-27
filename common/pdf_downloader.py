@@ -295,7 +295,7 @@ def run_cli(
     from rich.console import Console
     from rich.panel import Panel
 
-    from common.log_redaction import install_credential_redaction
+    from common.log_redaction import configure_logging
 
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--item-set-id", type=int, help="Omeka S item set to download from (asked when omitted).")
@@ -306,15 +306,7 @@ def run_cli(
     )
     args = parser.parse_args(argv)
 
-    log_dir = pipeline_dir / "log"
-    log_dir.mkdir(exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO, filename=log_dir / "pdf_download.log", filemode="a",
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
-    # Credentials ride in Omeka query strings; keep them out of anything
-    # urllib3 decides to log.
-    install_credential_redaction()
+    configure_logging(log_file=pipeline_dir / "log" / "pdf_download.log", terminal=False)
 
     console = Console()
     console.print(Panel(description, title="Omeka S PDF Downloader", border_style="cyan"))

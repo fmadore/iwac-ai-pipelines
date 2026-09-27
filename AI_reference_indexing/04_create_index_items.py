@@ -23,6 +23,7 @@ import argparse
 import csv
 import os
 import sys
+import logging
 from datetime import datetime
 import uuid
 from contextlib import nullcontext
@@ -49,12 +50,8 @@ from common.iwac_config import (  # noqa: E402
 )
 from common.console_utils import standard_progress  # noqa: E402
 from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.checkpoint import JsonCheckpoint, fingerprint
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 
@@ -213,6 +210,7 @@ def main() -> int:
     )
     add_write_guard_args(parser, default_backup_dir=Path(OUTPUT_DIR))
     args = parser.parse_args()
+    configure_logging(logging.WARNING)
     guard = WriteGuard.from_args(args, default_backup_dir=Path(OUTPUT_DIR))
 
     type_config = AUTHORITY_TYPE_CONFIG[args.type]

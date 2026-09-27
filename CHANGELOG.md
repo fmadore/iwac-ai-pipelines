@@ -1,5 +1,93 @@
 # Changelog
 
+Releases are tagged on GitHub and archived on Zenodo (concept DOI
+[10.5281/zenodo.21804210](https://doi.org/10.5281/zenodo.21804210)). The
+second half of this file holds the operational history that used to live as
+comments beside the constants it explains — kept because an annotation on the
+archive can only be read back with it, moved here so the code states rules and
+the changelog tells stories.
+
+## 2026-09-26 — One logging setup; Gemini 3.8 Flash and GPT-6 Sol registered
+
+### Logging
+- `common.log_redaction.configure_logging()` replaces the 23 hand-written
+  `logging.basicConfig` calls, eight of them wrapped in a script's own
+  `setup_logging()` or `configure_logging()`. It always installs credential redaction and holds `httpx` at
+  WARNING below DEBUG — httpx, under the OpenAI, Mistral and Gemini SDKs, logged
+  one line per request, 12,000 of them on a summary pass.
+- Every entry point calls it in `main()`. Five scripts (HTR, Gemini OCR and
+  publication steps 01, 02 and 04) used to create `log/` and open a log file at
+  import, so a test importing them wrote into the repository.
+  Scripts that never configured logging now call it at WARNING, which keeps them
+  as quiet as before. A test forbids `logging.basicConfig` in any entry point.
+
+### Models
+- `gemini-3.8-flash`: registered with `low`/`medium`/`high` from Google's
+  documentation — not yet probed live — and offered only where no model is
+  stamped: `TEXT_FULL_MODELS` (OCR correction) and the video summary. `gemini`
+  and `flash` still mean 3.7 Flash, which has an authority item.
+- `gpt-6-sol` takes the Sol slot as GPT-6 Luna took Luna's: `sol` and the
+  retired `gpt-5` / `gpt-5.1` keys resolve to it, and it replaces GPT-5.6 Sol in
+  `TEXT_FULL_MODELS`. `gpt-5.6-sol` stays reachable by its own key and `gpt-5.6`.
+- The video summary's model menu is built from one `ALLOWED_MODELS` table.
+
+### Tracking
+- `docs/PENDING.md` lists what is unfinished and what closes each item: the live
+  probes and authority items both models need before promotion, the 2026-10-23
+  GPT-5 shutdown and the 2027-01-01 Gemini 3.8 Flash price change, and the code
+  changes from the review that need a decision.
+
+## 2026-09-26 — Review: provenance, efficiency, shared helpers
+
+### Provenance
+- A checkpoint now records the reasoning effort Mistral Small 4 was actually
+  sent. The client rounded `medium` up to `high` (and `low` down to `none`),
+  but `model_context()` recorded no effort at all. One
+  `llm_registry.resolve_reasoning_effort()` now serves both clients and the
+  record, and `model_defaults()` replaces the two copies of the registry
+  defaults. Only runs on `mistral-small` see a changed fingerprint.
+- `AI_audio_summary/03` holds back a recording whose transcript still has a
+  segment marked `TRANSCRIPTION FAILED`, as `AI_youtube_transcription/03`
+  already did; `--include-incomplete` uploads it anyway. Before this the
+  marker went into `bibo:content` as though it were speech.
+
+### Provider calls
+- Nothing picks a thinking rung from a model's name any more. The Gemini text
+  client sends no `thinking_config` when a model declares no default, and
+  `gemini_utils.get_thinking_level()` asks for `minimal` and lets the registry
+  clamp it, instead of guessing `low` for anything named "pro".
+- Mistral's reasoning path sends the schema `chat.parse()` would
+  (`response_format_from_pydantic_model`, with `additionalProperties: false`)
+  rather than a bare `model_json_schema()`.
+- `build_llm_client(temperature=...)` and `build_generation_config(temperature=...)`
+  are removed. Neither had a caller.
+- The OpenAI text path no longer sends `tools=[]` or the default text format,
+  and reads `output_text` alone; the dict-walking fallback could not run.
+
+### Efficiency
+- Gemini Transcribe (`AI_audio_summary/02c`) uploads each file once and reuses
+  it across retries. It used to re-send twenty minutes of audio to wait out a
+  23-second throttle.
+- `retry_with_backoff` waits as long as a server says to ("Please retry in
+  23.3s") when that is longer than its own backoff.
+- `UsageTotals` takes a lock: `AI_summary/02` shares one client across worker
+  threads, and the unlocked counters could undercount tokens and cost.
+
+### Shared code
+- `gemini_utils.finish_reason_name()` and `TRUNCATION_MARKER` replace a helper
+  copied into the audio and YouTube transcribers and three spellings of the
+  truncation marker. The marker now reads the same in OCR, HTR, audio and
+  YouTube output (ASCII hyphen). Files written before this keep the em dash.
+- `AI_audio_summary/03` and `AI_youtube_transcription/03` take their write-safety
+  flags from `add_write_guard_args()` like every other write step.
+- `AI_summary` reports progress through `console_utils.standard_progress()`.
+  `tqdm` printed its rich markup literally, and it is no longer a dependency.
+- `serving/` entry points install credential redaction, and the test enforcing
+  it now covers that directory.
+- `stream_download()` uses `Path.replace`, so re-downloading over a stale copy
+  works on Windows. `WriteGuard.dump_backup()` writes atomically.
+- Removed `pdf_utils.extract_pdf_page()`, unused since `PdfPageSource`.
+
 ## 2026-09-22 — GPT-6 Luna for text pipelines
 
 - Switch Luna defaults, text model selections and generic OpenAI aliases to
@@ -10,14 +98,6 @@
 - Verify Responses API, structured output and reasoning compatibility against
   https://developers.openai.com/api/docs/models/gpt-6-luna; Standard input/cached
   input/output rates are $0.10/$0.01/$0.50 per million tokens.
-
-
-Releases are tagged on GitHub and archived on Zenodo (concept DOI
-[10.5281/zenodo.21804210](https://doi.org/10.5281/zenodo.21804210)). The
-second half of this file holds the operational history that used to live as
-comments beside the constants it explains — kept because an annotation on the
-archive can only be read back with it, moved here so the code states rules and
-the changelog tells stories.
 
 ## 1.2.0 — 2026-09-07
 

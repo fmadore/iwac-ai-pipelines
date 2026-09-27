@@ -13,20 +13,36 @@ which query parameters are secret. So the redaction belongs at the logging
 layer, applied once to the root logger, rather than in a ``logger.warning()``
 call that was never the problem.
 
-Usage — call once, immediately after ``logging.basicConfig``::
+Usage — an entry point configures logging once, at the top of ``main()``,
+and redaction comes with it::
 
-    from common.log_redaction import install_credential_redaction
-    install_credential_redaction()
+    from common.log_redaction import configure_logging
+    configure_logging(log_file=SCRIPT_DIR / "log" / "ocr.log")
+
+``install_credential_redaction()`` on its own is for the few entry points
+that hand logging setup to a shared runner.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
-from typing import Iterable, Optional
+from pathlib import Path
+from typing import Any, Iterable, Optional, TextIO, Union
 
 __all__ = ["REDACTED", "redact", "scrub_known_secrets",
-           "CredentialRedactingFilter", "install_credential_redaction"]
+           "CredentialRedactingFilter", "install_credential_redaction",
+           "configure_logging", "LOG_FORMAT"]
+
+#: The line format of every plain stream and log file the pipelines write.
+LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+
+#: Loggers that narrate every HTTP request at INFO. httpx sits under the
+#: OpenAI, Mistral and google-genai SDKs and logs one line per call, which on
+#: a 12,000-article run is 12,000 lines under the progress bar. Held at WARNING
+#: unless the run asks for DEBUG; the SDKs' own retry notices are untouched.
+_REQUEST_LOGGERS = ("httpx", "httpcore")
 
 #: What a scrubbed value is replaced with. Deliberately visible: a log that
 #: reads ``key_credential=<redacted>`` tells you the filter ran, whereas a
@@ -223,3 +239,61 @@ def install_credential_redaction(
             named.addFilter(log_filter)
 
     return log_filter
+
+
+def configure_logging(
+    level: int = logging.INFO,
+    *,
+    log_file: Optional[Union[str, os.PathLike]] = None,
+    console: Optional[Any] = None,
+    stream: Optional[TextIO] = None,
+    terminal: bool = True,
+    fmt: str = LOG_FORMAT,
+    datefmt: Optional[str] = None,
+) -> None:
+    """Configure the root logger for an entry point, credential redaction included.
+
+    One call in place of ``logging.basicConfig`` plus
+    :func:`install_credential_redaction`, so the second can no longer be
+    forgotten. Call it from ``main()``, not at import: a script imported by a
+    test must not open log files in the repository.
+
+    Args:
+        level: Root level. ``WARNING`` keeps a quiet script quiet.
+        log_file: Also append to this file; its folder is created.
+        console: A rich ``Console`` to log through (``RichHandler``, message
+            only, rich tracebacks) — for scripts drawing progress bars on it.
+        stream: Where the plain terminal handler writes (default stderr).
+            ``sys.stdout`` suits a Slurm job, whose log is stdout.
+        terminal: False to log to ``log_file`` only.
+        fmt, datefmt: Format of the plain and file handlers.
+    """
+    if not terminal and log_file is None:
+        raise ValueError("configure_logging needs a terminal or a log_file")
+
+    # As with basicConfig, a process whose root logger already has handlers —
+    # pytest's, or a caller's — is left as it is. Checked before any handler is
+    # built, because building a FileHandler already creates the file.
+    if not logging.getLogger().handlers:
+        handlers = []
+        if terminal:
+            if console is not None:
+                from rich.logging import RichHandler
+
+                handler = RichHandler(console=console, rich_tracebacks=True, show_path=False)
+                handler.setFormatter(logging.Formatter("%(message)s", datefmt="[%X]"))
+            else:
+                handler = logging.StreamHandler(stream)
+                handler.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+            handlers.append(handler)
+        if log_file is not None:
+            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+            handler.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+            handlers.append(handler)
+        logging.basicConfig(level=level, handlers=handlers)
+
+    if level > logging.DEBUG:
+        for name in _REQUEST_LOGGERS:
+            logging.getLogger(name).setLevel(logging.WARNING)
+    install_credential_redaction()

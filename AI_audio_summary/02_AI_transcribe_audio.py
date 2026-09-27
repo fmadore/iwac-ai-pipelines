@@ -6,6 +6,7 @@ Video files are automatically converted to audio before transcription.
 """
 
 import argparse
+import logging
 import os
 import random
 import time
@@ -21,20 +22,18 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.gemini_utils import (
     INLINE_REQUEST_LIMIT_BYTES,
+    TRUNCATION_MARKER,
     build_generation_config,
     build_gemini_client,
     delete_uploaded_file,
     extract_text_from_response,
+    finish_reason_name,
     upload_and_wait_active,
 )
 from common.prompt_loader import select_prompt_interactive
 from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
 from common.ffmpeg_utils import get_mime_type
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 from rich.panel import Panel
 from rich.table import Table
@@ -91,20 +90,6 @@ class _RetryableResponse(Exception):
     """
 
 
-def _finish_reason_code(finish_reason) -> str:
-    """Return the bare finish-reason name (e.g. ``MAX_TOKENS``).
-
-    Tolerates a ``types.FinishReason`` enum, a plain string, or ``None``.
-    """
-    if finish_reason is None:
-        return "UNKNOWN"
-    name = getattr(finish_reason, "name", None)
-    if name:
-        return name
-    text = str(finish_reason)
-    return text.rsplit(".", 1)[-1] if "." in text else text
-
-
 class AudioTranscriber(TranscriberBase):
     def __init__(
         self,
@@ -120,7 +105,7 @@ class AudioTranscriber(TranscriberBase):
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
             model (str, optional): Model to use — 'gemini-pro-latest', 'gemini-3.7-flash', or
-                'gemini-flash-lite-latest'. Default is 'gemini-pro-latest'.
+                'gemini-flash-lite-latest'. Default is 'gemini-3.7-flash'.
                 The Flash slot names a pinned release where the other two roll,
                 because each transcript records ``Generated using: Google
                 <model>`` in its header — and "gemini-flash-latest" names no
@@ -318,13 +303,13 @@ class AudioTranscriber(TranscriberBase):
         feedback = getattr(response, "prompt_feedback", None)
         block_reason = getattr(feedback, "block_reason", None) if feedback else None
         if block_reason:
-            raise _RetryableResponse(f"prompt-blocked-{_finish_reason_code(block_reason)}")
+            raise _RetryableResponse(f"prompt-blocked-{finish_reason_name(block_reason)}")
 
         if not response.candidates:
             raise _RetryableResponse("no-candidates")
 
         candidate = response.candidates[0]
-        code = _finish_reason_code(candidate.finish_reason)
+        code = finish_reason_name(candidate.finish_reason)
 
         # MAX_TOKENS: salvage partial text rather than discarding the segment.
         if code == "MAX_TOKENS":
@@ -334,7 +319,7 @@ class AudioTranscriber(TranscriberBase):
                     f"[yellow]⚠[/] Output truncated (MAX_TOKENS) for [cyan]{audio_file_path.name}[/] "
                     f"— partial transcription kept"
                 )
-                return partial + "\n\n[... TRANSCRIPTION TRUNCATED — OUTPUT EXCEEDED MAX TOKENS ...]"
+                return partial + TRUNCATION_MARKER
             raise _RetryableResponse("MAX_TOKENS")
 
         text = extract_text_from_response(response)
@@ -863,6 +848,7 @@ def build_transcriber(args) -> tuple[AudioTranscriber, str]:
 def main() -> int:
     """Run the audio transcription CLI."""
     args = parse_args()
+    configure_logging(logging.WARNING)
 
     # Display welcome banner
     console.print(Panel(

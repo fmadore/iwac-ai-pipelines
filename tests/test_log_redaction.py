@@ -4,6 +4,7 @@ The regression these guard is real: a 2026-08-03 sentiment run wrote live Omeka
 API keys into a log file via three ``urllib3.connectionpool`` retry warnings.
 """
 
+import contextlib
 import io
 import logging
 import re
@@ -12,9 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pytest  # noqa: E402
+
 from common.log_redaction import (  # noqa: E402
     REDACTED,
     CredentialRedactingFilter,
+    configure_logging,
     install_credential_redaction,
     redact,
     scrub_known_secrets,
@@ -149,24 +153,27 @@ def _entry_points():
     repo_root = Path(__file__).resolve().parent.parent
     candidates = sorted(repo_root.glob("AI_*/*.py")) + sorted(
         repo_root.glob("NotebookLM/*.py")
-    )
+    ) + sorted(repo_root.glob("serving/*.py"))
     for script in candidates:
         source = script.read_text(encoding="utf-8")
         if re.search(r'if __name__ == ["\']__main__["\']', source):
             yield script.relative_to(repo_root).as_posix(), source
 
 
+_INSTALL_CALL = re.compile(r"^\s*(configure_logging\(|install_credential_redaction\(\))", re.M)
+
+
 def test_every_entry_point_installs_redaction():
     """Every runnable script must install the filter.
 
-    Not only the ones that configure logging: with no handler on the root
-    logger a warning still reaches stderr through ``logging.lastResort``, so a
-    script that never calls ``basicConfig`` leaks just as readily. Most entry
-    points in this repo are in exactly that state.
+    Not only the ones that log much: with no handler on the root logger a
+    warning still reaches stderr through ``logging.lastResort``, so a script
+    that never configures logging leaks just as readily. ``configure_logging()``
+    installs it; the two PDF-downloader wrappers, which hand logging to a
+    shared runner, call ``install_credential_redaction()`` directly.
     """
     offenders = [
-        name for name, source in _entry_points()
-        if "install_credential_redaction()" not in source
+        name for name, source in _entry_points() if not _INSTALL_CALL.search(source)
     ]
     assert offenders == [], f"entry points not installing redaction: {offenders}"
 
@@ -175,15 +182,88 @@ def test_redaction_call_never_precedes_its_import():
     """A call above its import is a NameError on startup, not a lint nit."""
     offenders = []
     for name, source in _entry_points():
-        lines = source.splitlines()
-        imported = next(
-            (i for i, ln in enumerate(lines)
-             if "from common.log_redaction import" in ln), None
-        )
-        called = next(
-            (i for i, ln in enumerate(lines)
-             if re.match(r"\s*install_credential_redaction\(\)", ln)), None
-        )
-        if imported is None or called is None or called < imported:
+        imported = source.find("from common.log_redaction import")
+        called = _INSTALL_CALL.search(source)
+        if imported < 0 or called is None or called.start() < imported:
             offenders.append(name)
     assert offenders == [], f"install called before it is imported: {offenders}"
+
+
+def test_no_entry_point_configures_logging_by_hand():
+    """One setup, so redaction and the quiet request loggers come with it —
+    and never at import, where a test importing the script would open log
+    files in the repository."""
+    offenders = [
+        name for name, source in _entry_points()
+        if "logging.basicConfig(" in source
+        or re.search(r"^(configure_logging|install_credential_redaction)\(", source, re.M)
+        and "pdf_downloader" not in name
+    ]
+    assert offenders == [], f"entry points configuring logging by hand or at import: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# configure_logging()
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def bare_root():
+    """An unconfigured root logger for the duration, then the real one back.
+
+    Entered inside the test body: pytest attaches its capture handlers to the
+    root when the call phase starts, and ``basicConfig`` does nothing while any
+    handler is present — the behaviour that keeps a script run under test from
+    opening its log file.
+    """
+    root = logging.getLogger()
+    saved = (root.handlers[:], root.filters[:], root.level, logging.getLogger("httpx").level)
+    root.handlers, root.filters = [], []
+    try:
+        yield root
+    finally:
+        for handler in root.handlers:
+            handler.close()
+        root.handlers, root.filters, level, httpx_level = saved
+        root.setLevel(level)
+        logging.getLogger("httpx").setLevel(httpx_level)
+
+
+def test_configure_logging_redacts_what_it_writes(tmp_path):
+    log_file = tmp_path / "log" / "run.log"
+    with bare_root() as root:
+        configure_logging(log_file=log_file, terminal=False)
+        logging.getLogger("urllib3.connectionpool").warning("Retrying %s", OMEKA_URL)
+        assert all(any(isinstance(f, CredentialRedactingFilter) for f in h.filters)
+                   for h in root.handlers)
+
+    written = log_file.read_text(encoding="utf-8")
+    assert "Retrying" in written
+    assert IDENTITY not in written and CREDENTIAL not in written
+
+
+def test_configure_logging_quiets_per_request_lines_unless_debugging():
+    with bare_root():
+        configure_logging(stream=io.StringIO())
+        assert logging.getLogger("httpx").getEffectiveLevel() == logging.WARNING
+
+
+def test_configure_logging_keeps_request_lines_at_debug():
+    with bare_root():
+        logging.getLogger("httpx").setLevel(logging.NOTSET)
+        configure_logging(logging.DEBUG, stream=io.StringIO())
+        assert logging.getLogger("httpx").getEffectiveLevel() == logging.DEBUG
+
+
+def test_configure_logging_needs_somewhere_to_write():
+    with bare_root(), pytest.raises(ValueError):
+        configure_logging(terminal=False)
+
+
+def test_an_already_configured_process_gets_no_log_file(tmp_path):
+    """Under pytest the root already has handlers; a script's main() must not
+    open its log file in the repository then."""
+    log_file = tmp_path / "log" / "run.log"
+    with bare_root() as root:
+        root.addHandler(logging.NullHandler())
+        configure_logging(log_file=log_file, terminal=False)
+    assert not log_file.parent.exists()

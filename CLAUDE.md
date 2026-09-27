@@ -50,7 +50,7 @@ modules in depth; the rest are only described here:
 | module | purpose |
 |---|---|
 | `iwac_config.py` | IWAC-instance constants: property IDs, authority item sets, `AI_MODEL_ITEMS` |
-| `gemini_utils.py` | Gemini plumbing for multimodal scripts: generation config, Files API upload, text extraction that skips `thought` parts |
+| `gemini_utils.py` | Gemini plumbing for multimodal scripts: generation config, Files API upload, text extraction that skips `thought` parts, `finish_reason_name()`, the shared `TRUNCATION_MARKER` |
 | `gemini_page_processor.py` | The page-by-page Gemini PDF loop shared by OCR and HTR: inline→Files-API fallback, retry policy, `finish_reason` handling, page markers, batch driver |
 | `omeka_text_updater.py` | The `03` write step shared by summary/OCR/correction/transcription: change detection, `@annotation` attachment, `@language`-tagged values, several values per item in one PATCH, `--dry-run`, confirmation gate |
 | `omeka_link_updater.py` | The same idempotent write for *resource-link* properties (`dcterms:subject`, `dcterms:spatial`): dedup against existing links, `iwac:nerModel` annotation on every link added, whole-item PATCH, `dry_run`, pre-write snapshot; `provenance_model_key()` follows a `*_reconciled.csv` back to the checkpoint that names its model |
@@ -58,13 +58,17 @@ modules in depth; the rest are only described here:
 | `link_update_cli.py` | The whole link write step shared by `AI_NER/03` and `AI_reference_indexing/05`: provenance model from the checkpoint, batch pre-fetch, annotated links, gate and dump |
 | `reconciliation_cli.py` | The whole reconciliation run shared by `AI_NER/02` and `AI_reference_indexing/03` |
 | `checkpoint.py` | Atomic JSON checkpoints for resumable runs: a stored fingerprint of model, prompt and input decides resume vs. regenerate; `read_checkpoint_context()` is how a write step learns which model made the file it uploads |
-| `log_redaction.py` | `install_credential_redaction()`, called by every entry point: masks Omeka and provider keys in anything urllib3 or an SDK logs, since Omeka only accepts credentials as query parameters and `requests` echoes the URL in its error messages |
+| `artifacts.py` | The `.artifact.json` sidecar beside each output file: invalidated before generation, committed last with source and output hashes; `validated_model()` refuses mixed or tampered output before a write step builds a single PATCH |
+| `run_context.py` | `model_context()`: the model and configuration a run *sends*, after the same clamping the client applies — what checkpoints and sidecars record |
+| `outcomes.py` | `batch_exit_code()`: failed, missing, empty or incomplete requested items make a batch exit non-zero |
+| `instrument.py` | The model/reasoning/prompt identity that offline sentiment annotation, shard merging and cache import compare |
+| `log_redaction.py` | `configure_logging()`, called at the top of every entry point's `main()` and never at import: root logger, `httpx` held at WARNING, and credential redaction, which masks Omeka and provider keys in anything urllib3 or an SDK logs — Omeka only accepts credentials as query parameters and `requests` echoes the URL in its error messages |
 | `console_utils.py` | `standard_progress()`, `key_value_table()`, `count_table()` — one definition of the rich furniture every pipeline prints |
 | `downloader.py` | `stream_download()` — streaming download via a `.part` temp file, used by the PDF and media downloaders |
 | `prompt_loader.py` | Discovery and interactive selection for pipelines holding several `prompts/*.md` |
 | `mistral_ocr.py` | Mistral Document AI: the pinned OCR model id, Markdown→plain-text normalisation, block classification (body / apparatus / furniture) and the >50 MB split. Shared by `AI_ocr_extraction/02` and `AI_publication_extraction/02` |
 | `pdf_downloader.py` | Shared Omeka PDF download step (`AI_ocr_extraction/01`, `AI_summary_issue/01`) |
-| `pdf_utils.py` | `PdfPageSource` (parse once, serve many pages) plus one-off page extraction and page counts |
+| `pdf_utils.py` | `PdfPageSource` (parse once, serve many pages) and page counts |
 | `reconciliation.py` | Fuzzy matching of extracted entities against authority records |
 
 ## Architecture rules
@@ -99,7 +103,7 @@ yet been benchmarked here. A pipeline overriding the shared default must say why
 does it.
 
 **Never set `temperature` in a pipeline.** It belongs to the vendor and lives once
-in `MODEL_REGISTRY`: nothing at all for Gemini 3 / Gemma, `1.0` for DeepSeek V4,
+in `MODEL_REGISTRY`: nothing at all for Gemini 3 / Gemma, `1.0` for DeepSeek V4 and Qwen3.8,
 `0.7` for Qwen3.5, and the model-specific Mistral default. A pipeline picks a *tier*, so it cannot know
 whose model the run will land on, and the values are not interchangeable — Google
 and Alibaba both document a lowered temperature as a cause of looping, which here
@@ -245,14 +249,18 @@ progress bars and the standard tables. Beyond that, match the surrounding code.
 
 Scripts put the repo root on `sys.path` with one canonical line —
 `sys.path.insert(0, str(Path(__file__).resolve().parent.parent))`. `insert`, not
-`append`: with `append`, a same-named module earlier on the path shadows `common`.
+`append`: with `append`, a same-named module earlier on the path shadows `common`. Logging
+is set up by `configure_logging()` in `main()`, never by `logging.basicConfig`
+or at import.
 Text pipelines do not call `load_dotenv()` themselves — `llm_provider` loads it
 on import and `OmekaClient.from_env()` again; multimodal scripts that read a
 key before building any client still do. `main()` returns an exit code. A
 library module never touches `sys.stdout` on import.
 
 Incident history belongs in `CHANGELOG.md`, not beside the constant it
-explains: the code states the rule, the changelog tells the story.
+explains: the code states the rule, the changelog tells the story. Work left
+unfinished goes in `docs/PENDING.md` with what closes it; read it before adding
+or promoting a model, and remove an entry once it is done.
 
 Written output is calibrated to the task: a changelog entry, a README section or a
 docstring covers the substance and stops. No filler sections, no redundant summary

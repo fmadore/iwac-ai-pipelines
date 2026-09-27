@@ -149,3 +149,24 @@ def test_ner_deduplicates_items_shared_by_multiple_sets():
         {"o:id": 2},
         {"o:id": 1, "title": "duplicate"},
     ]) == [{"o:id": 1, "title": "first"}, {"o:id": 2}]
+
+
+def test_summaries_run_the_same_across_worker_threads(tmp_path):
+    """The threaded path shares one client and one checkpoint; it must count
+    and resume exactly as the sequential one does."""
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    for name in "abcdef":
+        (input_dir / f"{name}.txt").write_text(f"article {name}", encoding="utf-8")
+    checkpoint = JsonCheckpoint.open(
+        tmp_path / "fr" / ".summary_checkpoint.json", {"model": "pinned", "prompt": "one"}
+    )
+
+    def run():
+        return summary.process_txt_files(
+            _bilingual_client(), str(input_dir), str(tmp_path / "fr"), str(tmp_path / "en"),
+            "system", checkpoint, workers=3,
+        )
+
+    assert run() == (6, 0, 0)
+    assert run() == (0, 0, 6)
