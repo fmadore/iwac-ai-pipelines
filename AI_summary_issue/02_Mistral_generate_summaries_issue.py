@@ -67,7 +67,7 @@ from common.llm_provider import DEFAULT_TEXT_MODEL_KEY, ModelOption, get_model_o
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
 from common.mistral_ocr import MISTRAL_OCR_MODEL  # noqa: E402
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 
 # Shared magazine-extraction building blocks (models, prompts, step skeletons)
 from magazine_extraction import (  # noqa: E402
@@ -88,10 +88,6 @@ except ImportError as exc:
 # ------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 load_dotenv()
 
 # Retry configuration
@@ -370,6 +366,7 @@ def process_magazine(model_step2: ModelOption, pdf_path: Path, output_dir: Path,
 # ------------------------------------------------------------------
 def main() -> int:
     """Main entry point of the script."""
+    configure_logging()
     try:
         load_dotenv()
 

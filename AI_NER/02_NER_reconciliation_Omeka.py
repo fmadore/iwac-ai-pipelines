@@ -22,22 +22,20 @@ Usage:
 """
 
 import sys
+import logging
 from pathlib import Path
 from typing import Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common.log_redaction import install_credential_redaction  # noqa: E402
+from common.log_redaction import configure_logging  # noqa: E402
 from common.reconciliation_cli import main as run_main  # noqa: E402
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 TAG_SUBJECT_AND_TOPIC = "subject_and_topic"
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    configure_logging(logging.WARNING)
     return run_main(
         argv,
         output_dir=OUTPUT_DIR,

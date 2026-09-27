@@ -45,7 +45,6 @@ from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.table import Table
-from rich.logging import RichHandler
 from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -57,7 +56,7 @@ from common.llm_provider import (
     get_model_option,
 )
 from common.console_utils import standard_progress
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "AI_sentiment_analysis"))
 from sentiment_core import (  # noqa: E402
@@ -77,17 +76,6 @@ ARTICLE_CLASS_ID = 36
 DEFAULT_MODEL = "qwen3.8-27b-selfhosted"
 DEFAULT_ARTICLES = 2
 DEFAULT_REPEATS = 3
-
-
-def configure_logging() -> logging.Logger:
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
-    )
-    install_credential_redaction()
-    return logging.getLogger(__name__)
 
 
 def fetch_articles(
@@ -274,7 +262,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_argument_parser().parse_args()
-    logger = configure_logging()
+    configure_logging(logging.WARNING, console=console)
+    logger = logging.getLogger(__name__)
 
     option = get_model_option(args.model)
     levels = (

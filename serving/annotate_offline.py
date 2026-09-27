@@ -59,7 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.llm_provider import LLMConfig, build_llm_client, get_model_option
 from common.checkpoint import sha256_text
 from common.instrument import record_identity
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "AI_sentiment_analysis"))
 from sentiment_core import (  # noqa: E402
@@ -80,21 +80,6 @@ DEFAULT_CONCURRENCY = 6
 #: annotated exactly as it would be in production rather than at the registry
 #: default, so the output is comparable with a normal pilot.
 PANEL_MEMBER_KEY = "qwen3_8_27b"
-
-
-def configure_logging() -> logging.Logger:
-    # Plain stdout: this runs unattended into a Slurm log, where rich's progress
-    # rendering would arrive as a wall of escape codes.
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
-    # The endpoint key rides in a Bearer header, and a Slurm log is a file
-    # other people read.
-    install_credential_redaction()
-    return logging.getLogger("annotate")
 
 
 def load_done(path: Path, prompt_id: str, effort: Optional[str],
@@ -188,7 +173,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_argument_parser().parse_args()
-    logger = configure_logging()
+    # Plain stdout: this runs unattended into a Slurm log, where rich's progress
+    # rendering would arrive as a wall of escape codes — and the endpoint key
+    # rides in a Bearer header, in a file other people read.
+    configure_logging(stream=sys.stdout, fmt="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    logger = logging.getLogger("annotate")
 
     payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
     system_prompt = payload["system_prompt"]

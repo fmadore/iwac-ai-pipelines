@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.console_utils import count_table, key_value_table
 from common.iwac_config import YOUTUBE_VIDEO_ITEM_SETS, YOUTUBE_VIDEO_TEMPLATE_ID
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.omeka_client import OmekaClient
 
 from youtube_source import VideoWork, format_hms, parse_iso_duration, parse_video_id, write_work_list
@@ -53,22 +53,6 @@ WORK_LIST_PATH = SCRIPT_DIR / "work" / "youtube_videos.json"
 
 #: Omeka returns at most 100 resources per page whatever is requested.
 PAGE_SIZE = 100
-
-
-def setup_logging(log_folder: Path) -> None:
-    """Configure logging to file and console."""
-    log_folder.mkdir(exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_folder / "youtube_fetch.log", mode="a", encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
-    # Credentials ride in Omeka query strings; keep them out of anything
-    # urllib3 or an SDK decides to log.
-    install_credential_redaction()
 
 
 def first_value(item: Dict[str, Any], term: str) -> str:
@@ -223,7 +207,7 @@ def report(videos: List[VideoWork], skipped: List[VideoWork], rejected: List[int
 
 def main() -> int:
     args = parse_args()
-    setup_logging(SCRIPT_DIR / "log")
+    configure_logging(log_file=SCRIPT_DIR / "log" / "youtube_fetch.log")
 
     console.print(Panel(
         "Read YouTube-hosted audiovisual items from Omeka S and write the work "

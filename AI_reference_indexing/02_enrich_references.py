@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import logging
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -61,12 +62,8 @@ from common.llm_provider import (  # noqa: E402
     summary_from_option,
 )
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction  # noqa: E402
+from common.log_redaction import configure_logging  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
-
-# Credentials ride in provider headers; keep them out of anything an SDK
-# decides to log.
-install_credential_redaction()
 
 console = Console()
 
@@ -339,6 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    configure_logging(logging.WARNING)
 
     console.print(Panel(
         "[bold]Reference Indexing — Step 2[/bold]\n"

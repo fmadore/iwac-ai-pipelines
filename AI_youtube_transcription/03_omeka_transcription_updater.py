@@ -52,16 +52,12 @@ from common.iwac_config import (
     select_model_key,
 )
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
 from common.write_guard import WriteGuard, add_write_guard_args
 
 from youtube_source import HEADER_GENERATOR, looping_reason, read_transcript
-
-install_credential_redaction()
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 console = Console()
 
@@ -148,6 +144,7 @@ def report_generators(updates: List[TextUpdate], model_key: str) -> None:
 
 
 def main() -> int:
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="Upload YouTube transcriptions to Omeka S (bibo:content) with "
                     "iwac:transcriptionModel provenance.",

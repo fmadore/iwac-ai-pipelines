@@ -43,6 +43,7 @@ of ``02_AI_transcribe_audio.py``:
 """
 
 import argparse
+import logging
 import json
 import os
 import random
@@ -63,11 +64,7 @@ from common.gemini_utils import (
 )
 from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted, retry_delay_seconds
 from common.ffmpeg_utils import get_mime_type, probe_duration_seconds
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 from rich.panel import Panel
 from rich.table import Table
@@ -763,6 +760,7 @@ def resolve_language_codes(raw: Optional[str]) -> List[str]:
 
 def main():
     args = parse_args()
+    configure_logging(logging.WARNING)
 
     console.print(Panel(
         f"Transcribe audio and video files using Google {MODEL}",

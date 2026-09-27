@@ -88,7 +88,7 @@ from common.iwac_config import (
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.write_guard import WriteGuard, add_write_guard_args
 
 from segments import GENERATOR_FIELD, failed_segments_in, read_body, read_header
@@ -373,24 +373,6 @@ class TranscriptionProcessor:
         return '\n'.join(contents).strip()
 
 
-def setup_logging(log_folder: Path) -> None:
-    """Configure logging with file and console handlers."""
-    log_folder.mkdir(exist_ok=True)
-    log_file = log_folder / 'transcription_update.log'
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, mode='a', encoding='utf-8'),
-            logging.StreamHandler()
-        ]
-    )
-    # Credentials ride in Omeka query strings and provider headers; keep them
-    # out of anything urllib3 or an SDK decides to log.
-    install_credential_redaction()
-
-
 def resolve_updates(
     client: OmekaClient,
     processor: "TranscriptionProcessor",
@@ -450,7 +432,7 @@ def main() -> int:
     if args.model and args.no_model_annotation:
         parser.error("--model and --no-model-annotation contradict each other.")
 
-    setup_logging(SCRIPT_DIR / 'log')
+    configure_logging(log_file=SCRIPT_DIR / 'log' / 'transcription_update.log')
     transcriptions_folder = SCRIPT_DIR / 'Transcriptions'
 
     console.print(Panel(

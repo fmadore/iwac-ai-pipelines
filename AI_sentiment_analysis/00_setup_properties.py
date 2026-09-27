@@ -45,6 +45,7 @@ OMEKA_BASE_URL / OMEKA_KEY_IDENTITY / OMEKA_KEY_CREDENTIAL   Omeka S API
 """
 import re
 import sys
+import logging
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,11 +59,7 @@ from rich import box
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.llm_provider import get_model_option
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
@@ -418,6 +415,7 @@ def main() -> int:
                         help="Pre-flight a vocabulary upload: prove the .ttl is a "
                              f"superset of what is installed (default: {DEFAULT_TTL_PATH})")
     args = parser.parse_args()
+    configure_logging(logging.WARNING)
 
     definitions = all_definitions()
 

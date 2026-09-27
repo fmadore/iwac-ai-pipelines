@@ -23,6 +23,7 @@ Supports multiple models via --model flag:
 
 import argparse
 import sys
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -48,11 +49,7 @@ from common.llm_provider import (
 )
 from common.console_utils import standard_progress
 from common.llm_registry import PROVIDER_GEMINI, clamp_thinking_level
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 # Load environment variables
 
@@ -660,6 +657,7 @@ Examples:
 def main():
     """Main execution function."""
     args = parse_args()
+    configure_logging(logging.WARNING)
 
     # Display welcome banner
     console.print(

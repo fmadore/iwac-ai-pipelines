@@ -42,9 +42,6 @@ from pathlib import Path
 
 from rich.console import Console
 
-# Configure logging to track script execution and errors
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Shared Omeka client and IWAC instance configuration
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
@@ -60,15 +57,11 @@ from common.iwac_config import (
     model_annotation_value,
 )
 from common.outcomes import batch_exit_code
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.write_guard import add_write_guard_args
 from common.artifacts import checkpoint_artifacts, validated_model
 from common.checkpoint import CheckpointMismatch, JsonCheckpoint
 import json
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 
 # The Omeka property that carries the AI summary for articles and documents.
 # Exported to Hugging Face as ``descriptionAI``.
@@ -88,6 +81,7 @@ console = Console()
 
 def main() -> int:
     """Upload the generated summaries, annotated with the model that wrote them."""
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="Upload bilingual (fr/en) summaries to Omeka S with "
                     "iwac:summaryModel provenance."

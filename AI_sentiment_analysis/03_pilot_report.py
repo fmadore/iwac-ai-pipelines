@@ -28,6 +28,7 @@ Usage
     python AI_sentiment_analysis/03_pilot_report.py cache/pilot/pilot_<ts>.json
 """
 import sys
+import logging
 import json
 import argparse
 from pathlib import Path
@@ -42,16 +43,12 @@ from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from sentiment_core import (  # noqa: E402
     CENTRALITE_ORDER,
     POLARITE_ORDER,
     SUBJECTIVITE_ORDER,
 )
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 
 console = Console()
 
@@ -316,6 +313,7 @@ def show_caveats(manifest: Dict[str, Any], repeats: int) -> None:
 
 def main() -> int:
     args = build_argument_parser().parse_args()
+    configure_logging(logging.WARNING)
     path = resolve_pilot_path(args.pilot_file)
 
     if path is None or not path.exists():

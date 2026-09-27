@@ -79,6 +79,7 @@ Notes
 import os
 import re
 import sys
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,11 +99,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.checkpoint import atomic_write_text
 from common.iwac_config import item_page_url
-from common.log_redaction import install_credential_redaction
-
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 # Lightweight aliases to make intent clearer when reading types
 JSONObj = Dict[str, Any]
@@ -1127,6 +1124,7 @@ def main() -> int:
         python script.py --subject 67890        # Alternative subject syntax
         python script.py 12345 --with-summaries # Inline the stored AI summaries
     """
+    configure_logging(logging.WARNING)
     # Welcome banner
     console.print(Panel(
         "[bold]Export newspaper articles from Omeka S to NotebookLM-ready Markdown[/]\n"

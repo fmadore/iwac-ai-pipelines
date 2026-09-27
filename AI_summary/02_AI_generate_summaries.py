@@ -40,7 +40,7 @@ from common.checkpoint import (  # noqa: E402
     atomic_write_text,
     sha256_text,
 )
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.artifacts import artifact_matches, commit_artifact, invalidate_artifact
 from common.run_context import model_context
 from common.console_utils import standard_progress
@@ -48,10 +48,6 @@ from common.console_utils import standard_progress
 # ------------------------------------------------------------------
 # Setup
 # ------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Credentials ride in Omeka query strings and provider headers; keep them
-# out of anything urllib3 or an SDK decides to log.
-install_credential_redaction()
 console = Console()
 
 # Restricted to the cost-effective tiers — summarization does not need a flagship.
@@ -267,6 +263,7 @@ def process_txt_files(
     return success_count, error_count, skipped_count
 
 def main():
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="Generate French and English summaries for extracted texts"
     )

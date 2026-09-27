@@ -70,7 +70,7 @@ from common.gemini_utils import (
     extract_text_from_response,
     finish_reason_name,
 )
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.prompt_loader import discover_prompts, load_prompt_md
 from common.rate_limiter import QuotaExhaustedError, RateLimiter, is_quota_exhausted
 
@@ -102,7 +102,6 @@ from youtube_source import (
 )
 
 load_dotenv()
-install_credential_redaction()
 
 console = Console()
 LOGGER = logging.getLogger(__name__)
@@ -852,6 +851,7 @@ def print_summary(results: List[VideoResult], output_dir: Path, *, quota_stopped
 
 def main() -> int:
     args = parse_args()
+    configure_logging(logging.WARNING)
 
     console.print(Panel(
         "Transcribe YouTube-hosted videos with Gemini straight from their URLs — "

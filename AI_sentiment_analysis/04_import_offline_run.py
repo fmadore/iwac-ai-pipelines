@@ -52,6 +52,7 @@ This script touches no server. It reads a local JSONL and appends to the local
 cache; ``01`` remains the only thing that writes to Omeka.
 """
 import sys
+import logging
 import json
 import argparse
 import collections
@@ -64,13 +65,7 @@ from rich.panel import Panel
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import count_table, key_value_table
 from common.llm_provider import get_model_option
-from common.log_redaction import install_credential_redaction
-
-# This script needs no credentials — it reads a local JSONL and appends to a
-# local cache. Redaction is installed anyway, because "this entry point happens
-# not to touch a key today" is a property that changes without anyone noticing,
-# and the cost of being wrong is a key in a log file.
-install_credential_redaction()
+from common.log_redaction import configure_logging
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sentiment_core import (  # noqa: E402
@@ -176,6 +171,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would be imported and write nothing")
     args = parser.parse_args()
+    configure_logging(logging.WARNING)
 
     source = Path(args.input)
     if not source.is_absolute():

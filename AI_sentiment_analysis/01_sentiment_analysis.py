@@ -105,7 +105,6 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tupl
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.logging import RichHandler
 from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -113,7 +112,7 @@ from common.omeka_client import OmekaClient
 from common.llm_provider import build_llm_client, get_model_option, LLMConfig, BaseLLMClient
 from common.console_utils import standard_progress
 from common.iwac_config import resolve_property_ids
-from common.log_redaction import install_credential_redaction
+from common.log_redaction import configure_logging
 from common.omeka_text_updater import BackupSink, open_backup
 from common.write_guard import WriteGuard
 
@@ -191,20 +190,6 @@ SECONDS_PER_ITEM_SERIAL = 6
 DEFAULT_CONCURRENCY = 6
 DEFAULT_MODEL_TIMEOUT_SECONDS = 120.0
 MIN_MODEL_TIMEOUT_SECONDS = MODEL_MAX_ATTEMPTS + sum(MODEL_RETRY_DELAYS) + 5
-
-
-def configure_logging(verbose: bool = False) -> logging.Logger:
-    """Configure logging with Rich for elegant display."""
-    logging.basicConfig(
-        level=logging.INFO if verbose else logging.WARNING,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
-    )
-    # Omeka credentials ride in the query string, and urllib3's retry warnings
-    # render the whole URL. Scrub before any handler formats a record.
-    install_credential_redaction()
-    return logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -1142,7 +1127,8 @@ def main() -> int:
     ))
 
     args = build_argument_parser().parse_args()
-    logger = configure_logging(args.verbose)
+    configure_logging(logging.INFO if args.verbose else logging.WARNING, console=console)
+    logger = logging.getLogger(__name__)
     try:
         item_set_ids = validate_arguments(args)
         prepared = prepare_run(args, logger, item_set_ids)
