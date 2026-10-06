@@ -7,6 +7,20 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## 2026-10-06 — Model menus offer only what can be stamped
+
+- NER and reference indexing offer Gemma 4 through OpenRouter
+  (`gemma-4-openrouter`) instead of the Gemini API (`gemma-4`), and OCR
+  extraction no longer offers Gemma. Google serves Gemma on the Gemini API
+  only on a free tier whose content it uses, which `iwac_config` already ruled
+  out for archive material, and the Gemini route has no authority item, so its
+  output could not be stamped.
+- Mistral Large 3 and Ministral 14B leave the summary, NER and
+  reference-indexing menus until they have authority items; OCR correction,
+  which stamps no model, still offers them.
+- The guard test checks every key of every stamping tier, not only those
+  starting `gemini-`, and a new test keeps `gemma-4` out of every tier.
+
 ## 2026-10-06 — Pre-publication review: write paths and documentation
 
 ### Write paths

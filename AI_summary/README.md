@@ -112,7 +112,6 @@ the script stops instead of mixing runs; use `--force` to replace it.
 | `gpt-6-luna` | OpenAI | Not yet measured | $0.10 / $0.01 / $0.50 | Not yet measured (default) |
 | `deepseek-v4-flash-0731` | DeepSeek via OpenRouter | Slow | $0.09 / — / $0.18 | ~$0.25 |
 | `gemini-3.7-flash` | Google | Fast | see registry | — |
-| `ministral-14b` | Mistral | Fast | see registry | — |
 
 GPT-6 Luna replaces GPT-5.6 Luna for new summaries as of 2026-09-22.
 The cost and throughput measurements above describe GPT-5.6 Luna; quality,

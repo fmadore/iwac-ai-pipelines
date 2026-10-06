@@ -343,28 +343,38 @@ def test_luna_versions_keep_distinct_provenance(model_key, item_id):
 
 def test_every_model_a_tier_can_pick_can_also_be_annotated():
     """A tier is what a pipeline runs when it names no model; the same key is
-    then what step 03 stamps. A Gemini/OpenAI/Mistral entry offered by a tier but
-    missing from AI_MODEL_ITEMS strands the operator at the write step with no
-    authority item to point at — which is how ``gemini-3.7-flash`` would have
-    landed if it had been added to the tiers alone.
+    then what the write step stamps. An entry offered by a tier but missing from
+    AI_MODEL_ITEMS strands the operator at the write step, after the run has
+    been paid for, with no authority item to point at.
 
-    Scoped to the two provenance-stamping tiers — ``GEMINI_DOCUMENT_MODELS``
-    (OCR extraction, step 03 stamps iwac:ocrModel) and ``TEXT_ECONOMY_MODELS``
-    (summaries, step 03 stamps iwac:summaryModel). ``TEXT_FULL_MODELS`` is
-    deliberately excluded: OCR correction writes no annotation of its own, so a
-    rolling alias is a legitimate choice there.
-
-    Checked for Gemini keys only, which is where the ladder of pinned/rolling
-    duplicates lives; the other vendors' tier entries are pinned by construction.
+    Every key of the three provenance-stamping tiers: ``GEMINI_DOCUMENT_MODELS``
+    (OCR, iwac:ocrModel), ``TEXT_ECONOMY_MODELS`` (summaries,
+    iwac:summaryModel) and ``TEXT_EXTENDED_MODELS`` (NER and reference
+    indexing, iwac:nerModel). ``TEXT_FULL_MODELS`` is deliberately excluded:
+    OCR correction writes no annotation of its own.
     """
-    from common.llm_provider import GEMINI_DOCUMENT_MODELS, TEXT_ECONOMY_MODELS
+    from common.llm_provider import (
+        GEMINI_DOCUMENT_MODELS, TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS,
+    )
 
-    for key in set(GEMINI_DOCUMENT_MODELS) | set(TEXT_ECONOMY_MODELS):
-        if key.startswith("gemini-"):
-            assert key in AI_MODEL_ITEMS, (
-                f"{key!r} is offered by a model tier but has no authority item; "
-                f"a run picking it cannot be annotated"
-            )
+    for key in set(GEMINI_DOCUMENT_MODELS) | set(TEXT_ECONOMY_MODELS) | set(TEXT_EXTENDED_MODELS):
+        assert key in AI_MODEL_ITEMS, (
+            f"{key!r} is offered by a model tier but has no authority item; "
+            f"a run picking it cannot be annotated"
+        )
+
+
+def test_gemma_reaches_archive_material_only_through_openrouter():
+    """The Gemini route serves Gemma on a free tier whose content Google uses."""
+    from common.llm_provider import (
+        GEMINI_DOCUMENT_MODELS, TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS,
+        TEXT_FULL_MODELS, TEXT_OPEN_MODELS,
+    )
+
+    for tier in (GEMINI_DOCUMENT_MODELS, TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS,
+                 TEXT_FULL_MODELS, TEXT_OPEN_MODELS):
+        assert "gemma-4" not in tier
+    assert "gemma-4-openrouter" in TEXT_EXTENDED_MODELS
 
 
 def test_no_registry_key_is_a_rolling_alias():

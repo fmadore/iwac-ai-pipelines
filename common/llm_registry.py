@@ -275,9 +275,9 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     # The same weights as ``gemma-4``, reached through OpenRouter under
     # ``data_collection: deny``. The Gemini route serves Gemma on the free tier,
     # whose content Google states it uses to improve its products — so this is
-    # the key for anything that sends archive text; ``gemma-4`` stays for the
-    # multimodal document work the chat API cannot do. Two thinking levels,
-    # MINIMAL and HIGH: a request for "medium" rounds up (see CHANGELOG.md).
+    # the key for anything that sends archive text; ``gemma-4`` stays in the
+    # registry but in no tier. Two thinking levels, MINIMAL and HIGH: a request
+    # for "medium" rounds up (see CHANGELOG.md).
     "gemma-4-openrouter": ModelOption(
         "gemma-4-openrouter", PROVIDER_OPENROUTER, OPENROUTER_GEMMA_4_31B_MODEL,
         "Gemma 4 31B (OpenRouter)",
@@ -458,8 +458,14 @@ MODEL_ALIASES = {
 # and a rolling alias reports its own version as the string "Gemini Flash
 # Latest", which cannot be cited. The rolling entry stays in MODEL_REGISTRY for
 # the pipelines that want whatever Flash is current and stamp nothing.
+#
+# The tiers whose runs are stamped into Omeka (economy: summaries; extended:
+# NER and reference indexing; document: OCR) offer only keys with an entry in
+# ``iwac_config.AI_MODEL_ITEMS``, and Gemma only on its OpenRouter route: the
+# Gemini route is a free tier whose content Google uses, so ``gemma-4`` is in
+# no tier at all.
 TEXT_ECONOMY_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "ministral-14b",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash",
 ]
 TEXT_OPEN_MODELS: List[str] = [
     "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
@@ -467,8 +473,8 @@ TEXT_OPEN_MODELS: List[str] = [
     "deepseek-v4-flash-0731", "deepseek-v4-pro",
 ]
 TEXT_EXTENDED_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "gemma-4",
-    "mistral-large", "ministral-14b", "mistral-small", "qwen3.5-moe",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "gemma-4-openrouter",
+    "mistral-small", "qwen3.5-moe",
 ]
 # The one tier with room for models that have no authority item yet: OCR
 # correction, its only user, writes no model annotation of its own.
@@ -482,7 +488,7 @@ TEXT_FULL_MODELS: List[str] = [
 # ``iwac:ocrModel``. ``gemini-pro`` was the rolling alias here until 2026-08-14 —
 # an operator who ran OCR with it had no honest answer at the write step, since
 # every Pro authority item names a version the run never confirmed.
-GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.7-flash", "gemini-3.1-pro", "gemma-4"]
+GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.7-flash", "gemini-3.1-pro"]
 LEGACY_CLI_MODEL_KEYS: List[str] = ["gpt-5-mini", "gpt-5.1", "gpt-5", "gpt-5-nano"]
 
 

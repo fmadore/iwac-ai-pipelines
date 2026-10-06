@@ -53,15 +53,18 @@ python 02_mistral_ocr_processor.py          # whole batch, paid-tier speed
 python 02_mistral_ocr_processor.py --rpm 30 # space requests to 30/minute
 ```
 
-### Gemini / Gemma Models
+### Gemini Models
 
 | Model | Speed | Quality | Cost | Notes |
 |-------|-------|---------|------|-------|
-| Gemini 3.7 Flash | Fast | Good | Low | Recommended for most documents |
-| Gemini Pro | Slower | Higher | Higher | Complex layouts, poor scans |
-| Gemma 4 31B    | Fast  | Good    | Low  | Open-weights flagship via Gemini API; uses `MINIMAL` thinking for OCR speed |
+| Gemini 3.7 Flash (`gemini-3.7-flash`) | Fast | Good | Low | Recommended for most documents |
+| Gemini 3.1 Pro (`gemini-3.1-pro`) | Slower | Higher | Higher | Complex layouts, poor scans |
 
-**Recommendation**: Start with Gemini 3.7 Flash. Switch to Pro for challenging documents or frequent copyright blocks. Try Gemma 4 when you want an open-weights alternative with similar speed to Flash (same `GEMINI_API_KEY`).
+**Recommendation**: Start with Gemini 3.7 Flash. Switch to Pro for challenging documents or frequent copyright blocks.
+
+Gemma 4 is not offered: Google serves it on the Gemini API only on a free tier
+whose content it uses to improve its products, and its OpenRouter route cannot
+take PDF pages through this script.
 
 ## Output
 

@@ -22,8 +22,8 @@ Omeka S items → AI entity extraction → Authority reconciliation → Database
 # Extract entities from an item set
 python 01_NER_AI.py --item-set-id 123  # DeepSeek V4 Flash 0731 by default
 
-# Or use Google's open-weights flagship
-python 01_NER_AI.py --item-set-id 123 --model gemma-4
+# Or Google's open-weights Gemma 4, through OpenRouter
+python 01_NER_AI.py --item-set-id 123 --model gemma-4-openrouter
 
 # Match against authority records (newest CSV in output/, or --input)
 python 02_NER_reconciliation_Omeka.py
@@ -44,8 +44,7 @@ Every link step 3 adds carries an `iwac:nerModel` value annotation naming the
 model that extracted the entity, so AI-assigned subjects and places can be told
 apart from hand-catalogued ones. The model is read from the checkpoint step 1
 left beside its CSV; `--model` overrides it, and the script asks when neither
-is available (for instance after a run on `gemma-4`, whose Gemini route has no
-authority item). Links already on an item are never re-stamped.
+is available. Links already on an item are never re-stamped.
 
 The extraction CSV is resumable. Each completed row is flushed immediately,
 and a sidecar checkpoint records the exact model, prompt, item-set scope, and
@@ -58,19 +57,20 @@ different provenance; use `--force` to replace it deliberately.
 | Model | Provider | Speed | Cost |
 |-------|----------|-------|------|
 | `gemini-3.7-flash` | Google | Fast | Low |
-| `gemma-4` | Google (Gemma 4 31B, open-weights via Gemini API) | Fast | Low |
+| `gemma-4-openrouter` | Google (Gemma 4 31B, open weights via OpenRouter) | Slow | Low |
 | `gpt-6-luna` | OpenAI | Fast | Low |
-| `mistral-large` | Mistral | Medium | Medium |
-| `ministral-14b` | Mistral | Fast | Low |
 | `mistral-small` | Mistral (hybrid reasoning) | Fast | Low |
 | `qwen3.5-moe` | Alibaba (open weights, Apache-2.0, via OpenRouter) | Fast | Lowest |
 | `deepseek-v4-flash-0731` | DeepSeek (open weights via OpenRouter) | Fast | Lowest (default) |
 
 All models use the same French-language prompt (`ner_system_prompt.md`) optimized for West African Islamic contexts.
 
-`gemma-4` uses the same `GEMINI_API_KEY` as the Gemini models. Thinking level is `minimal` by default (Gemma 4 accepts only `MINIMAL` or `HIGH`), which matches the low-cost entity-extraction budget used by `gemini-3.7-flash`.
+Every model offered has an Omeka authority item, so step 3 can stamp it.
+Gemma is offered only on its OpenRouter route: Google serves it on the Gemini
+API only on a free tier whose content it uses. Gemma 4 has two reasoning levels,
+`minimal` and `high`, so the NER pipeline's `medium` request is sent as `high`.
 
-`qwen3.5-moe` and `deepseek-v4-flash-0731` share one `OPENROUTER_API_KEY`. Compare current rates and measured token usage
+`gemma-4-openrouter`, `qwen3.5-moe` and `deepseek-v4-flash-0731` share one `OPENROUTER_API_KEY`. Compare current rates and measured token usage
 when budgeting a full-corpus pass. Qwen accepts the NER pipeline's `medium` reasoning request directly;
 DeepSeek 0731 supports only `low`, `high`, and `max`, so the shared adapter uses
 its cost-conscious `low` default for NER.

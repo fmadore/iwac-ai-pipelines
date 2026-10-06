@@ -35,8 +35,8 @@ the video summary). The steps below are in order: each depends on the one before
    point the `gemini`/`flash` aliases at it, and decide whether
    `AI_audio_summary/02` and `AI_youtube_transcription/02` offer it (both of their
    write steps stamp a model). Decide which tiers GPT-6 Sol joins.
-   `tests/test_summary_annotation.py` fails if a stamping tier gets a Gemini
-   model with no authority item.
+   `tests/test_summary_annotation.py` fails if a stamping tier gets a model
+   with no authority item.
 
 ## Dates
 
@@ -78,6 +78,10 @@ the video summary). The steps below are in order: each depends on the one before
   (429/500/503) is not retried inline: the page goes straight to a Files API
   upload, which does retry. Retrying inline first would save an upload per
   overloaded page.
+- **Mistral Large 3 and Ministral 14B authority items.** Both left the
+  summary, NER and reference-indexing menus on 2026-10-06 because nothing in
+  Omeka names them. Create the items and add them to `AI_MODEL_ITEMS` if either
+  should return; the guard test then allows it.
 - **Voxtral provenance.** `voxtral-mini-2602` has no authority item, so its
   transcripts can only be uploaded with `--no-model-annotation`. Create one if
   Voxtral output is to carry `iwac:transcriptionModel`.
