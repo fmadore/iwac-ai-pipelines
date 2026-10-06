@@ -579,10 +579,11 @@ class SentimentRunner:
                 self.bump("already_done")
                 continue
 
-            # ``--from-cache`` never annotates: an item with no cached answer is
-            # left alone rather than requested, which is the whole point of a
-            # run that holds no clients.
-            if self.args.from_cache:
+            # ``--from-cache`` and ``--rewrite`` never annotate: an item with no
+            # cached answer is left alone rather than requested. For
+            # ``--rewrite`` that is what keeps a cold cache from re-annotating
+            # the corpus and PATCHing fresh labels over published ones.
+            if self.args.from_cache or self.args.rewrite:
                 pending: List[str] = []
             elif self.args.force_reanalyze:
                 pending = list(self.clients)

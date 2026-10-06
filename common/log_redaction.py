@@ -68,9 +68,14 @@ _QUERY_PARAM_RE = re.compile(
     r"(?i)\b(" + "|".join(_SENSITIVE_PARAMS) + r")=([^&\s'\"<>\]}]+)"
 )
 
-#: ``Authorization: Bearer sk-...`` and the ``Api-Key`` header variants.
+#: ``Authorization: Bearer <token>`` and the ``Api-Key`` header variants, as a
+#: header line or a dict repr (``'Authorization': 'Bearer <token>'``). The
+#: scheme word is kept for context; the token after it is the secret, and it
+#: need not carry a recognisable prefix (Mistral keys and self-hosted hex keys
+#: have none), so the bare-key pattern below cannot be relied on to catch it.
 _AUTH_HEADER_RE = re.compile(
-    r"(?i)\b(authorization|x-api-key|api-key)(\s*[:=]\s*)(\S+)"
+    r"(?i)\b(authorization|x-api-key|api-key)(['\"]?\s*[:=]\s*['\"]?)"
+    r"((?:bearer|basic|token)\s+)?([^\s'\",}]+)"
 )
 
 #: Bare provider keys, for the case where a key is logged with no surrounding
@@ -89,7 +94,9 @@ def redact(text: str) -> str:
     :func:`scrub_known_secrets` for files.
     """
     text = _QUERY_PARAM_RE.sub(lambda m: f"{m.group(1)}={REDACTED}", text)
-    text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
+    text = _AUTH_HEADER_RE.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}{m.group(3) or ''}{REDACTED}", text
+    )
     return _BARE_KEY_RE.sub(REDACTED, text)
 
 

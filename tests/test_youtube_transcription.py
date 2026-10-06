@@ -487,6 +487,16 @@ def test_incomplete_transcripts_are_held_back_by_default(tmp_path):
     assert held_back == [(108353, "incomplete (2/3 windows)")]
 
 
+def test_a_truncated_window_holds_the_transcript_back(tmp_path):
+    """Every window done is not enough when one of them was cut off."""
+    from common.gemini_utils import TRUNCATION_MARKER
+
+    write_one(tmp_path, body="[00:00:01] Speaker 1: Bismillah." + TRUNCATION_MARKER)
+    updates, held_back = updater.collect_updates(tmp_path, include_incomplete=False)
+    assert updates == []
+    assert held_back == [(108353, "incomplete (a window hit the token limit)")]
+
+
 def test_incomplete_transcripts_can_be_uploaded_on_purpose(tmp_path):
     write_one(tmp_path, done=2, total=3)
     updates, held_back = updater.collect_updates(tmp_path, include_incomplete=True)

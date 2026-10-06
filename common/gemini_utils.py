@@ -45,6 +45,15 @@ DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS = 600.0
 TRUNCATION_MARKER = "\n\n[... TRANSCRIPTION TRUNCATED - OUTPUT EXCEEDED MAX TOKENS ...]"
 
 
+def has_truncation_marker(text: str) -> bool:
+    """Whether ``text`` carries a truncation marker, in either spelling.
+
+    Matches the phrase rather than :data:`TRUNCATION_MARKER` itself, because
+    files written before the marker was shared carry an em dash.
+    """
+    return "TRANSCRIPTION TRUNCATED" in text
+
+
 def build_gemini_client(
     api_key: str,
     *,

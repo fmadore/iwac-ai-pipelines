@@ -580,6 +580,19 @@ def test_a_recording_with_a_failed_segment_is_held_back(tmp_path):
     assert held_back == [("iwac-audio-0001", "incomplete (failed segment 2)")]
 
 
+def test_a_truncated_transcript_is_held_back(tmp_path):
+    """A MAX_TOKENS cut is salvaged with a marker; the marker is not speech."""
+    from common.gemini_utils import TRUNCATION_MARKER
+
+    make_transcript(tmp_path, "iwac-audio-0001-1", "Google gemini-3.7-flash",
+                    body="[Segment 1/1 | 00:00:00–00:20:00] Bismillah." + TRUNCATION_MARKER)
+
+    kept, held_back = updater.hold_back_incomplete(groups_for(tmp_path), include_incomplete=False)
+
+    assert kept == {}
+    assert held_back == [("iwac-audio-0001", "incomplete (output hit the token limit)")]
+
+
 def test_include_incomplete_uploads_it_anyway(tmp_path):
     make_transcript(tmp_path, "iwac-audio-0001-1", "Google gemini-3.7-flash",
                     body="[Segment 1] TRANSCRIPTION FAILED (API-503)")

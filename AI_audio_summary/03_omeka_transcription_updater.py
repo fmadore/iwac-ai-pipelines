@@ -77,6 +77,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # importing it any other way — a test — would fail on `segments`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.gemini_utils import has_truncation_marker
 from common.iwac_config import (
     AI_MODEL_ITEMS,
     BIBO_CONTENT_PROPERTY_ID,
@@ -253,7 +254,7 @@ Groups = Dict[str, List[Tuple[Path, Optional[int]]]]
 def hold_back_incomplete(
     groups: Groups, *, include_incomplete: bool
 ) -> Tuple[Groups, List[Tuple[str, str]]]:
-    """Split off recordings whose transcript still has a failed segment.
+    """Split off recordings whose transcript has a failed or truncated segment.
 
     Returns the groups to upload and ``(identifier, reason)`` for the rest. An
     unreadable file is held back too: its text is not what would be uploaded.
@@ -263,12 +264,18 @@ def hold_back_incomplete(
     for identifier, files in groups.items():
         try:
             failed = sorted({n for path, _ in files for n in failed_segments_in(path)})
+            truncated = any(
+                has_truncation_marker(path.read_text(encoding="utf-8")) for path, _ in files
+            )
         except OSError as exc:
             held_back.append((identifier, f"unreadable ({exc})"))
             continue
         if failed and not include_incomplete:
             listed = ", ".join(str(n) for n in failed)
             held_back.append((identifier, f"incomplete (failed segment {listed})"))
+            continue
+        if truncated and not include_incomplete:
+            held_back.append((identifier, "incomplete (output hit the token limit)"))
             continue
         kept[identifier] = files
     return kept, held_back

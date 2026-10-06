@@ -170,3 +170,15 @@ def test_summaries_run_the_same_across_worker_threads(tmp_path):
 
     assert run() == (6, 0, 0)
     assert run() == (0, 0, 6)
+
+
+def test_ner_spatial_filter_reads_a_linked_country():
+    """IWAC item sets link their country as an item: no ``@value``, a ``display_title``."""
+
+    class Client:
+        def get_item_set(self, item_set_id):
+            return {"dcterms:spatial": [{
+                "type": "resource:item", "value_resource_id": 283, "display_title": "Bénin",
+            }]}
+
+    assert ner.get_item_set_spatial_coverage(Client(), "2185") == "Bénin"

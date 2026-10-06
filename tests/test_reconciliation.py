@@ -2,6 +2,8 @@
 
 import csv
 
+import pytest
+
 from common.reconciliation import (
     build_authority_dict,
     calculate_similarity,
@@ -83,6 +85,20 @@ def test_build_authority_dict_skips_linked_resource_titles():
     authority, _, metadata = build_authority_dict(client, ["1"])
     assert authority["niamey"] == "30"
     assert metadata["30"]["primary_title"] == "Niamey"
+
+
+def test_build_authority_dict_stops_when_a_set_cannot_be_fetched():
+    # Skipping the set would hide cross-set ambiguity: "Union" would resolve
+    # to item 10 alone and be linked with a model annotation.
+    class FailingClient(FakeOmekaClient):
+        def get_items(self, item_set_id):
+            if int(item_set_id) == 2:
+                raise ConnectionError("read timed out")
+            return super().get_items(item_set_id)
+
+    client = FailingClient({1: [_item(10, "Union")], 2: [_item(20, "Union")]})
+    with pytest.raises(RuntimeError, match="item set 2"):
+        build_authority_dict(client, ["1", "2"])
 
 
 def test_potential_matches_keep_best_title_per_authority_item():

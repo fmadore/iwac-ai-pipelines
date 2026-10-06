@@ -170,11 +170,16 @@ def build_authority_dict(
 
         for item_set_id in item_set_ids:
             progress.update(task, description=f"[cyan]Fetching from item set {item_set_id}...")
+            # A set that cannot be fetched must stop the run: reconciling
+            # against the rest would miss cross-set ambiguity and link a term
+            # to the wrong item, or leave it "unreconciled" and invite a
+            # duplicate authority.
             try:
                 all_items = client.get_items(int(item_set_id))
             except Exception as e:
-                console.print(f"[red]✗[/] Error fetching item set {item_set_id}: {e}")
-                continue
+                raise RuntimeError(
+                    f"Could not fetch {authority_type} item set {item_set_id}: {e}"
+                ) from e
             if not all_items:
                 continue
 

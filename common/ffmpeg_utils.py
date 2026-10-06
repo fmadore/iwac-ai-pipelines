@@ -223,14 +223,17 @@ def is_video_file(file_path: Path) -> bool:
     return bool(mime and mime.startswith("video/"))
 
 
-def get_mime_type(file_path: Path) -> Optional[str]:
+def get_mime_type(file_path: Path, *, video: bool = False) -> Optional[str]:
     """Return the MIME type for an audio or video file.
 
     Checks ``AUDIO_FORMATS`` and ``VIDEO_FORMATS`` first, then falls back
-    to ``mimetypes.guess_type()``.
+    to ``mimetypes.guess_type()``. ``.mp4`` and ``.webm`` are in both tables;
+    pass ``video=True`` when the file is sent for its pictures, so it is not
+    labelled ``audio/mp4``.
     """
     ext = file_path.suffix.lower()
-    mime = AUDIO_FORMATS.get(ext) or VIDEO_FORMATS.get(ext)
+    tables = (VIDEO_FORMATS, AUDIO_FORMATS) if video else (AUDIO_FORMATS, VIDEO_FORMATS)
+    mime = tables[0].get(ext) or tables[1].get(ext)
     if mime:
         return mime
     guessed, _ = mimetypes.guess_type(str(file_path))

@@ -230,3 +230,29 @@ def test_sources_without_author_or_title_are_never_folded_together():
         make("Entretien avec Boukary BOLY, 28-12-89.", kind="interview"),
     ])]
     assert len(step04.merge_citations(batches)) == 2
+
+
+# --- a failed chunk makes the document incomplete ----------------------------
+
+class _FlakyClient:
+    """Answers the first chunk and fails every later one."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def generate_structured(self, system_prompt, user_prompt, schema):
+        self.calls += 1
+        if self.calls > 1:
+            raise RuntimeError("upstream 502")
+        return CitationList(citations=[Citation(raw="Kaboré, Histoire, 1992", title="Histoire")])
+
+
+def test_a_failed_chunk_is_counted_not_hidden():
+    """The write replaces the whole of ``bibo:cites``: a partial set must not pass as complete."""
+    doc = sidecar([(i, "apparatus", "X" * 500) for i in range(40)])
+    assert len(step04.apparatus_chunks(doc)) > 1
+
+    citations, failed = step04.extract_for_item(_FlakyClient(), doc, "prompt")
+
+    assert failed == len(step04.apparatus_chunks(doc)) - 1
+    assert len(citations) == 1

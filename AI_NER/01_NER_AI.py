@@ -326,7 +326,9 @@ def get_item_set_spatial_coverage(client: OmekaClient, item_set_id: str) -> str:
         return ''
     values = data.get('dcterms:spatial', [])
     for v in values:
-        val = v.get('@value') if isinstance(v, dict) else None
+        # IWAC item sets link their country as an item (``resource:item``),
+        # which carries a ``display_title`` and no ``@value``.
+        val = (v.get('@value') or v.get('display_title')) if isinstance(v, dict) else None
         if val:
             return val.strip()
     return ''

@@ -45,6 +45,7 @@ from rich.console import Console
 # for the sibling format module.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.gemini_utils import has_truncation_marker
 from common.iwac_config import (
     AI_MODEL_ITEMS,
     IWAC_TRANSCRIPTION_MODEL_PROPERTY_ID,
@@ -103,6 +104,9 @@ def collect_updates(
         if not transcript.complete and not include_incomplete:
             done, total = transcript.chunks_done, transcript.chunks_total
             held_back.append((item_id, f"incomplete ({done}/{total} windows)"))
+            continue
+        if has_truncation_marker(transcript.body) and not include_incomplete:
+            held_back.append((item_id, "incomplete (a window hit the token limit)"))
             continue
 
         updates.append(TextUpdate(

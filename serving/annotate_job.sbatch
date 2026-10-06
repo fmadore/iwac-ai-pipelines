@@ -79,12 +79,15 @@ curl -sf -m 5 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 || {
 export SELFHOSTED_LLM_BASE_URL="http://127.0.0.1:${PORT}/v1"
 unset SELFHOSTED_LLM_API_KEY   # started without --api-key; the client sends EMPTY
 
+# Exit 1 means some articles failed, not that the run is lost: the rest are in
+# $OUTPUT. Hold the status until the archive step has run, then return it.
+rc=0
 python "$REPO/serving/annotate_offline.py" \
   --input "$INPUT" \
   --output "$OUTPUT" \
-  ${ANNOTATE_EXTRA_ARGS:-}
+  ${ANNOTATE_EXTRA_ARGS:-} || rc=$?
 
-echo "==> annotations at $OUTPUT"
+echo "==> annotations at $OUTPUT (annotate_offline exit $rc)"
 wc -l "$OUTPUT" || true
 
 # /workdir is purged on a schedule and is not backed up; copy the result to
@@ -94,3 +97,5 @@ if [[ "$ARCHIVE" != "off" ]]; then
   mkdir -p "$ARCHIVE" 2>/dev/null && cp "$OUTPUT" "$ARCHIVE"/ 2>/dev/null \
     && echo "==> archived to $ARCHIVE" || echo "WARN: archive step failed" >&2
 fi
+
+exit "$rc"

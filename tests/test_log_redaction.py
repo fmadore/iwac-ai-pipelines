@@ -57,6 +57,23 @@ def test_redact_removes_bearer_and_bare_keys():
     assert "AIzaSyA" not in redact("configured with AIzaSyA1234567890abcdefghij")
 
 
+def test_redact_removes_unprefixed_header_tokens():
+    """Mistral and self-hosted keys have no ``sk-`` prefix for the bare-key rule."""
+    token = "3f9a1c0b7e2d4a6f8b0c1d2e3f4a5b6c7d8e9f00a1b2c3d4"
+    for text in (
+        f"Authorization: Bearer {token}",
+        f"{{'Authorization': 'Bearer {token}', 'Accept': 'application/json'}}",
+        f'{{"x-api-key": "{token}"}}',
+    ):
+        cleaned = redact(text)
+        assert token not in cleaned
+        assert REDACTED in cleaned
+    assert redact(f"Authorization: Bearer {token}") == f"Authorization: Bearer {REDACTED}"
+    assert "'Accept': 'application/json'" in redact(
+        f"{{'Authorization': 'Bearer {token}', 'Accept': 'application/json'}}"
+    )
+
+
 def test_redact_leaves_ordinary_text_alone():
     text = "Annotated 9,670 items; 0 failures at concurrency=6"
     assert redact(text) == text

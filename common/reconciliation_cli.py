@@ -186,5 +186,9 @@ def main(
         console.print(f"[red]✗[/] No suitable CSV found in {output_dir}")
         return 1
 
-    run_reconciliation(client, Path(input_path), subject_tag=subject_tag, console=console)
+    try:
+        run_reconciliation(client, Path(input_path), subject_tag=subject_tag, console=console)
+    except RuntimeError as exc:
+        console.print(f"[red]✗[/] {exc}")
+        return 1
     return 0

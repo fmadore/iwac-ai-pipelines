@@ -41,7 +41,7 @@ import logging
 import sys
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -234,13 +234,21 @@ def merge_citations(batches: List[CitationList]) -> List[Citation]:
     return _absorb_undated(list(merged.values()))
 
 
-def extract_for_item(llm_client, sidecar: Dict[str, Any], prompt: str) -> List[Citation]:
-    """Run the extraction over one document's apparatus."""
+def extract_for_item(
+    llm_client, sidecar: Dict[str, Any], prompt: str
+) -> Tuple[List[Citation], int]:
+    """Run the extraction over one document's apparatus.
+
+    Returns the merged citations and the number of chunks that failed. A
+    document with a failed chunk is incomplete: the write replaces the item's
+    whole ``bibo:cites``, so writing it would drop part of its bibliography.
+    """
     chunks = apparatus_chunks(sidecar)
     if not chunks:
-        return []
+        return [], 0
 
     batches: List[CitationList] = []
+    failed = 0
     with standard_progress(console) as progress:
         task = progress.add_task(f"[cyan]{len(chunks)} chunks", total=len(chunks))
         for chunk in chunks:
@@ -249,11 +257,12 @@ def extract_for_item(llm_client, sidecar: Dict[str, Any], prompt: str) -> List[C
                     llm_client.generate_structured(prompt, chunk, CitationList)
                 )
             except Exception as exc:
+                failed += 1
                 console.print(f"  [yellow]⚠[/] a chunk failed: {exc}")
                 logging.error("Chunk failed: %s", exc, exc_info=True)
             progress.update(task, advance=1)
 
-    return merge_citations(batches)
+    return merge_citations(batches), failed
 
 
 def cites_values(citations: List[Citation]) -> List[Dict[str, Any]]:
@@ -419,6 +428,7 @@ def main() -> int:
 
     OUTPUT_DIR.mkdir(exist_ok=True)
     results: Dict[int, List[Citation]] = {}
+    incomplete: List[int] = []
 
     for path in sidecars:
         item_id = int(path.stem)
@@ -448,7 +458,14 @@ def main() -> int:
         else:
             invalidate_artifact(cached_path)
             sidecar = json.loads(path.read_text(encoding="utf-8"))
-            citations = extract_for_item(llm(), sidecar, prompt)
+            citations, failed_chunks = extract_for_item(llm(), sidecar, prompt)
+            if failed_chunks:
+                console.print(
+                    f"  [red]✗[/] {failed_chunks} chunk(s) failed — nothing cached or "
+                    "written for this item; rerun to retry"
+                )
+                incomplete.append(item_id)
+                continue
             if citations:
                 cached_path.write_text(
                     json.dumps(
@@ -472,11 +489,12 @@ def main() -> int:
     console.print(key_value_table([
         ("Documents", len(results)),
         ("Cited works", total),
+        ("Incomplete (chunk failed)", len(incomplete)),
     ], title="Extraction", value_style="cyan"))
 
     if args.extract_only or not total:
         console.print(f"\n[green]✓[/] Citation JSON in [cyan]{OUTPUT_DIR}[/]")
-        return 0
+        return 1 if incomplete else 0
 
     if not guard.confirm(
         console,
@@ -497,7 +515,7 @@ def main() -> int:
 
     console.print()
     console.print(key_value_table(list(stats.items()), title="Write", value_style="cyan"))
-    return 0 if not stats.get("failed") else 1
+    return 1 if stats.get("failed") or incomplete else 0
 
 
 if __name__ == "__main__":

@@ -233,7 +233,7 @@ class VideoProcessor:
 
         if file_size <= INLINE_REQUEST_LIMIT_BYTES:
             # Small file — send bytes inline
-            mime_type = get_mime_type(video_file_path)
+            mime_type = get_mime_type(video_file_path, video=True)
             if not mime_type:
                 console.print(f"  [red]✗[/] Unsupported video format: {video_file_path.suffix}")
                 return None

@@ -928,3 +928,36 @@ def test_a_transient_error_is_still_retried():
                                 logging.getLogger("test"), max_retries=3)
     assert len(calls) == 3
     assert result["analysis_error"]
+
+
+def test_rewrite_never_requests_a_model():
+    """A cold cache must not turn ``--rewrite`` into a fresh annotation pass.
+
+    ``--rewrite`` re-PATCHes answers already in hand, as ``--from-cache`` does.
+    Requesting the members that have no cached answer would re-annotate the
+    corpus and write new labels over published ones.
+    """
+    import argparse
+    import logging
+
+    class ColdCache:
+        def has(self, *args, **kwargs):
+            return False
+
+    args = argparse.Namespace(
+        limit=None, force_reanalyze=False, rewrite=True, from_cache=False
+    )
+    runner = sentiment_run.SentimentRunner(
+        args=args, listing_client=None, clients={"m": object()}, labels={},
+        model_ids={}, members=[object()], property_ids={}, system_prompt="",
+        prompt_id="", expected_provenance={"m": {}}, sources=[],
+        cache=ColdCache(), logger=logging.getLogger("test"),
+    )
+    item = {
+        "o:id": 1,
+        "dcterms:language": [{"display_title": "Français"}],
+        "bibo:content": [{"@value": "Un article.", "@language": "fr"}],
+    }
+    runner.source_items = lambda: iter([item])
+
+    assert [pending for _, _, pending in runner.jobs()] == [[]]
