@@ -7,7 +7,14 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
-## 2026-10-06 — Summary uploads keep curator edits
+## 1.3.1 — 2026-10-06
+
+Patch release, and the version to cite for *When AI Meets the Archive* in
+place of 1.3.0: summary uploads no longer overwrite a curator's correction.
+Validated in the same environment as 1.3.0
+([`docs/validation/2026-10-06`](docs/validation/2026-10-06/environment.json)).
+
+### 2026-10-06 — Summary uploads keep curator edits
 
 - `AI_summary/03` uploaded every summary still in its folders, and step 01
   never empties them, so a summary corrected in Omeka after its upload was
@@ -23,15 +30,13 @@ the changelog tells stories.
 
 ## 1.3.0 — 2026-10-06
 
-Pre-publication review release; the version to cite for *When AI Meets the
-Archive*. GPT-6 Luna replaces GPT-5.6 Luna for new summaries and citation
-extraction (the sentiment panel is unchanged). Model menus offer only models
-whose output can be stamped, and Gemma only through OpenRouter. A model
-answer cut off at its output limit is an error everywhere. Several write
-paths that could put partial or wrong output in the archive are fixed, and
-the sentiment documentation describes the five-member panel. mistralai 3 is
-supported. Validated environment:
-[`docs/validation/2026-10-06`](docs/validation/2026-10-06/environment.json).
+Pre-publication review release, superseded by 1.3.1 for citation. GPT-6
+Luna replaces GPT-5.6 Luna for new summaries and citation extraction (the
+sentiment panel is unchanged). Model menus offer only models whose output can
+be stamped, and Gemma only through OpenRouter. A model answer cut off at its
+output limit is an error everywhere. Several write paths that could put
+partial or wrong output in the archive are fixed, and the sentiment
+documentation describes the five-member panel. mistralai 3 is supported.
 
 ### 2026-10-06 — mistralai 3
 

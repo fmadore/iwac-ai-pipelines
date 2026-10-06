@@ -1,9 +1,9 @@
 {
-  "captured_at": "2026-10-06T09:40:11.120262+00:00",
+  "captured_at": "2026-10-06T09:58:53.272957+00:00",
   "python": "3.13.15",
   "platform": "Windows",
   "architecture": "ARM64",
-  "commit": "150959b9099a7249025a3be4ccf82cac1a4d26bf",
+  "commit": "fe0f1065b9b77c534ee4640a6eb2879370a6ea47",
   "working_tree_dirty": false,
   "purpose": "Local validation environment; not a claim about historical publication runs",
   "packages": {
