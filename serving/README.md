@@ -15,11 +15,11 @@ it](#3-point-the-pipelines-at-it).
 Two reasons, in the order they actually mattered here.
 
 **Cost, for a corpus that is annotated repeatedly.** The sentiment panel runs
-four models over ~12,300 articles, and it is re-run whenever the panel changes.
-Qwen3.8-27B is $0.45/$3.20 per 1M tokens on OpenRouter — roughly twice the
-panel's output-cost band, which is the ladder that has already disqualified
-candidates ([issue #12](https://github.com/fmadore/iwac-ai-pipelines/issues/12)).
-On university hardware the marginal cost of a pass is queue time.
+five models over ~12,300 articles, and a member is re-run whenever the panel
+changes. Qwen3.8-27B is $0.45/$3.20 per 1M tokens on OpenRouter — roughly twice
+the panel's output-cost band, which has already disqualified candidates. On
+university hardware the marginal cost of a pass is queue time; it is how
+Qwen3.8 joined the panel.
 
 **Measurability, which turned out to matter more.** A hosted router fans each
 request across third-party backends that serve the same weights and disagree

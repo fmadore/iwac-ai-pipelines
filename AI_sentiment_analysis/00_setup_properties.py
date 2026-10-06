@@ -8,12 +8,10 @@ the live vocabulary against them.
 
 One run of the panel needs six properties per member of
 :data:`sentiment_core.PANEL` — one per entry in :data:`RESULT_FIELD_SUFFIXES` —
-plus the ``iwac:sentimentModel`` annotation property, so four members is 25 and
-each promotion adds six. They are generated from :data:`PANEL` rather than
-hand-written, so the ``.ttl``, the live vocabulary and the pipeline cannot drift
-apart. The count is therefore computed, never asserted: a docstring stating a
-total is one promotion away from being wrong, which is what happened to the
-number that stood here until 2026-08-25.
+plus the ``iwac:sentimentModel`` annotation property; each promotion adds six.
+They are generated from :data:`PANEL` rather than hand-written, so the ``.ttl``,
+the live vocabulary and the pipeline cannot drift apart, and the count is
+computed rather than asserted.
 
 Why this script does not create them itself
 -------------------------------------------
@@ -36,8 +34,8 @@ Usage
     python AI_sentiment_analysis/00_setup_properties.py --verify     # pre-flight
     python AI_sentiment_analysis/00_setup_properties.py              # post-upload check
 
-The last form reports which of them are live yet, and once all are, prints the
-``SENTIMENT_PROPERTY_IDS`` block to paste into ``common/iwac_config.py``.
+The last form reports which of them are live yet, and once all are, prints
+their IDs for the record. Nothing needs pasting: ``01`` resolves them at startup.
 
 Environment Variables
 ---------------------
@@ -307,14 +305,11 @@ def count_values(client: OmekaClient, property_id: int) -> int:
 def verify_ttl_is_superset(client: OmekaClient, ttl_path: Path) -> bool:
     """Pre-flight for the admin-UI vocabulary update.
 
-    Omeka's update flow deletes any installed property the uploaded file omits,
-    taking every value stored under it across the archive.
-
-    A deletion is not automatically fatal — retiring a property that was created
-    and never used is legitimate, and it happened the first time the panel's
-    Qwen slot was re-pointed. But it is only ever safe on *evidence*, so this
-    counts the values under each doomed property rather than offering an
-    override flag. An operator asserting "those are empty" is exactly the step
+    Omeka's admin-UI update has only ever added properties (see
+    :func:`emit_ttl`), but ``PATCH /api/vocabularies`` removes every property it
+    is not sent, and nothing guarantees the UI keeps behaving as measured. So
+    this counts the values under every installed property the file omits rather
+    than offering an override flag: a removal is only ever safe on *evidence*. An operator asserting "those are empty" is exactly the step
     that gets skipped on the day it is wrong.
     """
     installed = fetch_existing(client)
@@ -382,7 +377,7 @@ def verify_ttl_is_superset(client: OmekaClient, ttl_path: Path) -> bool:
 
 
 def print_id_block(term_to_id: Dict[str, int]) -> None:
-    """The literal snippet to paste into common/iwac_config.py."""
+    """The resolved IDs, for the record; ``01`` resolves them itself at startup."""
     lines = ["SENTIMENT_PROPERTY_IDS: Dict[str, int] = {",
              f'    "{SENTIMENT_MODEL_ANNOTATION_TERM}": '
              f'{term_to_id.get(SENTIMENT_MODEL_ANNOTATION_TERM)},']
@@ -392,7 +387,7 @@ def print_id_block(term_to_id: Dict[str, int]) -> None:
             lines.append(f'    "{term}": {term_to_id.get(term)},')
     lines.append("}")
     console.print(Panel("\n".join(lines),
-                        title="Paste into common/iwac_config.py",
+                        title="Resolved property IDs (for the record)",
                         border_style="green"))
 
 

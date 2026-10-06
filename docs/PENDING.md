@@ -52,6 +52,13 @@ the video summary). The steps below are in order: each depends on the one before
 - **GPT-6 Luna throughput.** `AI_summary` pins it, but the published
   comparison (2.7 h versus DeepSeek 0731 at 31.5 h) was measured on GPT-5.6
   Luna. Re-run it and update `AI_summary/README.md` and CLAUDE.md.
+- **Qwen3.8 polarité cross-check.** Only 1.9% of its 12,098 answers are
+  negative. Compare them with the other four members on the same articles before
+  a write-up leans on Qwen for that dimension
+  (`AI_sentiment_analysis/PANEL_RECORD.md`).
+- **Gemma 4 31B corpus cost.** The ~$8–12 figure is projected from three calls.
+  Measure the 2026-08-14/15 pass against the OpenRouter credits endpoint and
+  replace the row in `PANEL_RECORD.md`.
 - **DeepSeek V4 Pro reasoning levels.** The registry accepts five
   (`minimal` … `xhigh`); `common/README.md` says it accepts only `high` and
   `xhigh`. Probe the OpenRouter route with `serving/probe_reasoning.py` and
