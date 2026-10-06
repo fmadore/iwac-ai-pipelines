@@ -7,6 +7,20 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## 2026-10-06 — Summary uploads keep curator edits
+
+- `AI_summary/03` uploaded every summary still in its folders, and step 01
+  never empties them, so a summary corrected in Omeka after its upload was
+  overwritten by the stale local file on the next run, after a GET per item.
+  An upload ledger (`Summaries_FR_TXT/.summary_uploads.jsonl`) now records what
+  the step wrote. Summaries already uploaded unchanged are skipped without a
+  fetch, and an item whose summary is not what the step last wrote there (a
+  curator's edit, or a value from before the ledger) is held back unless
+  `--replace-existing`.
+- `common.omeka_text_updater` gains `UploadLedger`, a `held_back` status, and
+  `check` / `on_result` hooks on `run_text_updates`, so the other write steps
+  can adopt the same guard.
+
 ## 1.3.0 — 2026-10-06
 
 Pre-publication review release; the version to cite for *When AI Meets the

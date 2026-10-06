@@ -88,7 +88,7 @@ the first call in a batch hits it. And only ~6% of output is reasoning at
 
 > Verify the rate card before quoting a figure. An earlier estimate here said **$50** because it trusted a stale `$1/$6` in `llm_registry.py` (real Luna is `$0.20/$1.20`) and ignored caching — 7× too high. Prices live in the model descriptions in `common/llm_registry.py` and are checked against [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing), not inferred from a tier name.
 
-> **Do not delete the existing summaries first.** `adopt_untagged=True` overwrites them in place, so there is nothing left over to delete; and deleting first turns any mid-run failure into a corpus with no summaries at all, where the pipeline as written simply leaves the old one standing.
+> **Do not delete the existing summaries first.** Step 03 with `--replace-existing` overwrites them in place (`adopt_untagged=True`), so there is nothing left over to delete; and deleting first turns any mid-run failure into a corpus with no summaries at all, where the pipeline as written simply leaves the old one standing.
 
 The summarization script runs on GPT-6 Luna unless `--model` names another
 registry model (step 03, which uploads, reads that model back from the
@@ -148,6 +148,31 @@ python 03_omeka_update_summaries.py --model gpt-6-luna --dry-run
 
 Available keys come from `AI_MODEL_ITEMS` in `common/iwac_config.py`. Add a new one there after creating its authority item in Omeka.
 
+### What step 03 will not overwrite
+
+Step 01 never empties `TXT/`, so the summary folders hold every batch ever
+generated, and step 03 sees all of them. It keeps an upload ledger beside the
+checkpoint, `Summaries_FR_TXT/.summary_uploads.jsonl`, recording a digest of
+what it wrote to each item on each Omeka instance. With it, step 03:
+
+- **skips** a summary identical to what it already uploaded, without fetching
+  the item, so a pass after an ingest touches only the new summaries;
+- **replaces** a summary only where Omeka has none, already holds the same
+  text, or still holds exactly what this step wrote there last;
+- **holds back** an item whose summary in Omeka is anything else, either a
+  correction a curator made after the upload or a value from before the
+  ledger existed, and lists it at the end of the run.
+
+`--replace-existing` overwrites those too, after backing each item up. A
+deliberate regeneration of summaries written before the ledger, such as moving
+the legacy corpus to a new model, needs it. Check the list of held-back items
+first: it is also the list of corrections that would be lost.
+
+```bash
+python 03_omeka_update_summaries.py --dry-run                      # see what would be held back
+python 03_omeka_update_summaries.py --replace-existing --dry-run   # and what replacing would touch
+```
+
 ### Rollback
 
 Every item's **pre-write JSON is appended to `backups/_pre_write_summaries_<timestamp>.jsonl` and flushed before its PATCH** — one object per line, only for items that actually change. An interrupted run therefore still has a complete record of everything it overwrote, which a buffered end-of-run dump would not. Restoring is a read of that file and a PATCH of each object back.
@@ -161,7 +186,7 @@ python 03_omeka_update_summaries.py --no-backup      # not recommended
 
 The French summaries written before this pipeline became bilingual (August 2026) carry **no `@language` at all**. The French target sets `adopt_untagged=True`, so step 03 claims that existing literal and tags it `fr` on the way past, rather than appending a second French value beside it. The English target deliberately does not: an English write must never claim a value that predates this pipeline.
 
-This only touches items you actually regenerate — step 03 writes what is in the two folders. Items never re-run keep their untagged French summary and gain nothing.
+This only touches items you actually regenerate, and only with `--replace-existing`: an untagged summary was not written by this step's ledger, so step 03 holds it back otherwise. Items never re-run keep their untagged French summary and gain nothing.
 
 ### Downstream: Hugging Face
 
@@ -219,6 +244,8 @@ Output *shape* is not set here: it comes from the `BilingualSummary` Pydantic sc
 | Missing prompt error | Ensure `summary_prompt.md` exists in script directory |
 | API authentication | Verify correct API key in `.env` |
 | Items not updating | Check Omeka S credentials have write access |
+| "held back: … holds text this pipeline did not write" | A curator's edit or a pre-ledger summary; review it, then `--replace-existing` if it should go |
+| "Nothing new to upload" | Every summary in the folders is already in Omeka unchanged |
 | "no English summary — French only" | Step 02 failed on those items; re-run it before step 03 |
 | Item ends up with two French values | The French target lost `adopt_untagged`; check `PropertyTarget` in step 03 |
 | Checkpoint provenance error | Expected after editing the prompt or switching model — `--force` to accept |

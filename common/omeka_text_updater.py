@@ -19,6 +19,9 @@ This module owns the write half so every pipeline gets the safest behaviour:
 - ``--dry-run`` and an interactive confirmation gate are available to all.
 - Several values can be written to one item in ONE PATCH — see
   ``TextUpdate.extra_values``.
+- With an :class:`UploadLedger`, a value is replaced only when it is absent or
+  is exactly what this pipeline last wrote there, so a rerun never overwrites
+  a curator's correction with a stale local file.
 
 Usage:
     from common.omeka_text_updater import PropertyTarget, TextUpdate, run_text_updates
@@ -47,12 +50,14 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tupl
 
 from rich.console import Console
 
+from common.checkpoint import sha256_text
 from common.console_utils import count_table, standard_progress
 from common.omeka_client import OmekaClient
 from common.write_guard import WriteGuard
 
-# Outcome buckets, in the order they are reported.
-STATUSES = ("updated", "would_update", "unchanged", "empty", "not_found", "failed")
+# Outcome buckets, in the order they are reported. ``held_back`` is an item a
+# ``check`` refused to overwrite; it is reported, not counted as a failure.
+STATUSES = ("updated", "would_update", "unchanged", "held_back", "empty", "not_found", "failed")
 
 
 @dataclass(frozen=True)
@@ -149,6 +154,15 @@ def _own_literal(
         if target.adopt_untagged and not entry.get("@language") and untagged is None:
             untagged = entry
     return untagged
+
+
+def current_text(item_data: Dict[str, Any], target: PropertyTarget) -> Optional[str]:
+    """The text a write to *target* would replace on a fetched item, or None."""
+    values = item_data.get(target.term)
+    if not isinstance(values, list):
+        return None
+    value = _own_literal(values, target)
+    return None if value is None else value.get("@value")
 
 
 def apply_text_value(item_data: Dict[str, Any], target: PropertyTarget, text: str) -> bool:
@@ -310,17 +324,21 @@ def update_item_text(
     dry_run: bool = False,
     extra_values: Sequence[Tuple[PropertyTarget, str]] = (),
     backup: Optional[BackupSink] = None,
+    check: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
 ) -> str:
     """Fetch, mutate and PATCH one item. Returns a status from :data:`STATUSES`.
 
     Every value in *extra_values* lands in the same PATCH as *text*. When
     *backup* is given, the item's pre-write state is handed to it before the
     PATCH — and only for items that actually change, so the backup is a record
-    of what was overwritten rather than of everything inspected.
+    of what was overwritten rather than of everything inspected. *check* sees
+    the fetched item first; a reason returned from it holds the item back.
     """
     item_data = client.get_item(int(item_id))
     if not item_data:
         return "not_found"
+    if check is not None and check(item_data):
+        return "held_back"
 
     # Copy before mutating, and only when it will be used: deep-copying a full
     # item means duplicating its OCR blob, which is most of the payload.
@@ -336,6 +354,106 @@ def update_item_text(
         backup(original)
 
     return "updated" if client.update_item(int(item_id), item_data) else "failed"
+
+
+def ledger_key(target: PropertyTarget) -> str:
+    """One ledger entry per property and language: ``bibo:shortDescription@fr``."""
+    return f"{target.term}@{target.language or '*'}"
+
+
+class UploadLedger:
+    """What this pipeline last wrote to each item, per property and language.
+
+    Without it a write step cannot tell its own earlier output from a curator's
+    correction: both are simply "different from the local file", so a rerun
+    over a folder that still holds last month's summaries overwrites every
+    correction made in Omeka since. The ledger records a digest of each text
+    after it is written (or found already in place), and makes two decisions
+    possible:
+
+    - :meth:`already_written` — the local text is what was uploaded last time,
+      so there is nothing to do and the item is not even fetched;
+    - :meth:`held_back_reason` — the archive holds text this pipeline did not
+      write there (a curator's edit, or a value from before the ledger), so it
+      is not overwritten without the operator saying so.
+
+    Append-only JSONL, flushed and synced per record; the last record for an
+    item wins, a torn final line from a killed run is skipped, and records are
+    scoped to the Omeka instance (``base_url``) they describe.
+    """
+
+    def __init__(self, path: Path, base_url: str) -> None:
+        self.path = Path(path)
+        self.base_url = base_url
+        self._entries: Dict[int, Dict[str, str]] = {}
+
+    @classmethod
+    def load(cls, path: Path, base_url: str) -> "UploadLedger":
+        ledger = cls(path, base_url)
+        if ledger.path.exists():
+            for line in ledger.path.read_text(encoding="utf-8").splitlines():
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict) and record.get("base_url") == base_url:
+                    ledger._entries[int(record["item_id"])] = dict(record["digests"])
+        return ledger
+
+    @staticmethod
+    def digests(update: TextUpdate, target: PropertyTarget) -> Dict[str, str]:
+        """Digest of every non-empty text *update* writes, keyed by :func:`ledger_key`."""
+        return {
+            ledger_key(written): sha256_text(text)
+            for written, text in update.writes(target)
+            if text.strip()
+        }
+
+    def already_written(self, update: TextUpdate, target: PropertyTarget) -> bool:
+        """True when every text in *update* is exactly what was last written."""
+        wanted = self.digests(update, target)
+        recorded = self._entries.get(update.item_id or -1, {})
+        return bool(wanted) and all(recorded.get(key) == digest for key, digest in wanted.items())
+
+    def held_back_reason(
+        self, update: TextUpdate, target: PropertyTarget, item_data: Dict[str, Any]
+    ) -> Optional[str]:
+        """Why *update* must not overwrite *item_data*, or None when it may.
+
+        A value may be replaced when it is absent, already equal to the new
+        text, or exactly what this pipeline last wrote there.
+        """
+        recorded = self._entries.get(update.item_id or -1, {})
+        for written, text in update.writes(target):
+            if not text.strip():
+                continue
+            current = current_text(item_data, written)
+            if current is None or current == text:
+                continue
+            if recorded.get(ledger_key(written)) == sha256_text(current):
+                continue
+            if ledger_key(written) in recorded:
+                return f"{written.describe()} was edited in Omeka after this pipeline wrote it"
+            return f"{written.describe()} holds text this pipeline did not write"
+        return None
+
+    def record(self, update: TextUpdate, target: PropertyTarget) -> None:
+        """Note that Omeka now holds exactly the texts in *update*."""
+        if update.item_id is None:
+            return
+        digests = self.digests(update, target)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps({
+            "item_id": update.item_id,
+            "base_url": self.base_url,
+            "digests": digests,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }) + "\n"
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+        self._entries[update.item_id] = {**self._entries.get(update.item_id, {}), **digests}
 
 
 def texts_from_directory(
@@ -437,6 +555,8 @@ def run_text_updates(
     backup_dir: Optional[Path] = None,
     backup_label: str = "text_update",
     guard: Optional[WriteGuard] = None,
+    check: Optional[Callable[[TextUpdate, Dict[str, Any]], Optional[str]]] = None,
+    on_result: Optional[Callable[[TextUpdate, str], None]] = None,
 ) -> Dict[str, int]:
     """Run the whole write step: confirm, PATCH each item, print a summary.
 
@@ -446,6 +566,10 @@ def run_text_updates(
     themselves. Every item's pre-write JSON is appended to a timestamped
     ``.jsonl`` in the backup folder before its PATCH — the only route back
     from a bulk overwrite.
+
+    *check* sees each fetched item before it is changed and returns a reason to
+    hold it back, or None (``UploadLedger.held_back_reason``). *on_result*
+    receives every update with its status once it is decided.
 
     Returns:
         A dict of :data:`STATUSES` counts. An empty dict means the operator
@@ -487,16 +611,30 @@ def run_text_updates(
                         console.print(f"  [yellow]⚠[/] {update.label} is empty — skipped")
                         stats["empty"] += 1
                     else:
+                        reasons: List[str] = []
+
+                        def item_check(
+                            item_data: Dict[str, Any], update: TextUpdate = update, reasons: List[str] = reasons,
+                        ) -> Optional[str]:
+                            reason = check(update, item_data) if check is not None else None
+                            if reason:
+                                reasons.append(reason)
+                            return reason
+
                         status = update_item_text(
                             client, update.item_id, update.text, target,
                             dry_run=dry_run, extra_values=update.extra_values,
-                            backup=backup,
+                            backup=backup, check=item_check,
                         )
                         if status == "failed":
                             console.print(f"  [red]✗[/] PATCH failed for item {update.item_id} (see log)")
                         elif status == "not_found":
                             console.print(f"  [yellow]⚠[/] Item {update.item_id} not found — skipped")
+                        elif status == "held_back":
+                            console.print(f"  [yellow]⚠[/] Item {update.item_id} held back: {reasons[0]}")
                         stats[status] += 1
+                        if on_result is not None:
+                            on_result(update, status)
                 except Exception as exc:
                     console.print(f"  [red]✗[/] Error processing {update.label}: {exc}")
                     stats["failed"] += 1
@@ -522,6 +660,8 @@ def _print_summary(console: Console, stats: Dict[str, int], total: int, *, dry_r
     else:
         rows.append(("[green]Successfully Updated[/]", f"[green]{stats['updated']}[/]"))
     rows.append(("[dim]Already up to date[/]", f"[dim]{stats['unchanged']}[/]"))
+    if stats.get("held_back"):
+        rows.append(("[yellow]Held back (not overwritten)[/]", f"[yellow]{stats['held_back']}[/]"))
     if stats["empty"]:
         rows.append(("[yellow]Empty (skipped)[/]", f"[yellow]{stats['empty']}[/]"))
     rows.append(("[yellow]Not Found (skipped)[/]", f"[yellow]{stats['not_found']}[/]"))

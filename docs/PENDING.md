@@ -78,6 +78,13 @@ the video summary). The steps below are in order: each depends on the one before
   (429/500/503) is not retried inline: the page goes straight to a Files API
   upload, which does retry. Retrying inline first would save an upload per
   overloaded page.
+- **Upload ledger for the other write steps.** `AI_summary/03` no longer
+  overwrites a summary a curator corrected in Omeka (`UploadLedger` in
+  `common/omeka_text_updater.py`). The OCR, OCR-correction, publication, audio
+  and YouTube `03` steps write `bibo:content` without it, so rerunning one over
+  an old output folder still replaces hand-corrected full text. Adopt the same
+  `check` / `on_result` pair in each; the decision is whether full text that
+  predates the ledger should be held back by default, as summaries are.
 - **Mistral Large 3 and Ministral 14B authority items.** Both left the
   summary, NER and reference-indexing menus on 2026-10-06 because nothing in
   Omeka names them. Create the items and add them to `AI_MODEL_ITEMS` if either

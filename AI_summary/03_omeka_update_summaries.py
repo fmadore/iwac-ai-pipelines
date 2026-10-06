@@ -21,6 +21,14 @@ provenance convention AI_ocr_extraction/03 uses for ``iwac:ocrModel``. Both lang
 carry the annotation, since one model produced both. The model is read from the
 summaries' artifact sidecars; --model only cross-checks it.
 
+Step 01 never empties TXT/, so the summary folders accumulate every batch ever
+generated. An upload ledger beside the checkpoint (``.summary_uploads.jsonl``)
+records what this step wrote to each item. A summary identical to what was
+already uploaded is skipped without fetching the item, and an item whose
+summary in Omeka is not what this step last wrote there, because a curator
+edited it or it predates the ledger, is held back rather than overwritten.
+``--replace-existing`` overrides that, with every item backed up first.
+
 The write step itself lives in ``common/omeka_text_updater.py``, shared with the
 OCR, OCR-correction and transcription updaters.
 
@@ -33,6 +41,7 @@ Usage:
     python 03_omeka_update_summaries.py                        # model from the sidecars
     python 03_omeka_update_summaries.py --model gpt-6-luna
     python 03_omeka_update_summaries.py --model gemini-3.7-flash --dry-run
+    python 03_omeka_update_summaries.py --replace-existing     # also overwrite values it did not write
 """
 
 import argparse
@@ -47,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.omeka_client import OmekaClient
 from common.omeka_text_updater import (
     PropertyTarget,
+    UploadLedger,
     run_text_updates,
     texts_from_directory,
     updates_from_directory,
@@ -71,6 +81,8 @@ SUMMARY_MODEL_TERM = 'iwac:summaryModel'
 #: Must match ``02_AI_generate_summaries.py``.
 FRENCH_DIR = "Summaries_FR_TXT"
 ENGLISH_DIR = "Summaries_EN_TXT"
+#: What this step last wrote to each item; see the module docstring.
+LEDGER_NAME = ".summary_uploads.jsonl"
 
 console = Console()
 
@@ -88,6 +100,11 @@ def main() -> int:
     )
     add_write_guard_args(parser, default_backup_dir=Path(__file__).resolve().parent / "backups")
     parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest files; requires --model.")
+    parser.add_argument(
+        "--replace-existing", action="store_true",
+        help="Also overwrite summaries this step did not write: curator edits and values "
+             "from before the upload ledger. Each item is backed up first.",
+    )
     args = parser.parse_args()
 
     try:
@@ -190,15 +207,36 @@ def main() -> int:
         )
     logging.info(f"Found {len(updates)} summary files to process")
 
+    # Summaries already uploaded unchanged are not this run's business: skipping
+    # them without a GET is what keeps a correction made in Omeka since then.
+    ledger = UploadLedger.load(french_folder / LEDGER_NAME, client.base_url)
+    uploaded = [update for update in updates if ledger.already_written(update, french_target)]
+    updates = [update for update in updates if not ledger.already_written(update, french_target)]
+    if uploaded:
+        logging.info(f"{len(uploaded)} summaries already uploaded unchanged — skipped without fetching")
+    if not updates:
+        console.print(f"[green]✓[/] Nothing new to upload: all {len(uploaded)} summaries are already in Omeka.")
+        return 0
+
     # Folder names only: the absolute paths wrap and break the panel's alignment.
     confirm_lines = [
         f"Source folder:    {pipeline_dir}",
         f"                  {FRENCH_DIR}/ + {ENGLISH_DIR}/",
     ]
+    if uploaded:
+        confirm_lines.append(f"Already uploaded: {len(uploaded)} (skipped)")
     if french_only:
-        confirm_lines.append(f"French only:      {french_only} of {len(updates)}")
+        confirm_lines.append(f"French only:      {french_only} of {len(updates) + len(uploaded)}")
+    confirm_lines.append(
+        "Existing values:  REPLACED, including curator edits" if args.replace_existing
+        else "Existing values:  kept unless this step wrote them"
+    )
 
     backup_dir = None if args.no_backup else args.backup_dir
+
+    def record(update, status: str) -> None:
+        if status in ("updated", "unchanged") and not args.dry_run:
+            ledger.record(update, french_target)
 
     stats = run_text_updates(
         client, updates, french_target,
@@ -209,9 +247,18 @@ def main() -> int:
         description="Updating summaries...",
         backup_dir=backup_dir,
         backup_label="summaries",
+        check=None if args.replace_existing else (
+            lambda update, item: ledger.held_back_reason(update, french_target, item)
+        ),
+        on_result=record,
     )
     if not stats:
         return 1  # operator declined
+    if stats.get("held_back"):
+        console.print(
+            f"[yellow]⚠[/] {stats['held_back']} item(s) kept their current summary. Review them in "
+            "Omeka; pass --replace-existing to overwrite (each is backed up first)."
+        )
 
     return batch_exit_code(stats)
 

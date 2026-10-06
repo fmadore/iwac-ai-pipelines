@@ -374,6 +374,16 @@ An empty text is skipped rather than written, so a missing translation cannot
 blank a value Omeka already holds; an item counts as `empty` only when *every*
 one of its values is blank.
 
+### Upload ledger
+
+`UploadLedger` records a digest of each text a write step put on each item, per
+property and language and per Omeka instance, in an append-only JSONL file.
+`already_written(update, target)` lets a step skip unchanged output without a
+GET. `held_back_reason(update, target, item)` passed as `run_text_updates(check=...)`
+refuses to overwrite a value the step did not write (status `held_back`), and
+`record()` passed through `on_result` keeps the ledger current. `AI_summary/03`
+uses it; the other `03` steps do not yet.
+
 ### Pre-write backup
 
 Pass `backup_dir=` and every item's pre-write JSON is appended to a timestamped
