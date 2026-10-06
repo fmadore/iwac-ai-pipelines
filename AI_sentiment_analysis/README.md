@@ -518,7 +518,7 @@ python serving/merge_shards.py --shards 'AI_sentiment_analysis/cache/qwen38_full
     --output AI_sentiment_analysis/cache/qwen38_full/qwen38_merged.jsonl
 python AI_sentiment_analysis/04_import_offline_run.py \
     --input cache/qwen38_full/qwen38_merged.jsonl --model qwen3_8_27b
-python AI_sentiment_analysis/01_sentiment_analysis.py --models qwen3_8_27b --dry-run
+python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 \n    --models qwen3_8_27b --from-cache --dry-run
 ```
 
 Letting `01` re-annotate instead would work, and on a self-hosted member it

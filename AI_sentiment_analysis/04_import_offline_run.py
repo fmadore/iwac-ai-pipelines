@@ -46,7 +46,7 @@ Usage
 Then run ``01`` for that member. Every imported item is served from cache, so
 the run is a write pass and asks the model nothing:
 
-    python AI_sentiment_analysis/01_sentiment_analysis.py --models qwen3_8_27b --dry-run
+    python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 \n        --models qwen3_8_27b --from-cache --dry-run
 
 This script touches no server. It reads a local JSONL and appends to the local
 cache; ``01`` remains the only thing that writes to Omeka.
@@ -274,7 +274,8 @@ def main() -> int:
     console.print(
         "[dim]Next: run 01 for this member. Every imported item is served from "
         "cache, so it writes to Omeka without asking the model anything:\n"
-        f"  python AI_sentiment_analysis/01_sentiment_analysis.py --models {args.model} --dry-run[/]"
+        f"  python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 "
+        f"--models {args.model} --from-cache --dry-run[/]"
     )
     return 0
 

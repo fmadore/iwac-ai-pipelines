@@ -67,7 +67,6 @@ BACKUP_DIR = SCRIPT_DIR / "output"
 
 CONTENT_TERM = "bibo:content"
 OCR_MODEL_TERM = "iwac:ocrModel"
-DEFAULT_MODEL_KEY = "mistral-ocr-4-1"
 
 
 def _sidecar_note(updates: List[TextUpdate]) -> str:
@@ -99,7 +98,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--model", choices=list(AI_MODEL_ITEMS), default=None,
-        help=f"OCR model that produced the text (default: prompts, {DEFAULT_MODEL_KEY} preselected).",
+        help="Cross-check the OCR model the artifact sidecars record; a mismatch aborts. "
+             "Required with --legacy-import.",
     )
     parser.add_argument(
         "--item-id", type=int, action="append", dest="item_ids",

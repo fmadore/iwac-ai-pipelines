@@ -7,6 +7,50 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## 2026-10-06 — Pre-publication review: write paths and documentation
+
+### Write paths
+- `AI_publication_extraction/04` no longer treats a document with a failed
+  chunk as complete. The partial set used to be cached as the reviewed result
+  and then replace the item's whole `bibo:cites`; it is now neither cached nor
+  written, and the run exits 1.
+- `AI_audio_summary/03` and `AI_youtube_transcription/03` hold back a
+  transcript carrying the truncation marker, as they already did a failed
+  segment; `--include-incomplete` uploads it anyway. The marker used to reach
+  `bibo:content` as though it were speech.
+- Reconciliation stops when an authority item set cannot be fetched. Skipping
+  it hid cross-set ambiguity, so a term could be linked to the wrong item.
+- `AI_sentiment_analysis/01 --rewrite` re-PATCHes cached answers only, as
+  documented. On a cold cache it used to re-annotate every item and write the
+  new labels over the published ones.
+- `AI_NER/01` reads an item set's country from its linked item's
+  `display_title`. IWAC item sets link the country rather than type it, so the
+  spatial filter never removed it from `Spatial AI`. The checkpoint records the
+  filter, so resuming an earlier CSV for such a set now needs `--force`.
+
+### Provider calls and logging
+- Credential redaction masks the token after `Authorization: Bearer`, in a
+  header line or a dict repr. Only `sk-` keys were caught before, by the
+  bare-key rule; Mistral and self-hosted hex keys leaked.
+- `AI_video_summary` sends inline `.mp4` and `.webm` clips as `video/*`;
+  `get_mime_type()` used to label them `audio/*`.
+- `serving/annotate_job.sbatch` archives its output to `/home` before
+  returning the annotator's exit status. A run with any failed article used to
+  stop under `set -e` before the copy.
+
+### Documentation
+- OpenRouter's `data_collection: "deny"` is described in OpenRouter's terms
+  (providers that do not collect user data) everywhere it appears, with
+  `OPENROUTER_ZDR=1` as the formal zero-retention option.
+- The OCR, summary and publication step 03s read their model from the artifact
+  sidecars; their READMEs and `--help` no longer say they prompt for it.
+- HTR's route into Omeka copies each transcript's sidecar with it; the
+  publication README states that step 03 makes `bibo:content` private; the
+  sentiment import prints a `01` command that validates.
+- Root README model table lists only keys a pipeline accepts; acknowledgement
+  and Python-version notes rewritten; `CITATION.cff` abstract covers every
+  pipeline.
+
 ## 2026-09-26 — One logging setup; Gemini 3.8 Flash and GPT-6 Sol registered
 
 ### Logging

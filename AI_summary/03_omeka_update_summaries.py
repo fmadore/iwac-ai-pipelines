@@ -18,8 +18,8 @@ and tags the existing literal rather than appending a second French value beside
 Each summary is annotated with the AI model that produced it, as an
 ``iwac:summaryModel`` value annotation on the bibo:shortDescription value — the same
 provenance convention AI_ocr_extraction/03 uses for ``iwac:ocrModel``. Both languages
-carry the annotation, since one model produced both. The model is chosen
-interactively, or with --model.
+carry the annotation, since one model produced both. The model is read from the
+summaries' artifact sidecars; --model only cross-checks it.
 
 The write step itself lives in ``common/omeka_text_updater.py``, shared with the
 OCR, OCR-correction and transcription updaters.
@@ -30,7 +30,7 @@ Requirements:
 - Omeka S API access with appropriate permissions
 
 Usage:
-    python 03_omeka_update_summaries.py                        # prompts for model
+    python 03_omeka_update_summaries.py                        # model from the sidecars
     python 03_omeka_update_summaries.py --model gpt-6-luna
     python 03_omeka_update_summaries.py --model gemini-3.7-flash --dry-run
 """
@@ -72,10 +72,6 @@ SUMMARY_MODEL_TERM = 'iwac:summaryModel'
 FRENCH_DIR = "Summaries_FR_TXT"
 ENGLISH_DIR = "Summaries_EN_TXT"
 
-#: Step 02's default; offered as step 03's default answer so the two agree
-#: unless the operator ran 02 with --model.
-DEFAULT_MODEL_KEY = "gpt-6-luna"
-
 console = Console()
 
 
@@ -88,7 +84,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--model", choices=list(AI_MODEL_ITEMS),
-        help="AI model that produced the summaries. Prompts interactively when omitted.",
+        help="Cross-check the model the summaries' sidecars record; a mismatch aborts. Required with --legacy-import.",
     )
     add_write_guard_args(parser, default_backup_dir=Path(__file__).resolve().parent / "backups")
     parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest files; requires --model.")

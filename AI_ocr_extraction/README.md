@@ -24,9 +24,10 @@ python 02_gemini_ocr_processor.py   # Extract text (or use Mistral version)
 python 03_omeka_content_updater.py  # Update Omeka S items
 ```
 
-Step 03 prompts for the OCR model (recorded as an `iwac:ocrModel` annotation) and
-asks for confirmation before writing. Preview first with `--dry-run`; skip the
-prompts with `--model` and `--yes`:
+Step 03 reads the OCR model from the `.artifact.json` sidecars step 02 wrote
+(recorded as an `iwac:ocrModel` annotation) and refuses a folder that mixes
+models. `--model` only cross-checks it. Preview first with `--dry-run`; skip the
+confirmation with `--yes`:
 
 ```bash
 python 03_omeka_content_updater.py --model gemini-3.7-flash --dry-run

@@ -746,12 +746,14 @@ dependency.
 | `reasoning_effort` | `str` | per model | Only sent to models that accept one; see below |
 
 Every request carries `provider: {data_collection: "deny", require_parameters: true}`
-— no backend that trains on prompts, and only backends that support every
-parameter sent (the `json_schema` response format above all). That is a
-*training* opt-out, not a storage one: set `OPENROUTER_ZDR=1` in the
-environment to add OpenRouter's `zdr` flag and route only to endpoints that
-store nothing, at the price of a much shorter provider list (for DeepSeek it can
-leave none, and the request fails with a 503).
+— only providers that, by OpenRouter's account, do not collect user data (the
+default also allows ones that "store user data non-transiently and may train on
+it"), and only backends that support every parameter sent (the `json_schema`
+response format above all). That rests on each provider's stated policy: set
+`OPENROUTER_ZDR=1` in the environment to add OpenRouter's `zdr` flag and route
+only to endpoints with a formal zero-data-retention policy, at the price of a
+much shorter provider list (for DeepSeek it can leave none, and the request
+fails with a 503).
 
 **Available OpenRouter models**:
 - **`qwen3.5-moe` / `qwen3.5-moe-small` / `qwen3.5-dense`**: Qwen3.5 122B-A10B, 35B-A3B and 27B, all Apache-2.0 open weights. `qwen3.5-moe` was re-pointed from 35B-A3B to 122B-A10B on 2026-07-31 so the sentiment panel's open-weights members sit at comparable active-parameter counts (10B vs DeepSeek V4 Flash's 13B; 35B-A3B activates only 3B)

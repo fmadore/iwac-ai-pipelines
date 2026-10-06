@@ -33,10 +33,15 @@ distinguishes letters in handwriting.
 
 A page that fails is reported in the run summary and left out of the transcript.
 It is never represented by an `[ERROR: ...]` placeholder in the text: that string
-would otherwise be uploaded to Omeka as page content. There is no `03` step here:
-copy the finished `.txt` files into `AI_ocr_extraction/OCR_Results/` and run
+would otherwise be uploaded to Omeka as page content. A document with a failed
+or truncated page goes to `partial/` instead and is not uploadable.
+
+There is no `03` step here. Copy each finished `.txt` **together with its
+`.txt.artifact.json` sidecar** into `AI_ocr_extraction/OCR_Results/` and run
 `AI_ocr_extraction/03_omeka_content_updater.py`, which writes `bibo:content`
-with the `iwac:ocrModel` annotation.
+with the `iwac:ocrModel` annotation. Step 03 reads the model from the sidecars,
+so it refuses a `.txt` without one, and refuses a folder that mixes models: move
+any OCR output from another model out of `OCR_Results/` first.
 
 ## Language Modes
 

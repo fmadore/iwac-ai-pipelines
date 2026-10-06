@@ -239,8 +239,9 @@ block-level confidence, but the SDK's `confidence_scores_granularity` accepts
 only `word` and `page`, and the block objects carry no confidence field.
 
 **Copyright.** Reference full text is overwhelmingly non-public on Omeka (7 of
-423 values), and the public Hugging Face projection masks it per row. This
-pipeline does not change any value's visibility.
+423 values), and the public Hugging Face projection masks it per row. Step 03
+writes `bibo:content` as private, and makes an existing public value private
+when it rewrites it.
 
 ## Publication workflow
 

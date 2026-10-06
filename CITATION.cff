@@ -7,10 +7,12 @@ version: 1.2.0
 date-released: 2026-09-07
 abstract: >-
   Python pipelines that apply large language models to the curation of a
-  digital archive: OCR extraction and correction, summarization, named-entity
-  recognition with authority reconciliation, audio and video transcription,
-  handwritten text recognition, and sentiment analysis, all written back to an
-  Omeka S instance. Built for the Islam West Africa Collection (IWAC) and
+  digital archive: OCR extraction and correction, handwritten text
+  recognition, bilingual summarization, named-entity recognition and subject
+  indexing with authority reconciliation, audio, video and YouTube
+  transcription, magazine and scholarly-publication extraction, and sentiment
+  analysis, all written back to an Omeka S instance with model provenance
+  recorded in the archive. Built for the Islam West Africa Collection (IWAC) and
   adaptable to other digital humanities and social science collections.
 type: software
 keywords:

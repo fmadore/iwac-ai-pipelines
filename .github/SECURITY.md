@@ -23,7 +23,8 @@ PATCH the archive without passing through `common/write_guard.py`.
 
 Whole archival documents are sent to third-party model providers. OpenRouter
 requests are pinned to `data_collection: "deny"` so they are routed only to
-backends that do not retain data; the Gemini, OpenAI, and Mistral APIs are
-governed by those vendors' own terms. Anyone reusing this code on their own
+providers that, by OpenRouter's account, do not collect user data (set
+`OPENROUTER_ZDR=1` to require a formal zero-data-retention policy); the
+Gemini, OpenAI, and Mistral APIs are governed by those vendors' own terms. Anyone reusing this code on their own
 collection should confirm that arrangement suits their material before running
 anything at scale.

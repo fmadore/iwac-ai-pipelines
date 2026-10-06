@@ -91,8 +91,8 @@ the first call in a batch hits it. And only ~6% of output is reasoning at
 > **Do not delete the existing summaries first.** `adopt_untagged=True` overwrites them in place, so there is nothing left over to delete; and deleting first turns any mid-run failure into a corpus with no summaries at all, where the pipeline as written simply leaves the old one standing.
 
 The summarization script runs on GPT-6 Luna unless `--model` names another
-registry model (step 03, which uploads, is the one that asks which model wrote
-the summaries when `--model` is omitted):
+registry model (step 03, which uploads, reads that model back from the
+summaries' sidecars):
 
 ```bash
 python 02_AI_generate_summaries.py  # GPT-6 Luna by default
@@ -141,7 +141,7 @@ Both land on that one property as two `@language`-tagged literals, `fr` and `en`
 
 > `dcterms:abstract` is a different field: it holds publisher/author abstracts on issues and scholarly references, and the HF `documents` subset exports it as a separate `abstract` column. Do not write generated summaries there.
 
-Each summary carries an `iwac:summaryModel` value annotation naming the model that produced it, linked to its authority item (class 244, item set 267). One model produces both renderings, so both literals carry it. Step 03 prompts for the model, or takes `--model`:
+Each summary carries an `iwac:summaryModel` value annotation naming the model that produced it, linked to its authority item (class 244, item set 267). One model produces both renderings, so both literals carry it. Step 03 reads the model from the summaries' sidecars and checkpoint; `--model` only cross-checks it:
 
 ```bash
 python 03_omeka_update_summaries.py --model gpt-6-luna --dry-run

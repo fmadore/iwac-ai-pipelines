@@ -72,10 +72,11 @@ OPENROUTER_PROVIDER_PREFS: Dict[str, Any] = {
     "data_collection": "deny",
     "require_parameters": True,
 }
-#: ``data_collection: "deny"`` keeps archive text away from backends that train
-#: on it; it says nothing about *storage*. OpenRouter's separate ``zdr`` flag
-#: routes only to endpoints that keep nothing at all, at the price of a much
-#: shorter provider list — for DeepSeek it can leave no eligible backend and
+#: ``data_collection: "deny"`` keeps archive text on providers that, by
+#: OpenRouter's account, do not collect user data — their stated policy, not a
+#: contract. OpenRouter's separate ``zdr`` flag routes only to endpoints with a
+#: formal zero-data-retention policy, at the price of a much shorter provider
+#: list — for DeepSeek it can leave no eligible backend and
 #: the request fails with a 503. So it is opt-in: set ``OPENROUTER_ZDR=1`` in
 #: the environment for a run that must not be stored anywhere.
 OPENROUTER_ZDR_ENV = "OPENROUTER_ZDR"

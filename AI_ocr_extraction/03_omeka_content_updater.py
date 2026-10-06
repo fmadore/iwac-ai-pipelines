@@ -12,7 +12,7 @@ skipped, ``--dry-run`` works, and the confirmation gate behaves identically
 across all four.
 
 Usage:
-    python 03_omeka_content_updater.py            # prompts, then updates live
+    python 03_omeka_content_updater.py            # asks for confirmation, then updates live
     python 03_omeka_content_updater.py --dry-run  # fetch + report only, writes nothing
     python 03_omeka_content_updater.py --model gemini-3.7-flash --yes
 
@@ -61,7 +61,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--model", choices=list(AI_MODEL_ITEMS),
-        help="OCR model used for extraction. Prompts interactively when omitted.",
+        help="Cross-check the OCR model the artifact sidecars record; a mismatch aborts. Required with --legacy-import.",
     )
     add_write_guard_args(parser, default_backup_dir=BACKUP_DIR)
     parser.add_argument("--legacy-import", action="store_true", help="Import reviewed pre-manifest output; requires --model.")
