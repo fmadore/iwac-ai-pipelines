@@ -7,7 +7,19 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
-## 2026-10-06 — mistralai 3
+## 1.3.0 — 2026-10-06
+
+Pre-publication review release; the version to cite for *When AI Meets the
+Archive*. GPT-6 Luna replaces GPT-5.6 Luna for new summaries and citation
+extraction (the sentiment panel is unchanged). Model menus offer only models
+whose output can be stamped, and Gemma only through OpenRouter. A model
+answer cut off at its output limit is an error everywhere. Several write
+paths that could put partial or wrong output in the archive are fixed, and
+the sentiment documentation describes the five-member panel. mistralai 3 is
+supported. Validated environment:
+[`docs/validation/2026-10-06`](docs/validation/2026-10-06/environment.json).
+
+### 2026-10-06 — mistralai 3
 
 - The `mistralai` bound is `<4`. 3.0 keeps the imports and every method and
   keyword these pipelines call; verified live on chat (plain, `chat.parse` and
@@ -15,7 +27,7 @@ the changelog tells stories.
   logs every request at INFO under its own name, so `configure_logging()` holds
   `httpx2` and `httpcore2` at WARNING as it already did `httpx`.
 
-## 2026-10-06 — A cut-off answer is an error
+### 2026-10-06 — A cut-off answer is an error
 
 - Every text client checks why the model stopped. An answer cut off at the
   output limit (OpenAI `status: "incomplete"`, Gemini `MAX_TOKENS`,
@@ -33,7 +45,7 @@ the changelog tells stories.
   retried, and the script exits 1 on any failure. Its output keeps ALTO's
   default namespace instead of an `ns0:` prefix on every element.
 
-## 2026-10-06 — Model menus offer only what can be stamped
+### 2026-10-06 — Model menus offer only what can be stamped
 
 - NER and reference indexing offer Gemma 4 through OpenRouter
   (`gemma-4-openrouter`) instead of the Gemini API (`gemma-4`), and OCR
@@ -47,9 +59,9 @@ the changelog tells stories.
 - The guard test checks every key of every stamping tier, not only those
   starting `gemini-`, and a new test keeps `gemma-4` out of every tier.
 
-## 2026-10-06 — Pre-publication review: write paths and documentation
+### 2026-10-06 — Pre-publication review: write paths and documentation
 
-### Write paths
+#### Write paths
 - `AI_publication_extraction/04` no longer treats a document with a failed
   chunk as complete. The partial set used to be cached as the reviewed result
   and then replace the item's whole `bibo:cites`; it is now neither cached nor
@@ -68,7 +80,7 @@ the changelog tells stories.
   spatial filter never removed it from `Spatial AI`. The checkpoint records the
   filter, so resuming an earlier CSV for such a set now needs `--force`.
 
-### Provider calls and logging
+#### Provider calls and logging
 - Credential redaction masks the token after `Authorization: Bearer`, in a
   header line or a dict repr. Only `sk-` keys were caught before, by the
   bare-key rule; Mistral and self-hosted hex keys leaked.
@@ -78,7 +90,7 @@ the changelog tells stories.
   returning the annotator's exit status. A run with any failed article used to
   stop under `set -e` before the copy.
 
-### Documentation
+#### Documentation
 - OpenRouter's `data_collection: "deny"` is described in OpenRouter's terms
   (providers that do not collect user data) everywhere it appears, with
   `OPENROUTER_ZDR=1` as the formal zero-retention option.
@@ -91,9 +103,9 @@ the changelog tells stories.
   and Python-version notes rewritten; `CITATION.cff` abstract covers every
   pipeline.
 
-## 2026-09-26 — One logging setup; Gemini 3.8 Flash and GPT-6 Sol registered
+### 2026-09-26 — One logging setup; Gemini 3.8 Flash and GPT-6 Sol registered
 
-### Logging
+#### Logging
 - `common.log_redaction.configure_logging()` replaces the 23 hand-written
   `logging.basicConfig` calls, eight of them wrapped in a script's own
   `setup_logging()` or `configure_logging()`. It always installs credential redaction and holds `httpx` at
@@ -105,7 +117,7 @@ the changelog tells stories.
   Scripts that never configured logging now call it at WARNING, which keeps them
   as quiet as before. A test forbids `logging.basicConfig` in any entry point.
 
-### Models
+#### Models
 - `gemini-3.8-flash`: registered with `low`/`medium`/`high` from Google's
   documentation — not yet probed live — and offered only where no model is
   stamped: `TEXT_FULL_MODELS` (OCR correction) and the video summary. `gemini`
@@ -115,15 +127,15 @@ the changelog tells stories.
   `TEXT_FULL_MODELS`. `gpt-5.6-sol` stays reachable by its own key and `gpt-5.6`.
 - The video summary's model menu is built from one `ALLOWED_MODELS` table.
 
-### Tracking
+#### Tracking
 - `docs/PENDING.md` lists what is unfinished and what closes each item: the live
   probes and authority items both models need before promotion, the 2026-10-23
   GPT-5 shutdown and the 2027-01-01 Gemini 3.8 Flash price change, and the code
   changes from the review that need a decision.
 
-## 2026-09-26 — Review: provenance, efficiency, shared helpers
+### 2026-09-26 — Review: provenance, efficiency, shared helpers
 
-### Provenance
+#### Provenance
 - A checkpoint now records the reasoning effort Mistral Small 4 was actually
   sent. The client rounded `medium` up to `high` (and `low` down to `none`),
   but `model_context()` recorded no effort at all. One
@@ -135,7 +147,7 @@ the changelog tells stories.
   already did; `--include-incomplete` uploads it anyway. Before this the
   marker went into `bibo:content` as though it were speech.
 
-### Provider calls
+#### Provider calls
 - Nothing picks a thinking rung from a model's name any more. The Gemini text
   client sends no `thinking_config` when a model declares no default, and
   `gemini_utils.get_thinking_level()` asks for `minimal` and lets the registry
@@ -148,7 +160,7 @@ the changelog tells stories.
 - The OpenAI text path no longer sends `tools=[]` or the default text format,
   and reads `output_text` alone; the dict-walking fallback could not run.
 
-### Efficiency
+#### Efficiency
 - Gemini Transcribe (`AI_audio_summary/02c`) uploads each file once and reuses
   it across retries. It used to re-send twenty minutes of audio to wait out a
   23-second throttle.
@@ -157,7 +169,7 @@ the changelog tells stories.
 - `UsageTotals` takes a lock: `AI_summary/02` shares one client across worker
   threads, and the unlocked counters could undercount tokens and cost.
 
-### Shared code
+#### Shared code
 - `gemini_utils.finish_reason_name()` and `TRUNCATION_MARKER` replace a helper
   copied into the audio and YouTube transcribers and three spellings of the
   truncation marker. The marker now reads the same in OCR, HTR, audio and
@@ -172,7 +184,7 @@ the changelog tells stories.
   works on Windows. `WriteGuard.dump_backup()` writes atomically.
 - Removed `pdf_utils.extract_pdf_page()`, unused since `PdfPageSource`.
 
-## 2026-09-22 — GPT-6 Luna for text pipelines
+### 2026-09-22 — GPT-6 Luna for text pipelines
 
 - Switch Luna defaults, text model selections and generic OpenAI aliases to
   `gpt-6-luna`, including summaries and publication citation extraction.
@@ -204,7 +216,8 @@ outputs generated with earlier versions.
 
 ## 1.1.0 — 2026-09-02
 
-Pre-publication release accompanying *When AI Meets the Archive*.
+Pre-publication release accompanying *When AI Meets the Archive*. Never
+tagged or archived on Zenodo: its changes first shipped in 1.2.0.
 
 ### Provenance
 - Every `dcterms:subject` / `dcterms:spatial` link written by NER or

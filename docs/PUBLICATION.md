@@ -18,12 +18,14 @@ python scripts/capture_environment.py --output-dir .cache/release-environment
 The environment capture verifies each installed version against PyPI, then writes
 exact constraints and a JSON record of the tested versions, upstream versions,
 Python, architecture, commit and dirty-tree status. It does not upgrade packages.
-The [7 September validation snapshot](validation/2026-09-07/environment.json) and
-[constraints](validation/2026-09-07/constraints.txt) describe Windows ARM64 with
-Python 3.13.15. They are an environment record, not a portable lockfile or a claim
-about the environment used for historical results. Capture a fresh snapshot on
-the actual publication platform after validation; install constraints with
-`pip install -c <constraints.txt> -e ".[dev]"` on a compatible platform.
+The [6 October validation snapshot](validation/2026-10-06/environment.json) and
+[constraints](validation/2026-10-06/constraints.txt), captured for 1.3.0 on a
+clean tree at the code that release ships, describe Windows ARM64 with Python
+3.13.15; the 2026-09-07 snapshot records 1.2.0. They are an environment record,
+not a portable lockfile or a claim about the environment used for historical
+results. Capture a fresh snapshot on the actual publication platform after
+validation; install constraints with `pip install -c <constraints.txt> -e ".[dev]"`
+on a compatible platform.
 
 CI covers Ubuntu with Python 3.11 and 3.13 and Windows with Python 3.13. It checks
 lint, behavioral tests, local documentation links, citation/package metadata
