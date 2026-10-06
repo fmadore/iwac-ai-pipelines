@@ -233,16 +233,19 @@ def bare_root():
     opening its log file.
     """
     root = logging.getLogger()
-    saved = (root.handlers[:], root.filters[:], root.level, logging.getLogger("httpx").level)
+    transports = ("httpx", "httpcore", "httpx2", "httpcore2")
+    saved = (root.handlers[:], root.filters[:], root.level,
+             {name: logging.getLogger(name).level for name in transports})
     root.handlers, root.filters = [], []
     try:
         yield root
     finally:
         for handler in root.handlers:
             handler.close()
-        root.handlers, root.filters, level, httpx_level = saved
+        root.handlers, root.filters, level, transport_levels = saved
         root.setLevel(level)
-        logging.getLogger("httpx").setLevel(httpx_level)
+        for name, transport_level in transport_levels.items():
+            logging.getLogger(name).setLevel(transport_level)
 
 
 def test_configure_logging_redacts_what_it_writes(tmp_path):
@@ -259,9 +262,11 @@ def test_configure_logging_redacts_what_it_writes(tmp_path):
 
 
 def test_configure_logging_quiets_per_request_lines_unless_debugging():
+    """httpx under OpenAI and google-genai, httpx2 under mistralai 3.x."""
     with bare_root():
         configure_logging(stream=io.StringIO())
-        assert logging.getLogger("httpx").getEffectiveLevel() == logging.WARNING
+        for name in ("httpx", "httpcore.http11", "httpx2", "httpcore2.http11"):
+            assert logging.getLogger(name).getEffectiveLevel() == logging.WARNING
 
 
 def test_configure_logging_keeps_request_lines_at_debug():

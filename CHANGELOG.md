@@ -7,6 +7,14 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## 2026-10-06 — mistralai 3
+
+- The `mistralai` bound is `<4`. 3.0 keeps the imports and every method and
+  keyword these pipelines call; verified live on chat (plain, `chat.parse` and
+  the reasoning path) and on an OCR upload. Its transport is now `httpx2`, which
+  logs every request at INFO under its own name, so `configure_logging()` holds
+  `httpx2` and `httpcore2` at WARNING as it already did `httpx`.
+
 ## 2026-10-06 — A cut-off answer is an error
 
 - Every text client checks why the model stopped. An answer cut off at the

@@ -11,7 +11,7 @@
 # --- AI provider APIs --------------------------------------------------------
 google-genai>=2.20,<3       # Google Gemini API. 2.20 floor: 02c needs the Interactions transcription mode types, absent in 2.16
 openai>=1.60,<4             # OpenAI Responses API, and the OpenAI-compatible OpenRouter / self-hosted routes
-mistralai>=2.5,<3           # Mistral AI API (Large 3, OCR 4). 2.x layout: import from mistralai.client and mistralai.client.errors
+mistralai>=2.5,<4           # Mistral AI API (Large 3, OCR 4). Import from mistralai.client and mistralai.client.errors; 3.x moved its transport to httpx2
 pydantic>=2.5,<3            # Data validation and structured outputs
 
 # --- PDF processing ----------------------------------------------------------

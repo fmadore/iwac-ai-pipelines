@@ -39,10 +39,11 @@ __all__ = ["REDACTED", "redact", "scrub_known_secrets",
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 
 #: Loggers that narrate every HTTP request at INFO. httpx sits under the
-#: OpenAI, Mistral and google-genai SDKs and logs one line per call, which on
-#: a 12,000-article run is 12,000 lines under the progress bar. Held at WARNING
-#: unless the run asks for DEBUG; the SDKs' own retry notices are untouched.
-_REQUEST_LOGGERS = ("httpx", "httpcore")
+#: OpenAI and google-genai SDKs and httpx2 under mistralai 3.x; each logs one
+#: line per call, which on a 12,000-article run is 12,000 lines under the
+#: progress bar. Held at WARNING unless the run asks for DEBUG; the SDKs' own
+#: retry notices are untouched.
+_REQUEST_LOGGERS = ("httpx", "httpcore", "httpx2", "httpcore2")
 
 #: What a scrubbed value is replaced with. Deliberately visible: a log that
 #: reads ``key_credential=<redacted>`` tells you the filter ran, whereas a
