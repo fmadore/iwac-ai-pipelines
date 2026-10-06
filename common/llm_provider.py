@@ -65,6 +65,7 @@ load_dotenv()
 
 LOGGER = logging.getLogger(__name__)
 
+from common.retry import PermanentError
 from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_TEXT_MODEL_KEY,
@@ -170,6 +171,47 @@ def _attr(obj: Any, *names: str) -> Any:
     return current
 
 
+class TruncatedOutputError(PermanentError, RuntimeError):
+    """The model stopped before finishing its answer, so the text is cut off.
+
+    Raised instead of returning the partial text, which reads as a complete
+    answer: OCR correction would save it and step 03 would upload it as the
+    item's full text. The usual cause is the output limit, and the same request
+    would be cut at the same place, so it is never retried. Send less input per
+    request instead.
+    """
+
+    def __init__(self, route: str, model: str, reason: str) -> None:
+        super().__init__(
+            f"{route} ({model}) stopped before finishing its answer ({reason}); "
+            "the output is incomplete. Send less text per request."
+        )
+        self.reason = reason
+
+
+#: Finish reasons that mean the answer was cut off, across the four wire
+#: formats: OpenAI Responses ``incomplete_details.reason``, Gemini
+#: ``finish_reason``, and the chat-completions ``finish_reason`` that Mistral,
+#: OpenRouter and vLLM report.
+_TRUNCATED_FINISH_REASONS = frozenset(
+    {"max_output_tokens", "max_tokens", "length", "model_length", "content_filter"}
+)
+
+
+def _finish_reason(value: Any) -> str:
+    """A finish reason as a bare lowercase name, whatever the SDK wrapped it in."""
+    if value is None:
+        return ""
+    name = getattr(value, "name", None) or getattr(value, "value", None) or value
+    return str(name).rsplit(".", 1)[-1].lower()
+
+
+def _raise_if_truncated(route: str, model: str, reason: Any) -> None:
+    name = _finish_reason(reason)
+    if name in _TRUNCATED_FINISH_REASONS:
+        raise TruncatedOutputError(route, model, name)
+
+
 class BaseLLMClient:
     """Minimal interface implemented by provider-specific clients."""
 
@@ -270,6 +312,11 @@ class OpenAIResponsesClient(BaseLLMClient):
             reasoning_tokens=_attr(response, "usage", "output_tokens_details", "reasoning_tokens"),
         )
 
+    def _check_complete(self, response: Any) -> None:
+        if getattr(response, "status", None) == "incomplete":
+            reason = _attr(response, "incomplete_details", "reason") or "incomplete"
+            _raise_if_truncated("OpenAI", self.option.model, reason)
+
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
 
@@ -293,6 +340,7 @@ class OpenAIResponsesClient(BaseLLMClient):
             **self._tier_kwargs(effective_config),
         )
         self._record_usage(response)
+        self._check_complete(response)
         # ``output_text`` is the SDK's join of every text part of the response;
         # reasoning items carry none, so nothing else needs walking.
         return (getattr(response, "output_text", None) or "").strip()
@@ -341,6 +389,7 @@ class OpenAIResponsesClient(BaseLLMClient):
             **self._tier_kwargs(effective_config),
         )
         self._record_usage(response)
+        self._check_complete(response)
 
         parsed = getattr(response, "output_parsed", None)
         if parsed is not None:
@@ -451,8 +500,16 @@ class GeminiGenerateContentClient(BaseLLMClient):
             config=gen_config,
         )
         self._record_usage(response)
+        self._check_complete(response)
         text = getattr(response, "text", None)
         return text.strip() if isinstance(text, str) else ""
+
+    def _check_complete(self, response: Any) -> None:
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            _raise_if_truncated(
+                "Gemini", self.option.model, getattr(candidates[0], "finish_reason", None)
+            )
 
     def _record_usage(self, response: Any) -> None:
         self.usage.add(
@@ -504,6 +561,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
             config=gen_config,
         )
         self._record_usage(response)
+        self._check_complete(response)
 
         text = getattr(response, "text", None)
         if not text:
@@ -569,6 +627,7 @@ class MistralClient(BaseLLMClient):
         )
 
         self._record_usage(response)
+        self._check_complete(response)
         if response.choices and len(response.choices) > 0:
             # Reasoning mode returns a chunk list, not a string; keep only the
             # answer text and drop the thinking chunk.
@@ -580,6 +639,13 @@ class MistralClient(BaseLLMClient):
             input_tokens=_attr(response, "usage", "prompt_tokens"),
             output_tokens=_attr(response, "usage", "completion_tokens"),
         )
+
+    def _check_complete(self, response: Any) -> None:
+        choices = getattr(response, "choices", None) or []
+        if choices:
+            _raise_if_truncated(
+                "Mistral", self.option.model, getattr(choices[0], "finish_reason", None)
+            )
 
     @staticmethod
     def _content_text(content: Any) -> str:
@@ -654,6 +720,7 @@ class MistralClient(BaseLLMClient):
                 **common,
             )
             self._record_usage(response)
+            self._check_complete(response)
             if response.choices:
                 parsed = response.choices[0].message.parsed
                 if parsed is not None:
@@ -667,6 +734,7 @@ class MistralClient(BaseLLMClient):
             **common,
         )
         self._record_usage(response)
+        self._check_complete(response)
         if not response.choices:
             raise ValueError("No output received from Mistral structured response")
         text = self._content_text(response.choices[0].message.content).strip()
@@ -809,11 +877,15 @@ class OpenRouterClient(BaseLLMClient):
         return ""
 
     def _first_message(self, response: Any) -> Any:
+        """The first choice's message, once the answer is known to be whole."""
         choices = getattr(response, "choices", None) or []
         if not choices:
             raise ValueError(
                 f"No output received from {self._route_label} ({self.option.model})"
             )
+        _raise_if_truncated(
+            self._route_label, self.option.model, getattr(choices[0], "finish_reason", None)
+        )
         return choices[0].message
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:

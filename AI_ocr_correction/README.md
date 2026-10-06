@@ -98,7 +98,12 @@ The ALTO correction enforces strict token alignment:
 <String CONTENT="gouvernement" HPOS="145" VPOS="50" WIDTH="120"/>
 ```
 
-**Limitation**: Token count must match. Words needing merge (`ilest` → `il est`) or split are flagged but left unchanged to preserve coordinates.
+**Limitation**: Token count must match. A line whose correction would merge (`ilest` → `il est`) or split words is kept as it was, with a warning, to preserve coordinates.
+
+A file is written to `ALTO_Corrected/` only when every request for it
+succeeded. A failed or truncated request fails the file and nothing is written
+for it; quota exhaustion stops the run; the script exits 1 when any file failed.
+Rerun to retry: ALTO has no resume, so the whole folder is processed again.
 
 ## Limitations
 
@@ -108,7 +113,11 @@ The ALTO correction enforces strict token alignment:
 
 **Token alignment (ALTO)**: Cannot merge or split words without breaking coordinate mapping.
 
-**Context window**: Very long documents are chunked, potentially losing cross-page context.
+**Context window**: Very long documents are chunked (`--max-length`, default 200,000 characters), potentially losing cross-page context.
+
+**Output limit**: A model that runs out of output room mid-answer is reported as
+a failure, never saved: the corrected text would otherwise end mid-sentence and
+step 03 would upload it. Rerun that file with a smaller `--max-length`.
 
 ## Configuration
 
@@ -137,7 +146,8 @@ MISTRAL_API_KEY=your_key
 | Token count mismatch | Script falls back to original; check for merged/split words |
 | Historical spellings changed | Adjust prompt with more examples |
 | ALTO namespace errors | Script auto-detects v2/v3/v4; check XML validity |
-| API rate limits | The text pipeline stops on quota exhaustion and returns a nonzero status. Reruns skip files only when source, prompt/model/settings and output hashes match; use `--force` to regenerate. This does not describe the separate ALTO processor. |
+| "stopped before finishing its answer" | The output limit was reached; rerun with a smaller `--max-length` (ALTO: smaller `--max-lines`) |
+| API rate limits | Both processors stop on quota exhaustion and exit nonzero. Text reruns skip files only when source, prompt/model/settings and output hashes match; use `--force` to regenerate. ALTO reruns process every file again. |
 
 ## Publication workflow
 

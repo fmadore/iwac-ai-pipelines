@@ -26,6 +26,14 @@ LOGGER = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable)
 
 
+class PermanentError(Exception):
+    """A failure the same request would reproduce, so a retry only adds cost.
+
+    :func:`retry_with_backoff` re-raises it at once, as it does
+    ``QuotaExhaustedError``.
+    """
+
+
 def retry_with_backoff(
     max_retries: int = 3,
     base_delay: float = 2.0,
@@ -43,7 +51,8 @@ def retry_with_backoff(
             returns ``False`` the exception is re-raised immediately
             (e.g. a 400 among retryable API errors).
 
-    ``QuotaExhaustedError`` is never retried, regardless of the arguments.
+    ``QuotaExhaustedError`` and :class:`PermanentError` are never retried,
+    regardless of the arguments.
     When the error states how long to wait ("Please retry in 23.3s", as Gemini
     throttles do), that wait is used if it is longer than the backoff: guessing
     short turns one throttle into three.
@@ -59,8 +68,8 @@ def retry_with_backoff(
             for attempt in range(1, max_retries + 1):
                 try:
                     return func(*args, **kwargs)
-                except QuotaExhaustedError:
-                    raise  # never retry quota exhaustion
+                except (QuotaExhaustedError, PermanentError):
+                    raise  # the same request would fail the same way
                 except exceptions as exc:
                     if is_retryable is not None and not is_retryable(exc):
                         raise

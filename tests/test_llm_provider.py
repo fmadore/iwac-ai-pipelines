@@ -946,3 +946,88 @@ def test_models_without_authority_items_stay_out_of_stamping_tiers():
     # The bare aliases an operator types still mean the stampable Flash.
     assert normalize_model_key("gemini") == "gemini-3.7-flash"
     assert normalize_model_key("gemini-3.8") == "gemini-3.8-flash"
+
+
+# --- A cut-off answer is an error, never a result ---------------------------
+
+def _bare_client(cls, key):
+    """A client with a stub SDK and no constructor side effects."""
+    client = cls.__new__(cls)
+    client.option = MODEL_REGISTRY[key]
+    client.config = LLMConfig()
+    client.usage = MagicMock()
+    client._client = MagicMock()
+    return client
+
+
+def _cut_off_clients():
+    from types import SimpleNamespace
+
+    from google.genai import types as genai_types
+
+    from common.llm_provider import MistralClient
+
+    openai = _bare_client(OpenAIResponsesClient, "gpt-6-luna")
+    openai._client.responses.create.return_value = SimpleNamespace(
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output_text="La première moitié", usage=None,
+    )
+    gemini = _bare_client(GeminiGenerateContentClient, "gemini-3.7-flash")
+    gemini._client.models.generate_content.return_value = SimpleNamespace(
+        candidates=[SimpleNamespace(finish_reason=genai_types.FinishReason.MAX_TOKENS)],
+        text="La première moitié", usage_metadata=None,
+    )
+    mistral = _bare_client(MistralClient, "mistral-large")
+    mistral._client.chat.complete.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(finish_reason="length",
+                                 message=SimpleNamespace(content="La première moitié"))],
+        usage=None,
+    )
+    openrouter = _bare_client(OpenRouterClient, "deepseek-v4-flash-0731")
+    openrouter._client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(finish_reason="length",
+                                 message=SimpleNamespace(content="La première moitié", refusal=None))],
+        usage=None,
+    )
+    return {"openai": openai, "gemini": gemini, "mistral": mistral, "openrouter": openrouter}
+
+
+@pytest.mark.parametrize("route", ["openai", "gemini", "mistral", "openrouter"])
+def test_a_cut_off_answer_raises_instead_of_returning_half(route):
+    """Returned as text, a truncated correction reads as complete and step 03
+    would upload it as the item's full text."""
+    from common.llm_provider import TruncatedOutputError
+
+    client = _cut_off_clients()[route]
+    with pytest.raises(TruncatedOutputError):
+        client.generate("system", "user")
+
+
+def test_a_finished_answer_is_returned():
+    from types import SimpleNamespace
+
+    client = _bare_client(OpenRouterClient, "deepseek-v4-flash-0731")
+    client._client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(finish_reason="stop",
+                                 message=SimpleNamespace(content=" Texte complet. ", refusal=None))],
+        usage=None,
+    )
+    assert client.generate("system", "user") == "Texte complet."
+
+
+def test_a_truncated_answer_is_never_retried():
+    """The same request is cut at the same place; a retry only pays again."""
+    from common.llm_provider import TruncatedOutputError
+    from common.retry import retry_with_backoff
+
+    calls = []
+
+    @retry_with_backoff(max_retries=3, base_delay=0.01)
+    def call():
+        calls.append(1)
+        raise TruncatedOutputError("OpenRouter", "deepseek/deepseek-v4-flash-0731", "length")
+
+    with pytest.raises(TruncatedOutputError):
+        call()
+    assert len(calls) == 1

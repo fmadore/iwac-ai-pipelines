@@ -42,6 +42,7 @@ from common.llm_registry import PROVIDER_GEMINI, clamp_thinking_level
 from common.log_redaction import configure_logging
 from common.artifacts import artifact_matches, invalidate_artifact, commit_artifact
 from common.checkpoint import sha256_file, sha256_text, atomic_write_text
+from common.llm_provider import TruncatedOutputError
 from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
 from common.run_context import model_context
 
@@ -101,6 +102,8 @@ def correct_text_with_llm(client, text: str, system_prompt: str) -> str:
         if is_quota_exhausted(e):
             raise QuotaExhaustedError(str(e)) from e
         console.print(f"[red]✗[/] Error during API call: {e}")
+        if isinstance(e, TruncatedOutputError):
+            console.print("  [dim]Rerun with a smaller --max-length; nothing was saved for this file.[/]")
         raise
 
 def split_text(text: str, max_chars: int = 200000) -> list[str]:

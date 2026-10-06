@@ -7,6 +7,24 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## 2026-10-06 — A cut-off answer is an error
+
+- Every text client checks why the model stopped. An answer cut off at the
+  output limit (OpenAI `status: "incomplete"`, Gemini `MAX_TOKENS`,
+  chat-completions `finish_reason: "length"` on Mistral, OpenRouter and vLLM)
+  raises `TruncatedOutputError` instead of returning the partial text. OCR
+  correction used to save such text as a complete artifact, ready for step 03
+  to upload as the item's full text; it now fails the file and says to lower
+  `--max-length`.
+- `retry_with_backoff` never retries a `PermanentError`, the new base class of
+  `TruncatedOutputError`: the same request is cut at the same place.
+- ALTO correction no longer swallows model errors. A failed or truncated
+  request used to leave the block's original tokens in place, write the file
+  to `ALTO_Corrected/` as corrected, and report success; the file now fails
+  and is not written, quota exhaustion stops the run, transient errors are
+  retried, and the script exits 1 on any failure. Its output keeps ALTO's
+  default namespace instead of an `ns0:` prefix on every element.
+
 ## 2026-10-06 — Model menus offer only what can be stamped
 
 - NER and reference indexing offer Gemma 4 through OpenRouter

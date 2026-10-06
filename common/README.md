@@ -262,7 +262,8 @@ Features:
 - Exponential backoff with random jitter (prevents synchronized retries)
 - A wait the server names ("Please retry in 23.3s", `rate_limiter.retry_delay_seconds`)
   is used instead when it is longer — a guess shorter than it is a wasted attempt
-- `QuotaExhaustedError` is always re-raised immediately (never retried)
+- `QuotaExhaustedError` and `PermanentError` are always re-raised immediately
+  (never retried); `llm_provider.TruncatedOutputError` is a `PermanentError`
 - `is_retryable=` refines which exceptions are retried (a 400 is not)
 
 ---
@@ -631,6 +632,16 @@ recovery below; `test_structured_output_never_delegates_parsing_to_the_sdk`
 guards against it.
 
 ## Configuration Parameters
+
+### Truncated answers
+
+Every client checks why the model stopped. When it ran out of output room (or
+the provider cut the answer), `generate()` and `generate_structured()` raise
+`TruncatedOutputError` instead of returning the partial text, which reads as a
+complete answer. The check reads OpenAI's `status: "incomplete"`, Gemini's
+`finish_reason: MAX_TOKENS` and the chat-completions `finish_reason: "length"`
+that Mistral, OpenRouter and vLLM report. It is a `retry.PermanentError`, so
+`retry_with_backoff` does not send the same request again; send less input.
 
 ### Usage totals
 

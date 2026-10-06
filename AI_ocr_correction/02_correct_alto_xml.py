@@ -48,6 +48,8 @@ from common.llm_provider import (
     summary_from_option,
 )
 from common.console_utils import standard_progress
+from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
+from common.retry import retry_with_backoff
 from common.llm_registry import PROVIDER_GEMINI, clamp_thinking_level
 from common.log_redaction import configure_logging
 
@@ -297,6 +299,17 @@ Note: "gouvernement" is kept as French spelling, not changed to English "governm
 Return structured JSON with exact token alignment for each line."""
 
 
+@retry_with_backoff(max_retries=3, base_delay=5.0, is_retryable=lambda exc: not is_quota_exhausted(exc))
+def request_corrections(client, system_prompt: str, user_prompt: str) -> "LineCorrectionBatch":
+    """One structured correction request, retried on transient errors.
+
+    Quota exhaustion and a truncated answer are not retried: the first would
+    fail again, the second would be cut at the same place. Either propagates,
+    so the file is reported as failed rather than written half-corrected.
+    """
+    return client.generate_structured(system_prompt, user_prompt, LineCorrectionBatch)
+
+
 def correct_lines_batch(
     client,
     lines: list[TextLineData],
@@ -335,32 +348,22 @@ def correct_lines_batch(
 
         user_prompt = "\n".join(user_prompt_parts)
 
-        try:
-            result = client.generate_structured(
-                system_prompt,
-                user_prompt,
-                LineCorrectionBatch,
-            )
+        result = request_corrections(client, system_prompt, user_prompt)
 
-            # Process results
-            for corrected_line in result.lines:
-                idx = corrected_line.line_index
-                if batch_start <= idx < batch_end:
-                    original_count = len(batch[idx - batch_start].strings)
-                    corrected_count = len(corrected_line.corrected_tokens)
+        for corrected_line in result.lines:
+            idx = corrected_line.line_index
+            if batch_start <= idx < batch_end:
+                original_count = len(batch[idx - batch_start].strings)
+                corrected_count = len(corrected_line.corrected_tokens)
 
-                    if corrected_count == original_count:
-                        corrections[idx] = corrected_line.corrected_tokens
-                    else:
-                        # Token count mismatch - keep original
-                        console.print(
-                            f"[yellow]⚠[/] Line {idx}: token count mismatch "
-                            f"(expected {original_count}, got {corrected_count}), keeping original"
-                        )
-
-        except Exception as e:
-            console.print(f"[red]✗[/] Error processing batch {batch_start}-{batch_end}: {e}")
-            # Continue with next batch
+                if corrected_count == original_count:
+                    corrections[idx] = corrected_line.corrected_tokens
+                else:
+                    # Token count mismatch - keep original
+                    console.print(
+                        f"[yellow]⚠[/] Line {idx}: token count mismatch "
+                        f"(expected {original_count}, got {corrected_count}), keeping original"
+                    )
 
     return corrections
 
@@ -408,30 +411,21 @@ def correct_block(
 
         user_prompt = "\n".join(user_prompt_parts)
 
-        try:
-            result = client.generate_structured(
-                system_prompt,
-                user_prompt,
-                LineCorrectionBatch,
-            )
+        result = request_corrections(client, system_prompt, user_prompt)
 
-            # Process results
-            for corrected_line in result.lines:
-                idx = corrected_line.line_index
-                if 0 <= idx < len(lines):
-                    original_count = len(lines[idx].strings)
-                    corrected_count = len(corrected_line.corrected_tokens)
+        for corrected_line in result.lines:
+            idx = corrected_line.line_index
+            if 0 <= idx < len(lines):
+                original_count = len(lines[idx].strings)
+                corrected_count = len(corrected_line.corrected_tokens)
 
-                    if corrected_count == original_count:
-                        corrections[idx] = corrected_line.corrected_tokens
-                    else:
-                        console.print(
-                            f"[yellow]⚠[/] Block {block.block_id}, Line {idx}: token count mismatch "
-                            f"(expected {original_count}, got {corrected_count}), keeping original"
-                        )
-
-        except Exception as e:
-            console.print(f"[red]✗[/] Error processing block {block.block_id}: {e}")
+                if corrected_count == original_count:
+                    corrections[idx] = corrected_line.corrected_tokens
+                else:
+                    console.print(
+                        f"[yellow]⚠[/] Block {block.block_id}, Line {idx}: token count mismatch "
+                        f"(expected {original_count}, got {corrected_count}), keeping original"
+                    )
 
     else:
         # For very large blocks, fall back to batch processing
@@ -529,7 +523,12 @@ def process_alto_file(
         # Apply corrections to XML
         updated_count = apply_corrections_to_alto(text_blocks, all_corrections, ns)
 
-        # Write corrected XML
+        # Written only once every block has an answer: a file with a failed
+        # block would otherwise be indistinguishable from a corrected one.
+        # Registering the namespace keeps ALTO's default xmlns rather than
+        # rewriting every element with an ``ns0:`` prefix.
+        if ns:
+            ET.register_namespace("", ns)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
@@ -537,7 +536,11 @@ def process_alto_file(
 
     except ET.ParseError as e:
         return False, 0, 0, 0, f"XML parse error: {e}"
+    except QuotaExhaustedError:
+        raise
     except Exception as e:
+        if is_quota_exhausted(e):
+            raise QuotaExhaustedError(str(e)) from e
         return False, 0, 0, 0, str(e)
 
 
@@ -583,11 +586,16 @@ def process_alto_files(
     with standard_progress(console) as progress:
         task = progress.add_task("Processing ALTO files...", total=len(alto_files))
 
-        for alto_file in alto_files:
+        for index, alto_file in enumerate(alto_files):
             output_file = output_dir / alto_file.name
-            success, blocks, lines, strings, message = process_alto_file(
-                client, alto_file, output_file, system_prompt, max_lines_per_request
-            )
+            try:
+                success, blocks, lines, strings, message = process_alto_file(
+                    client, alto_file, output_file, system_prompt, max_lines_per_request
+                )
+            except QuotaExhaustedError as exc:
+                console.print(f"[red]✗[/] Quota exhausted at {alto_file.name}: {exc}")
+                error_count += len(alto_files) - index
+                break
 
             if success:
                 success_count += 1
@@ -620,7 +628,7 @@ Examples:
   # Process with the default text model
   python 02_correct_alto_xml.py
 
-  # Use Gemini Flash (fast, no thinking)
+  # Use Gemini 3.7 Flash
   python 02_correct_alto_xml.py --model gemini-3.7-flash
 
   # Custom directories and max lines per request
@@ -654,7 +662,7 @@ Examples:
     return parser.parse_args()
 
 
-def main():
+def main() -> int:
     """Main execution function."""
     args = parse_args()
     configure_logging(logging.WARNING)
@@ -682,7 +690,7 @@ def main():
         model_option = get_model_option(args.model, allowed_keys=ALLOWED_MODELS)
     except ValueError as e:
         console.print(f"[red]✗[/] {e}")
-        sys.exit(1)
+        return 1
 
     # "minimal" means "as little as this model offers": the provider adapter
     # snaps it to the nearest level the chosen model accepts, so no model name
@@ -713,7 +721,7 @@ def main():
         console.print(
             "\n[dim]Create an ALTO/ directory with your ALTO XML files, or use --input-dir[/]"
         )
-        sys.exit(1)
+        return 1
 
     # Count files
     alto_files = (
@@ -726,7 +734,7 @@ def main():
 
     if not alto_files:
         console.print("[yellow]⚠[/] No files to process. Exiting.")
-        sys.exit(0)
+        return 0
 
     # Initialize LLM client
     console.print("[cyan]🔌[/] Initializing LLM client...")
@@ -734,7 +742,7 @@ def main():
         client = build_llm_client(model_option, config=config)
     except RuntimeError as e:
         console.print(f"[red]✗[/] Failed to initialize client: {e}")
-        sys.exit(1)
+        return 1
 
     # Load system prompt
     system_prompt = get_system_prompt()
@@ -776,11 +784,12 @@ def main():
     else:
         console.print(
             Panel(
-                f"[yellow]⚠ Completed with {error_count} error(s)[/]",
-                border_style="yellow",
+                f"[red]✗ {error_count} file(s) failed and were not written; rerun to retry them[/]",
+                border_style="red",
             )
         )
+    return int(error_count > 0)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
