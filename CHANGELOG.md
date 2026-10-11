@@ -344,6 +344,11 @@ What the constants used to explain in place. Dates are when the archive changed.
 - **2026-08-27** — `gemini-3.5-transcribe` (item 113077) for
   `AI_audio_summary/02c`; the audio pipeline stamped no transcription
   provenance before it.
+- **2026-10-11** — `claude-opus-5-5` (item 125262, listed under category
+  78030) for the Fayda (65753) and Ibrahim Niass (125261) subject links that
+  Claude Opus 5.5 proposed from a full-text scan in a Claude Code session and
+  the curator reviewed before upload. No pipeline routes Claude, so the key
+  mirrors the item's `dcterms:alternative` rather than a registry key.
 
 ## Model registry (`common/llm_registry.py`)
 

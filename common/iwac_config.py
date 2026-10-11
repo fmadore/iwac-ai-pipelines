@@ -156,6 +156,11 @@ LANGUAGE_LABELS_BY_CODE: Dict[str, str] = {
 AI_MODEL_ITEMS: Dict[str, Dict] = {
     "claude-opus-5": {"item_id": 79615, "display_title": "Claude Opus 5.0"},
     "claude-opus-4.6": {"item_id": 78528, "display_title": "Claude Opus 4.6"},
+    # Not an LLM registry key: no pipeline routes Claude. The key mirrors the
+    # item's ``dcterms:alternative`` (the API model id), as for
+    # ``gemini-3.5-transcribe``. Created 2026-10-11 for curator-approved
+    # subject links that Claude Opus 5.5 proposed in a Claude Code session.
+    "claude-opus-5-5": {"item_id": 125262, "display_title": "Claude Opus 5.5"},
     "gemini-3.1-pro": {"item_id": 78536, "display_title": "Gemini 3.1 Pro"},
     "gemini-3.7-flash": {"item_id": 111774, "display_title": "Gemini 3.7 Flash"},
     "gemini-3.6-flash": {"item_id": 79611, "display_title": "Gemini 3.6 Flash"},
