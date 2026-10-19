@@ -220,25 +220,54 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
 RETIRED_AI_MODEL_ITEM_IDS = (79608, 79609)
 
 
-def resolve_property_ids(client, terms: Iterable[str]) -> Dict[str, int]:
-    """Resolve ``iwac:`` terms to property IDs in one request.
+#: Page size for listing a vocabulary's properties. Omeka never removes a
+#: property on vocabulary update, so the installed list only grows; a single
+#: page would one day stop holding it and silently drop the newest terms.
+PROPERTY_PAGE_SIZE = 100
 
-    The whole IWAC vocabulary fits inside a single page, so a run that needs
-    thirty-odd property IDs costs one GET rather than thirty. Resolving instead
-    of hardcoding matters here because these IDs are assigned by Omeka when the
-    vocabulary is updated, and differ between installations.
+
+def list_vocabulary_properties(
+    client, vocabulary_id: int = IWAC_VOCABULARY_ID
+) -> Dict[str, int]:
+    """``term -> property id`` for every property installed in a vocabulary.
+
+    Pages until Omeka returns a short page, so the result is complete however
+    many properties the vocabulary has accumulated.
+
+    Raises:
+        RuntimeError: if any page cannot be read. A partial listing would make a
+            present term look missing, or hide one from the upload pre-flight.
+    """
+    properties: Dict[str, int] = {}
+    page = 1
+    while True:
+        url = (
+            f"{client.base_url}/properties?vocabulary_id={vocabulary_id}"
+            f"&per_page={PROPERTY_PAGE_SIZE}&page={page}"
+        )
+        result = client.get_resource(url)
+        if not isinstance(result, list):
+            raise RuntimeError(f"Could not list vocabulary {vocabulary_id} (page {page})")
+        properties.update({p["o:term"]: p["o:id"] for p in result})
+        if len(result) < PROPERTY_PAGE_SIZE:
+            return properties
+        page += 1
+
+
+def resolve_property_ids(client, terms: Iterable[str]) -> Dict[str, int]:
+    """Resolve ``iwac:`` terms to property IDs from one vocabulary listing.
+
+    A run that needs thirty-odd property IDs costs a page or two of GETs rather
+    than thirty. Resolving instead of hardcoding matters here because these IDs
+    are assigned by Omeka when the vocabulary is updated, and differ between
+    installations.
 
     Raises:
         KeyError: if any term is missing, naming all of them. A pipeline that
             silently skipped an unresolved property would write a partial
             annotation set and look successful.
     """
-    url = f"{client.base_url}/properties?vocabulary_id={IWAC_VOCABULARY_ID}&per_page=100"
-    result = client.get_resource(url)
-    if not isinstance(result, list):
-        raise RuntimeError(f"Could not list vocabulary {IWAC_VOCABULARY_ID}")
-
-    available = {p["o:term"]: p["o:id"] for p in result}
+    available = list_vocabulary_properties(client)
     wanted = list(terms)
     missing = [term for term in wanted if term not in available]
     if missing:

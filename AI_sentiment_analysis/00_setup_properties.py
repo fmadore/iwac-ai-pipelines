@@ -55,6 +55,7 @@ from rich.table import Table
 from rich import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.iwac_config import list_vocabulary_properties
 from common.omeka_client import OmekaClient
 from common.llm_provider import get_model_option
 from common.log_redaction import configure_logging
@@ -273,13 +274,10 @@ def emit_ttl() -> str:
 def fetch_existing(client: OmekaClient) -> Dict[str, int]:
     """term -> property id for everything already in the vocabulary.
 
-    One request: the whole IWAC vocabulary fits well inside a page of 100.
+    Paged: the installed list only grows (an update never removes a property),
+    and a truncated one would hide properties from the deletion pre-flight.
     """
-    url = f"{client.base_url}/properties?vocabulary_id={VOCABULARY_ID}&per_page=100"
-    result = client.get_resource(url)
-    if not isinstance(result, list):
-        raise RuntimeError(f"Unexpected response listing vocabulary {VOCABULARY_ID}")
-    return {p["o:term"]: p["o:id"] for p in result}
+    return list_vocabulary_properties(client, VOCABULARY_ID)
 
 
 def ttl_terms(ttl_path: Path) -> set:
