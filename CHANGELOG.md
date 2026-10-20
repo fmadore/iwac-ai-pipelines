@@ -24,6 +24,12 @@ the changelog tells stories.
   call is in `docs/PENDING.md`.
 - `TruncatedOutputError` also covers Anthropic's
   `model_context_window_exceeded`.
+- 2026-10-20: first live calls, on three Sidwaya articles, accepted
+  `output_config` with `effort: "medium"` and the transformed `NERResult`
+  schema and reported reasoning tokens.
+- `AI_NER/01 --country NAME` runs NER over every press article (class 36) in
+  the item sets whose `dcterms:spatial` is that country, instead of whole item
+  sets. `ARTICLE_RESOURCE_CLASS_ID` joins `common/iwac_config.py`.
 
 ### 2026-10-17 — Authority curation with Haiku reviewers
 

@@ -38,6 +38,10 @@ Usage examples:
     python 01_NER_AI.py --item-set-id 123 --model ministral-14b
     python 01_NER_AI.py --item-set-id 123 --model claude-haiku-5-5
     python 01_NER_AI.py --item-set-id 123,456,789 --batch-size 8
+    python 01_NER_AI.py --country "Burkina Faso" --model claude-haiku-5-5 --async
+
+``--country`` takes every press article (class 36) in the item sets whose
+``dcterms:spatial`` is that country — its newspapers — instead of whole sets.
 
 """
 from __future__ import annotations
@@ -50,6 +54,7 @@ import argparse
 import asyncio
 import logging
 import threading
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -72,6 +77,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.omeka_client import OmekaClient  # noqa: E402
+from common.iwac_config import ARTICLE_RESOURCE_CLASS_ID  # noqa: E402
 from common.retry import retry_with_backoff  # noqa: E402
 from common.checkpoint import (  # noqa: E402
     CheckpointMismatch,
@@ -106,6 +112,7 @@ logger = logging.getLogger(__name__)
 # Constants & Types
 # ---------------------------------------------------------------------------
 BATCH_SIZE = 10
+ITEM_SET_PAGE_SIZE = 100
 ALLOWED_MODEL_KEYS = TEXT_EXTENDED_MODELS
 LEGACY_MODEL_KEYS = LEGACY_CLI_MODEL_KEYS
 CSV_FIELDNAMES = ['o:id', 'Title', 'bibo:content', 'Subject AI', 'Spatial AI']
@@ -184,16 +191,60 @@ def get_ner_system_prompt() -> str:
             _NER_PROMPT_CACHE = f.read()
     return _NER_PROMPT_CACHE
 
-def get_items_from_multiple_sets(client: OmekaClient, item_set_ids: List[str]) -> List[Dict[str, Any]]:
-    """Get items from multiple item sets and combine them into a single list."""
+def get_items_from_multiple_sets(client: OmekaClient, item_set_ids: List[str],
+                                 resource_class_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Get items from multiple item sets and combine them into a single list.
+
+    With *resource_class_id*, only items of that class are kept, and sets
+    holding none are not listed.
+    """
     all_items: List[Dict[str, Any]] = []
     for item_set_id in item_set_ids:
         with console.status(f"[cyan]Fetching items from set {item_set_id}...", spinner="dots"):
-            items = client.get_items(int(item_set_id))
-        console.print(f"  [green]✓[/] Set {item_set_id}: [bold]{len(items)}[/] items")
+            items = client.get_items(int(item_set_id), resource_class_id=resource_class_id)
+        if items or resource_class_id is None:
+            console.print(f"  [green]✓[/] Set {item_set_id}: [bold]{len(items)}[/] items")
         logger.info(f"Found {len(items)} items in set {item_set_id}")
         all_items.extend(items)
     return all_items
+
+
+def _fold(text: str) -> str:
+    """Case- and accent-insensitive key, so ``benin`` finds ``Bénin``."""
+    decomposed = unicodedata.normalize("NFKD", text.strip())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold()
+
+
+def find_country_item_sets(client: OmekaClient, country: str) -> tuple[str, List[str]]:
+    """The item sets whose ``dcterms:spatial`` links the named country item.
+
+    Returns the country's display title as Omeka spells it and the set IDs.
+    Newspapers carry their country this way, which is also how the Hugging
+    Face export assigns ``articles.country``.
+    """
+    wanted = _fold(country)
+    label = ""
+    set_ids: List[str] = []
+    page = 1
+    while True:
+        batch = client.get_resource(
+            f"{client.base_url}/item_sets?per_page={ITEM_SET_PAGE_SIZE}&page={page}"
+        )
+        if batch is None:
+            raise ValueError("Could not list item sets from Omeka")
+        for item_set in batch:
+            for value in item_set.get("dcterms:spatial", []):
+                title = value.get("display_title") or value.get("@value") or ""
+                if title and _fold(title) == wanted:
+                    label = label or title.strip()
+                    set_ids.append(str(item_set["o:id"]))
+                    break
+        if len(batch) < ITEM_SET_PAGE_SIZE:
+            break
+        page += 1
+    if not set_ids:
+        raise ValueError(f"No item set has '{country}' as its spatial coverage")
+    return label, set_ids
 
 # ---------------------------------------------------------------------------
 # Data Utilities
@@ -483,7 +534,12 @@ def summarize(stats: ProcessingStats, output_csv: str, usage: Optional[UsageTota
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="NER extraction for Omeka S metadata (OpenAI, Gemini, or Mistral)")
-    parser.add_argument("--item-set-id", type=str, help="Item set ID(s) to process (comma-separated)")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--item-set-id", type=str, help="Item set ID(s) to process (comma-separated)")
+    scope.add_argument(
+        "--country", type=str,
+        help="Every press article from this country's newspapers, e.g. \"Burkina Faso\"",
+    )
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Batch size (default {BATCH_SIZE})")
     parser.add_argument("--async", action="store_true", help="Use async processing")
     parser.add_argument("--output-dir", type=str, help="Directory for output CSV")
@@ -507,8 +563,12 @@ def _collect_item_sets(args) -> List[str]:
         raise ValueError("No valid item set IDs provided")
     return item_set_ids
 
-def _build_output_path(item_set_ids: List[str], output_dir: str, model_key: str) -> str:
+def _build_output_path(item_set_ids: List[str], output_dir: str, model_key: str,
+                       country: Optional[str] = None) -> str:
     slug = model_key.replace('-', '_')
+    if country:
+        country_slug = re.sub(r"[^a-z0-9]+", "_", _fold(country)).strip("_")
+        return os.path.join(output_dir, f"country_{country_slug}_articles_processed_{slug}.csv")
     if len(item_set_ids) == 1:
         return os.path.join(output_dir, f"item_set_{item_set_ids[0]}_processed_{slug}.csv")
     sets_str = '_'.join(item_set_ids)
@@ -622,15 +682,24 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
 
     logger.info(f"Using AI model: {summary_from_option(model_option)}")
     llm_client = build_llm_client(model_option, config=config.llm_config)
-    item_set_ids = _collect_item_sets(args)
-
-    console.print(f"[cyan]📂 Item sets:[/] {', '.join(item_set_ids)}")
-
-    spatial_filter = get_combined_spatial_coverage(client, item_set_ids)
+    country: Optional[str] = None
+    resource_class_id: Optional[int] = None
+    if args.country:
+        country, item_set_ids = find_country_item_sets(client, args.country)
+        resource_class_id = ARTICLE_RESOURCE_CLASS_ID
+        console.print(f"[cyan]🌍 Country:[/] {country} — press articles from "
+                      f"{len(item_set_ids)} item sets")
+        spatial_filter: Optional[str] = country
+    else:
+        item_set_ids = _collect_item_sets(args)
+        console.print(f"[cyan]📂 Item sets:[/] {', '.join(item_set_ids)}")
+        spatial_filter = get_combined_spatial_coverage(client, item_set_ids)
     if spatial_filter:
         console.print(f"[cyan]🌍 Spatial filter:[/] {spatial_filter}")
 
-    items = _deduplicate_items(get_items_from_multiple_sets(client, item_set_ids))
+    items = _deduplicate_items(
+        get_items_from_multiple_sets(client, item_set_ids, resource_class_id=resource_class_id)
+    )
     if not items:
         console.print("[yellow]⚠[/] No items found.")
         return None
@@ -639,7 +708,10 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
 
     output_dir = args.output_dir or os.path.join(SCRIPT_DIR, 'output')
     os.makedirs(output_dir, exist_ok=True)
-    output_csv = _build_output_path(item_set_ids, output_dir, model_option.key)
+    output_csv = _build_output_path(item_set_ids, output_dir, model_option.key, country)
+    # The country keys appear only in a country run, so the checkpoints of
+    # item-set runs written before the option existed still resume.
+    scope = {"country": country, "resource_class_id": resource_class_id} if country else {}
     from common.run_context import model_context
     items, resume, resumed_items = _prepare_checkpointed_output(
         output_csv,
@@ -648,6 +720,7 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
             **model_context(model_option, config.llm_config),
             "prompt_sha256": sha256_text(get_ner_system_prompt()),
             "item_set_ids": item_set_ids,
+            **scope,
             "spatial_filter": spatial_filter,
             "fieldnames": CSV_FIELDNAMES,
         },

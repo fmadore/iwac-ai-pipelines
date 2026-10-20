@@ -182,3 +182,28 @@ def test_ner_spatial_filter_reads_a_linked_country():
             }]}
 
     assert ner.get_item_set_spatial_coverage(Client(), "2185") == "Bénin"
+
+
+def test_ner_country_resolves_its_newspaper_sets_across_pages(monkeypatch):
+    """``--country`` matches the sets' linked country, accent-insensitively, on every page."""
+    monkeypatch.setattr(ner, "ITEM_SET_PAGE_SIZE", 2)
+    pages = {
+        1: [
+            {"o:id": 2185, "dcterms:spatial": [{"display_title": "Bénin"}]},
+            {"o:id": 2201, "dcterms:spatial": [{"display_title": "Burkina Faso"}]},
+        ],
+        2: [{"o:id": 2189, "dcterms:spatial": [{"display_title": "Bénin"}]}],
+    }
+
+    class Client:
+        base_url = "https://example.test/api"
+
+        def get_resource(self, url):
+            return pages[int(url.rsplit("page=", 1)[1])]
+
+    assert ner.find_country_item_sets(Client(), "benin") == ("Bénin", ["2185", "2189"])
+    with pytest.raises(ValueError):
+        ner.find_country_item_sets(Client(), "Togo")
+    assert ner._build_output_path(["2185"], "out", "claude-haiku-5-5", "Côte d'Ivoire") == (
+        str(Path("out") / "country_cote_d_ivoire_articles_processed_claude_haiku_5_5.csv")
+    )

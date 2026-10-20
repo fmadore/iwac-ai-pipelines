@@ -38,16 +38,13 @@ the video summary). The steps below are in order: each depends on the one before
    `tests/test_summary_annotation.py` fails if a stamping tier gets a model
    with no authority item.
 
-## Claude Haiku 5.5: first live call
+## Claude Haiku 5.5: compare before writing
 
-`claude-haiku-5-5` and `AnthropicClient` were written from Anthropic's
-documentation on 2026-10-17 and tested only against a stub; `.env` had no
-`ANTHROPIC_API_KEY`. With a key, run `AI_NER/01` on a small item set and
-confirm that `output_config` with `effort: "medium"` and the
-`transform_schema()` output of `NERResult` is accepted, that the answer arrives
-after the thinking blocks, and that `usage` carries `thinking_tokens`. Compare
-its entities against DeepSeek 0731 on the same items before a bulk pass, then
-change the registry comment to "verified live" with the date.
+The first live calls (2026-10-20) accepted `output_config` with
+`effort: "medium"` and the `NERResult` schema and reported reasoning tokens.
+Before `AI_NER/03` writes the Burkinabè run
+(`country_burkina_faso_articles_processed_claude_haiku_5_5.csv`), compare its
+entities against DeepSeek 0731 on a sample of the same articles.
 
 ## Authority curation: before and after the first live pass
 

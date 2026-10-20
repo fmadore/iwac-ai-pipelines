@@ -25,6 +25,9 @@ python 01_NER_AI.py --item-set-id 123  # DeepSeek V4 Flash 0731 by default
 # Or Google's open-weights Gemma 4, through OpenRouter
 python 01_NER_AI.py --item-set-id 123 --model gemma-4-openrouter
 
+# Or every press article from one country's newspapers
+python 01_NER_AI.py --country "Burkina Faso" --model claude-haiku-5-5 --async
+
 # Match against authority records (newest CSV in output/, or --input)
 python 02_NER_reconciliation_Omeka.py
 
@@ -80,8 +83,18 @@ evaluation — compare its entities against a known-good model on the same item
 set before committing to a bulk pass.
 
 `claude-haiku-5-5` needs `ANTHROPIC_API_KEY` and receives the `medium` request
-as its effort level, which is also its default. It has not yet been called live
-from this repo (`docs/PENDING.md`), so the same first-run evaluation applies.
+as its effort level, which is also its default. First called live on 2026-10-20 (the
+comparison against DeepSeek 0731 is still pending, `docs/PENDING.md`):
+three Sidwaya articles took 4–8 s each, at about 4,000 tokens in and 1,100 out
+(reasoning included), which puts the 8,045 Burkinabè articles near $8.
+
+`--country` replaces `--item-set-id` with a country name, matched without regard
+to case or accents (`benin` finds `Bénin`). It selects the item sets whose
+`dcterms:spatial` links that country — its newspapers, and also its photograph,
+reference, document and YouTube sets — and keeps only their press articles
+(class 36). A newspaper's country is therefore the article's, as in the
+`articles.country` column of the Hugging Face export; an article from a
+Burkinabè paper about Mali is in, a Malian article about Burkina is not.
 
 ## Entity Categories
 
@@ -98,6 +111,7 @@ The pipeline extracts four entity types:
 
 After extraction:
 - `item_set_<ID>_processed_<model>.csv` — Extracted entities per item
+  (`country_<country>_articles_processed_<model>.csv` with `--country`)
 - `item_set_<ID>_processed_<model>.csv.checkpoint.json` — Model, prompt and scope the CSV was made with
 
 After reconciliation:

@@ -45,6 +45,11 @@ REFERENCE_RESOURCE_CLASSES: Dict[int, str] = {
     305: "Blog post",
 }
 
+#: ``bibo:Article`` — the press articles, the ``articles`` subset of the
+#: Hugging Face export. Their country is their newspaper's: each newspaper item
+#: set links its country item through ``dcterms:spatial``.
+ARTICLE_RESOURCE_CLASS_ID = 36
+
 # ---------------------------------------------------------------------------
 # YouTube-hosted audiovisual items
 # ---------------------------------------------------------------------------
