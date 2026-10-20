@@ -471,6 +471,8 @@ The `LLMConfig` class allows individual scripts to customize AI behavior without
 - **Gemini / Gemma**: `thinking_level` ("minimal", "low", "medium", or "high"),
   clamped per model to the rungs that model actually has
 - **Mistral**: `reasoning_effort` on Mistral Small 4 only (`none`/`high`)
+- **Anthropic**: `reasoning_effort`, sent as `output_config.effort`
+  (`low` … `max`; `minimal` becomes `low`)
 - **OpenRouter / self-hosted**: `reasoning_effort` on the models that accept one
 
 Every client also takes `request_timeout_seconds` (default 300 s) and
@@ -505,6 +507,7 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |
 | `mistral-small` | Mistral | `mistral-small-2603` | Mistral Small 4 | Hybrid reasoning model |
+| `claude-haiku-5-5` | Anthropic | `claude-haiku-5-5` | Claude Haiku 5.5 | $0.10/$0.50 per 1M up to 100K-token prompts, $0.50/$2.50 above; adaptive thinking, effort `low`…`max` (default `medium`); needs `ANTHROPIC_API_KEY` |
 | `qwen3.5-moe` | OpenRouter | `qwen/qwen3.5-122b-a10b` | Qwen3.5 122B-A10B | Apache-2.0 open weights, MoE 10B active, $0.26/$2.08 per 1M tokens |
 | `qwen3.5-moe-small` | OpenRouter | `qwen/qwen3.5-35b-a3b` | Qwen3.5 35B-A3B | Apache-2.0 open weights, MoE 3B active, $0.14/$1.00 per 1M tokens |
 | `qwen3.5-dense` | OpenRouter | `qwen/qwen3.5-27b` | Qwen3.5 27B | Apache-2.0 open weights, dense, $0.195/$1.56 per 1M tokens |
@@ -533,6 +536,7 @@ For convenience, these aliases are also supported:
 | `qwen` | `qwen3.5-moe` |
 | `deepseek` | `deepseek-v4-flash-0731` |
 | `deepseek-pro` | `deepseek-v4-pro` |
+| `haiku` | `claude-haiku-5-5` |
 
 OpenRouter slugs resolve as-is too, so a model id copied off openrouter.ai
 (`qwen/qwen3.5-122b-a10b`) works without translation.
@@ -616,6 +620,7 @@ Each provider gets the Pydantic class itself, not `model_json_schema()`:
 | OpenAI | `responses.parse(text_format=Model)` |
 | Gemini | `GenerateContentConfig(response_schema=Model)` |
 | Mistral | `chat.parse(response_format=Model)`; with reasoning on, `chat.complete(response_format=response_format_from_pydantic_model(Model))` |
+| Anthropic | `messages.create(output_config={"format": {"type": "json_schema", "schema": anthropic.transform_schema(Model)}})` |
 | OpenRouter / Self-hosted | `chat.completions.create(response_format=type_to_response_format_param(Model))` |
 
 For Gemini, google-genai also accepts `response_json_schema` (full JSON Schema,
@@ -641,6 +646,13 @@ could catch. Reintroducing `parse()` on these two clients silently removes the
 recovery below; `test_structured_output_never_delegates_parsing_to_the_sdk`
 guards against it.
 
+The Anthropic client avoids `messages.parse()` for the same reason. `parse()`
+validates every text block before it returns, so a refused answer
+(`stop_reason: "refusal"`, which Claude Haiku 5.5's safety classifiers can
+return with HTTP 200) or a cut-off one shows up as a bare `ValidationError`.
+The client sends the SDK's own `transform_schema()` output through `create()`,
+checks `stop_reason`, and validates afterwards.
+
 ## Configuration Parameters
 
 ### Truncated answers
@@ -649,8 +661,9 @@ Every client checks why the model stopped. When it ran out of output room (or
 the provider cut the answer), `generate()` and `generate_structured()` raise
 `TruncatedOutputError` instead of returning the partial text, which reads as a
 complete answer. The check reads OpenAI's `status: "incomplete"`, Gemini's
-`finish_reason: MAX_TOKENS` and the chat-completions `finish_reason: "length"`
-that Mistral, OpenRouter and vLLM report. It is a `retry.PermanentError`, so
+`finish_reason: MAX_TOKENS`, Anthropic's `stop_reason: "max_tokens"` and the
+chat-completions `finish_reason: "length"` that Mistral, OpenRouter and vLLM
+report. Claude's thinking counts toward its 16K `max_tokens`. It is a `retry.PermanentError`, so
 `retry_with_backoff` does not send the same request again; send less input.
 
 ### Usage totals
@@ -690,6 +703,7 @@ value differs sharply between them:
 | Mistral Large 3, Ministral 3 | `0.2` | The one vendor here recommending a low value — 0.05-0.20 for non-creative instruct work |
 | Mistral Small 4 | `0.3` | Mistral's value for its hybrid reasoning model |
 | GPT-5.6, GPT-6 | *never sent* | The reasoning models do not take one |
+| Claude Haiku 5.5 | *never sent* | The API rejects any value but the default with a 400, and the SDK's `messages.create` has no `temperature` parameter |
 
 Looping is the failure that motivates this. In these pipelines it shows up as a
 transcript repeating a paragraph for the rest of a 90-minute interview, or OCR

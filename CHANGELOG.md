@@ -7,6 +7,24 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## Unreleased
+
+### 2026-10-17 — Claude Haiku 5.5 for NER
+
+- New provider `anthropic`: `AnthropicClient` in `common/llm_provider.py`,
+  on the official `anthropic` SDK (`>=1.15,<2`) and `ANTHROPIC_API_KEY`. It
+  sends no `temperature` (the API rejects any but the default) and no
+  `thinking` field. Depth is `output_config.effort`, and `minimal` becomes
+  `low`. Structured output goes through `create()` with
+  `transform_schema()`, not `messages.parse()`, which would validate a refused
+  or cut-off answer before `stop_reason` could be read.
+- `claude-haiku-5-5` joins `TEXT_EXTENDED_MODELS`, so NER and reference
+  indexing both offer it; its authority item is 125443. Written from
+  Anthropic's documentation and tested against a stub only. The first live
+  call is in `docs/PENDING.md`.
+- `TruncatedOutputError` also covers Anthropic's
+  `model_context_window_exceeded`.
+
 ## 1.3.1 — 2026-10-06
 
 Patch release, and the version to cite for *When AI Meets the Archive* in
@@ -349,6 +367,10 @@ What the constants used to explain in place. Dates are when the archive changed.
   Claude Opus 5.5 proposed from a full-text scan in a Claude Code session and
   the curator reviewed before upload. No pipeline routes Claude, so the key
   mirrors the item's `dcterms:alternative` rather than a registry key.
+- **2026-10-17** — `claude-haiku-5-5` (item 125443, listed under category
+  78030) for `AI_NER` and `AI_reference_indexing`. Unlike Opus 5.5 this key is
+  a registry key, and it is also the item's `dcterms:alternative`, because the
+  registry key was chosen to match the API model id.
 
 ## Model registry (`common/llm_registry.py`)
 

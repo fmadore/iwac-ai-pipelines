@@ -3,7 +3,7 @@
 AI document-processing pipelines for the Islam West Africa Collection (IWAC), a
 digital archive of 14,500+ items in Omeka S. Each pipeline automates one task —
 OCR extraction and correction, summarization, NER, transcription, HTR, sentiment —
-against Gemini, OpenAI, Mistral, or the open-weights models (Qwen, DeepSeek)
+against Gemini, OpenAI, Mistral, Anthropic, or the open-weights models (Qwen, DeepSeek)
 reached through OpenRouter or served from your own GPU (`serving/`).
 
 ## Setup
@@ -82,8 +82,8 @@ and `get_items_by_ids()` batch-fetches. Do not modify `omeka_client.py` without
 asking — every pipeline depends on it.
 
 **Text-only pipelines route every LLM call through `common/llm_provider.py`.**
-Never instantiate `openai.OpenAI()`, `google.genai.Client()`, or
-`mistralai.Mistral()` in a text script. SDK adapters live in that module; the
+Never instantiate `openai.OpenAI()`, `google.genai.Client()`,
+`mistralai.Mistral()`, or `anthropic.Anthropic()` in a text script. SDK adapters live in that module; the
 dependency-free model catalog and config defaults live in
 `common/llm_registry.py`. Add models there first so every pipeline picks them up.
 
@@ -103,7 +103,7 @@ yet been benchmarked here. A pipeline overriding the shared default must say why
 does it.
 
 **Never set `temperature` in a pipeline.** It belongs to the vendor and lives once
-in `MODEL_REGISTRY`: nothing at all for Gemini 3 / Gemma, `1.0` for DeepSeek V4 and Qwen3.8,
+in `MODEL_REGISTRY`: nothing at all for Gemini 3 / Gemma and Claude, `1.0` for DeepSeek V4 and Qwen3.8,
 `0.7` for Qwen3.5, and the model-specific Mistral default. A pipeline picks a *tier*, so it cannot know
 whose model the run will land on, and the values are not interchangeable — Google
 and Alibaba both document a lowered temperature as a cause of looping, which here

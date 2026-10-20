@@ -1,5 +1,5 @@
-"""Provider adapters for OpenAI, Gemini, Mistral, OpenRouter, and self-hosted
-OpenAI-compatible endpoints.
+"""Provider adapters for OpenAI, Gemini, Mistral, Anthropic, OpenRouter, and
+self-hosted OpenAI-compatible endpoints.
 
 Model metadata and aliases live in :mod:`common.llm_registry`; this module
 re-exports that public catalog for compatibility and owns only SDK-backed calls.
@@ -48,6 +48,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - import guard
     Mistral = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    import anthropic  # type: ignore
+except Exception:  # pragma: no cover - import guard
+    anthropic = None  # type: ignore
+
 # The converter ``chat.parse()`` applies on the way out, so the reasoning path
 # below sends the same schema the non-reasoning path does.
 try:  # pragma: no cover - optional dependency
@@ -79,6 +84,7 @@ from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     OPENROUTER_HEADERS,
     OPENROUTER_PROVIDER_PREFS,
     OPENROUTER_ZDR_ENV,
+    PROVIDER_ANTHROPIC,
     PROVIDER_GEMINI,
     PROVIDER_MISTRAL,
     PROVIDER_OPENAI,
@@ -189,12 +195,13 @@ class TruncatedOutputError(PermanentError, RuntimeError):
         self.reason = reason
 
 
-#: Finish reasons that mean the answer was cut off, across the four wire
+#: Finish reasons that mean the answer was cut off, across the five wire
 #: formats: OpenAI Responses ``incomplete_details.reason``, Gemini
-#: ``finish_reason``, and the chat-completions ``finish_reason`` that Mistral,
-#: OpenRouter and vLLM report.
+#: ``finish_reason``, Anthropic ``stop_reason``, and the chat-completions
+#: ``finish_reason`` that Mistral, OpenRouter and vLLM report.
 _TRUNCATED_FINISH_REASONS = frozenset(
-    {"max_output_tokens", "max_tokens", "length", "model_length", "content_filter"}
+    {"max_output_tokens", "max_tokens", "length", "model_length", "content_filter",
+     "model_context_window_exceeded"}
 )
 
 
@@ -743,6 +750,148 @@ class MistralClient(BaseLLMClient):
         return response_schema.model_validate_json(text)
 
 
+#: ``max_tokens`` for every Claude request. Thinking counts toward it, so a cap
+#: sized for the answer alone can end on a thinking block with no text. 16K
+#: leaves room for both and keeps a non-streaming call inside the transport
+#: deadline; a response that still reaches it raises TruncatedOutputError.
+ANTHROPIC_MAX_TOKENS = 16000
+
+
+class AnthropicClient(BaseLLMClient):
+    """Anthropic's Messages API through the official ``anthropic`` SDK.
+
+    Three differences from the other adapters:
+
+    * **No sampling parameters.** The SDK's ``messages.create`` takes no
+      ``temperature``, and the API rejects any but the default, so
+      ``LLMConfig.temperature`` is never sent.
+    * **Depth is ``output_config.effort``.** Thinking is adaptive and on by
+      default; the adapter sends no ``thinking`` field, only the effort
+      :func:`resolve_reasoning_effort` picks. A response can open with
+      ``thinking`` blocks, so the answer is read from the ``text`` blocks.
+    * **Structured output is validated here, not by ``messages.parse()``.**
+      ``parse()`` validates every text block before returning, so a refused or
+      cut-off answer surfaces as a bare ``ValidationError`` and ``stop_reason``
+      is never read. The request goes through ``create()`` with the schema the
+      SDK's own ``transform_schema()`` produces, which is what ``parse()``
+      would have sent.
+    """
+
+    def __init__(self, option: ModelOption, config: Optional[LLMConfig] = None) -> None:
+        if anthropic is None:
+            raise RuntimeError("anthropic package is not installed")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set")
+        super().__init__(option, config)
+        client_kwargs: Dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": self.config.request_timeout_seconds,
+        }
+        if self.config.sdk_max_retries is not None:
+            client_kwargs["max_retries"] = self.config.sdk_max_retries
+        self._client = anthropic.Anthropic(**client_kwargs)
+
+    def _output_config(
+        self, effective_config: LLMConfig, response_schema: Optional[Type[T]] = None
+    ) -> Dict[str, Any]:
+        requested = effective_config.reasoning_effort
+        effort = resolve_reasoning_effort(self.option, requested)
+        if requested and requested != effort:
+            LOGGER.debug(
+                "%s does not accept effort %r (accepts %s); using %r",
+                self.option.model, requested,
+                ", ".join(self.option.supported_reasoning_efforts), effort,
+            )
+        output_config: Dict[str, Any] = {}
+        if effort:
+            output_config["effort"] = effort
+        if response_schema is not None:
+            output_config["format"] = {
+                "type": "json_schema",
+                "schema": anthropic.transform_schema(response_schema),
+            }
+        return output_config
+
+    def _create(self, system_prompt: str, user_prompt: str, output_config: Dict[str, Any]) -> Any:
+        response = self._client.messages.create(
+            model=self.option.model,
+            max_tokens=ANTHROPIC_MAX_TOKENS,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+            **({"output_config": output_config} if output_config else {}),
+        )
+        self._record_usage(response)
+        self._check_complete(response)
+        return response
+
+    def _record_usage(self, response: Any) -> None:
+        # Anthropic reports cached input apart from ``input_tokens``; the other
+        # clients count it inside, so it is added back here.
+        cached = _as_int(_attr(response, "usage", "cache_read_input_tokens"))
+        self.usage.add(
+            input_tokens=(
+                _as_int(_attr(response, "usage", "input_tokens"))
+                + _as_int(_attr(response, "usage", "cache_creation_input_tokens"))
+                + cached
+            ),
+            output_tokens=_attr(response, "usage", "output_tokens"),
+            cached_input_tokens=cached,
+            reasoning_tokens=_attr(response, "usage", "output_tokens_details", "thinking_tokens"),
+        )
+
+    def _check_complete(self, response: Any) -> None:
+        reason = getattr(response, "stop_reason", None)
+        if reason == "refusal":
+            # A safety classifier declined: HTTP 200, and the content may not
+            # match the schema. Haiku 5.5 has no server-side fallback.
+            category = _attr(response, "stop_details", "category")
+            raise ValueError(
+                f"Anthropic ({self.option.model}) refused the request"
+                + (f" ({category})" if category else "")
+            )
+        _raise_if_truncated("Anthropic", self.option.model, reason)
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        return "".join(
+            getattr(block, "text", "") or ""
+            for block in getattr(response, "content", None) or []
+            if getattr(block, "type", None) == "text"
+        )
+
+    def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
+        effective_config = self._get_effective_config(config)
+        response = self._create(system_prompt, user_prompt, self._output_config(effective_config))
+        return self._response_text(response).strip()
+
+    def generate_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: Type[T],
+        *,
+        config: Optional[LLMConfig] = None
+    ) -> T:
+        if BaseModel is None:
+            raise RuntimeError("pydantic package is required for structured outputs")
+
+        effective_config = self._get_effective_config(config)
+        LOGGER.debug(
+            "Anthropic structured request model=%s schema=%s",
+            self.option.model, response_schema.__name__,
+        )
+        response = self._create(
+            system_prompt, user_prompt, self._output_config(effective_config, response_schema)
+        )
+        text = self._response_text(response).strip()
+        if not text:
+            raise ValueError(
+                f"No output received in the structured response from Anthropic ({self.option.model})"
+            )
+        return response_schema.model_validate_json(text)
+
+
 class OpenRouterClient(BaseLLMClient):
     """OpenRouter client, driven through the OpenAI SDK's chat-completions API.
 
@@ -1139,6 +1288,8 @@ def build_llm_client(option: ModelOption, *, config: Optional[LLMConfig] = None)
         return GeminiGenerateContentClient(option, config)
     if option.provider == PROVIDER_MISTRAL:
         return MistralClient(option, config)
+    if option.provider == PROVIDER_ANTHROPIC:
+        return AnthropicClient(option, config)
     if option.provider == PROVIDER_OPENROUTER:
         return OpenRouterClient(option, config)
     if option.provider == PROVIDER_SELFHOSTED:

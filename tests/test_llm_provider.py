@@ -641,6 +641,121 @@ def test_the_qwen38_openrouter_twin_is_comparison_only():
     assert "qwen3.8-27b-selfhosted" in TEXT_OPEN_MODELS
 
 
+# --- Anthropic ---------------------------------------------------------------
+
+
+def _anthropic_response(text='{"required_field": "ok"}', stop_reason="end_turn",
+                        thinking=True, category=None):
+    from types import SimpleNamespace
+
+    content = [SimpleNamespace(type="thinking", thinking="", signature="sig")] if thinking else []
+    if text is not None:
+        content.append(SimpleNamespace(type="text", text=text))
+    return SimpleNamespace(
+        content=content, stop_reason=stop_reason,
+        stop_details=SimpleNamespace(category=category) if category else None,
+        usage=SimpleNamespace(input_tokens=100, cache_creation_input_tokens=0,
+                              cache_read_input_tokens=20, output_tokens=30,
+                              output_tokens_details=SimpleNamespace(thinking_tokens=12)),
+    )
+
+
+def _anthropic_client_with_stub(monkeypatch, response=None, config=None):
+    from common.llm_provider import AnthropicClient
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = AnthropicClient(MODEL_REGISTRY["claude-haiku-5-5"], config)
+    stub = MagicMock()
+    stub.messages.create.return_value = response or _anthropic_response()
+    client._client = stub
+    return client, stub
+
+
+def test_haiku_aliases_resolve_to_the_pinned_id():
+    assert normalize_model_key("haiku") == "claude-haiku-5-5"
+    assert normalize_model_key("claude-haiku-5.5") == "claude-haiku-5-5"
+    option = get_model_option("claude-haiku-5-5")
+    assert option.model == "claude-haiku-5-5"
+    assert option.default_temperature is None
+    assert "claude-haiku-5-5" in TEXT_EXTENDED_MODELS
+
+
+def test_anthropic_requires_its_own_key(monkeypatch):
+    from common.llm_provider import AnthropicClient
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        AnthropicClient(MODEL_REGISTRY["claude-haiku-5-5"])
+
+
+def test_anthropic_structured_sends_the_sdk_schema_and_validates_itself(monkeypatch):
+    """``parse()`` would validate before ``stop_reason`` could be read."""
+    import anthropic
+
+    client, stub = _anthropic_client_with_stub(monkeypatch)
+
+    result = client.generate_structured("system", "user", _Sample,
+                                        config=LLMConfig(reasoning_effort="medium"))
+
+    assert result == _Sample(required_field="ok")
+    stub.messages.parse.assert_not_called()
+    kwargs = stub.messages.create.call_args.kwargs
+    assert kwargs["model"] == "claude-haiku-5-5"
+    assert kwargs["system"] == "system"
+    assert kwargs["messages"] == [{"role": "user", "content": "user"}]
+    assert kwargs["output_config"]["effort"] == "medium"
+    assert kwargs["output_config"]["format"] == {
+        "type": "json_schema", "schema": anthropic.transform_schema(_Sample),
+    }
+    assert kwargs["output_config"]["format"]["schema"]["additionalProperties"] is False
+    for absent in ("temperature", "top_p", "top_k", "thinking"):
+        assert absent not in kwargs
+
+
+def test_anthropic_minimal_effort_means_its_lowest_level(monkeypatch):
+    client, stub = _anthropic_client_with_stub(monkeypatch)
+    client.generate("system", "user", config=LLMConfig(reasoning_effort="minimal"))
+    assert stub.messages.create.call_args.kwargs["output_config"] == {"effort": "low"}
+
+
+def test_anthropic_falls_back_to_the_model_default_effort(monkeypatch):
+    client, stub = _anthropic_client_with_stub(monkeypatch)
+    client.generate("system", "user")
+    assert stub.messages.create.call_args.kwargs["output_config"] == {"effort": "medium"}
+
+
+def test_anthropic_reads_the_answer_past_thinking_blocks(monkeypatch):
+    client, _ = _anthropic_client_with_stub(
+        monkeypatch, response=_anthropic_response(text=" Texte complet. "))
+    assert client.generate("system", "user") == "Texte complet."
+    assert client.usage.input_tokens == 120
+    assert client.usage.cached_input_tokens == 20
+    assert client.usage.reasoning_tokens == 12
+
+
+def test_anthropic_surfaces_a_refusal_with_its_category(monkeypatch):
+    client, _ = _anthropic_client_with_stub(monkeypatch, response=_anthropic_response(
+        text="I can't help with that.", stop_reason="refusal", category="general_harms"))
+    with pytest.raises(ValueError, match="refused.*general_harms"):
+        client.generate_structured("system", "user", _Sample)
+
+
+def test_anthropic_thinking_with_no_answer_is_not_an_empty_result(monkeypatch):
+    client, _ = _anthropic_client_with_stub(
+        monkeypatch, response=_anthropic_response(text=None))
+    with pytest.raises(ValueError, match="No output"):
+        client.generate_structured("system", "user", _Sample)
+
+
+def test_recorded_anthropic_effort_is_the_one_sent():
+    from common.run_context import model_context
+
+    option = MODEL_REGISTRY["claude-haiku-5-5"]
+    recorded = model_context(option, LLMConfig(reasoning_effort="minimal"))
+    assert recorded["configuration"]["reasoning_effort"] == "low"
+    assert recorded["provider"] == "anthropic"
+
+
 # --- Sampling temperature -------------------------------------------------
 #
 # Temperature is a per-vendor decision recorded in MODEL_REGISTRY, not a knob
@@ -990,10 +1105,19 @@ def _cut_off_clients():
                                  message=SimpleNamespace(content="La première moitié", refusal=None))],
         usage=None,
     )
-    return {"openai": openai, "gemini": gemini, "mistral": mistral, "openrouter": openrouter}
+    from common.llm_provider import AnthropicClient
+
+    claude = _bare_client(AnthropicClient, "claude-haiku-5-5")
+    claude._client.messages.create.return_value = SimpleNamespace(
+        stop_reason="max_tokens",
+        content=[SimpleNamespace(type="text", text="La première moitié")],
+        usage=None,
+    )
+    return {"openai": openai, "gemini": gemini, "mistral": mistral,
+            "openrouter": openrouter, "anthropic": claude}
 
 
-@pytest.mark.parametrize("route", ["openai", "gemini", "mistral", "openrouter"])
+@pytest.mark.parametrize("route", ["openai", "gemini", "mistral", "openrouter", "anthropic"])
 def test_a_cut_off_answer_raises_instead_of_returning_half(route):
     """Returned as text, a truncated correction reads as complete and step 03
     would upload it as the item's full text."""

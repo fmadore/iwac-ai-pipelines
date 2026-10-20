@@ -62,6 +62,7 @@ different provenance; use `--force` to replace it deliberately.
 | `mistral-small` | Mistral (hybrid reasoning) | Fast | Low |
 | `qwen3.5-moe` | Alibaba (open weights, Apache-2.0, via OpenRouter) | Fast | Lowest |
 | `deepseek-v4-flash-0731` | DeepSeek (open weights via OpenRouter) | Fast | Lowest (default) |
+| `claude-haiku-5-5` | Anthropic (Claude Haiku 5.5) | Fast | Low |
 
 All models use the same French-language prompt (`ner_system_prompt.md`) optimized for West African Islamic contexts.
 
@@ -77,6 +78,10 @@ its cost-conscious `low` default for NER.
 Because these are open models behind a router, treat a first run as an
 evaluation — compare its entities against a known-good model on the same item
 set before committing to a bulk pass.
+
+`claude-haiku-5-5` needs `ANTHROPIC_API_KEY` and receives the `medium` request
+as its effort level, which is also its default. It has not yet been called live
+from this repo (`docs/PENDING.md`), so the same first-run evaluation applies.
 
 ## Entity Categories
 

@@ -7,6 +7,7 @@ Supported models:
   - gemma-4: Google Gemma 4 31B — open-weights flagship, via Gemini API
   - mistral-large: Mistral Large 3 flagship model
   - ministral-14b: Ministral 3 14B cost-effective model
+  - claude-haiku-5-5: Anthropic Claude Haiku 5.5, fast and low-cost
 
 Configuration:
   Uses medium reasoning effort and verbosity for accurate metadata extraction.
@@ -23,6 +24,8 @@ Environment variables:
     GEMINI_API_KEY
   Mistral:
     MISTRAL_API_KEY
+  Anthropic:
+    ANTHROPIC_API_KEY
 
 Output CSV columns: o:id, Title, bibo:content, Subject AI, Spatial AI
 
@@ -33,6 +36,7 @@ Usage examples:
     python 01_NER_AI.py --item-set-id 123 --model gemma-4
     python 01_NER_AI.py --item-set-id 123 --model mistral-large
     python 01_NER_AI.py --item-set-id 123 --model ministral-14b
+    python 01_NER_AI.py --item-set-id 123 --model claude-haiku-5-5
     python 01_NER_AI.py --item-set-id 123,456,789 --batch-size 8
 
 """
@@ -85,7 +89,9 @@ from common.llm_provider import (  # noqa: E402
     UsageTotals,
     build_llm_client,
     get_model_option,
+    resolve_reasoning_effort,
     summary_from_option,
+    PROVIDER_ANTHROPIC,
     PROVIDER_GEMINI,
     PROVIDER_OPENAI,
     PROVIDER_MISTRAL,
@@ -137,6 +143,8 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Conf
             missing.append('GEMINI_API_KEY or GOOGLE_APPLICATION_CREDENTIALS')
     if model_option.provider == PROVIDER_MISTRAL and not os.getenv('MISTRAL_API_KEY'):
         missing.append('MISTRAL_API_KEY')
+    if model_option.provider == PROVIDER_ANTHROPIC and not os.getenv('ANTHROPIC_API_KEY'):
+        missing.append('ANTHROPIC_API_KEY')
     if model_option.provider == PROVIDER_OPENROUTER and not os.getenv('OPENROUTER_API_KEY'):
         missing.append('OPENROUTER_API_KEY')
     # A self-hosted endpoint needs its address, not a key: the key is optional
@@ -148,7 +156,7 @@ def load_config(model_option: ModelOption, batch_size: int = BATCH_SIZE) -> Conf
 
     # NER-specific LLM configuration for accurate metadata extraction
     llm_config = LLMConfig(
-        reasoning_effort="medium",      # OpenAI/OpenRouter: balanced where supported
+        reasoning_effort="medium",      # OpenAI/OpenRouter/Anthropic: balanced where supported
         text_verbosity="medium",        # OpenAI: detailed entity context
         thinking_level="minimal",       # Gemini 3: minimal thinking sufficient for NER extraction
         # No temperature: each model's vendor-recommended value comes from
@@ -606,6 +614,9 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
             else model_option.default_reasoning_effort
         )
         config_table.add_row("Reasoning Effort", effective or "off")
+    elif model_option.provider == PROVIDER_ANTHROPIC:
+        effort = resolve_reasoning_effort(model_option, config.llm_config.reasoning_effort)
+        config_table.add_row("Effort", effort or "default")
     console.print(config_table)
     console.print()
 

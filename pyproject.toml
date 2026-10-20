@@ -51,6 +51,7 @@ dependencies = [
     "google-genai>=2.20,<3",
     "openai>=1.60,<4",
     "mistralai>=2.5,<4", # import from mistralai.client and mistralai.client.errors; 3.x moved its transport to httpx2
+    "anthropic>=1.15,<2", # the release the Claude adapter was written and tested against
     "pydantic>=2.5,<3",
     # PDF processing
     "pypdf>=4,<7", # successor of the deprecated PyPDF2

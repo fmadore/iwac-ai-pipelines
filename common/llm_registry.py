@@ -23,6 +23,8 @@ PROVIDER_OPENROUTER = "openrouter"
 #: catalog state, so it is resolved from the environment by the adapter and
 #: never written down in this file. See ``serving/README.md``.
 PROVIDER_SELFHOSTED = "selfhosted"
+#: Anthropic's Messages API, through the official ``anthropic`` SDK.
+PROVIDER_ANTHROPIC = "anthropic"
 
 OPENAI_SOL_MODEL = "gpt-6-sol"
 OPENAI_TERRA_MODEL = "gpt-5.6-terra"
@@ -42,6 +44,7 @@ DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
 DEFAULT_MISTRAL_SMALL = "mistral-small-2603"
+ANTHROPIC_HAIKU_55_MODEL = "claude-haiku-5-5"
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"
@@ -272,6 +275,22 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort=None,
         supported_reasoning_efforts=("none", "high"),
     ),
+    # Claude Haiku 5.5, per Anthropic's model page and migration guide
+    # (2026-10-17): 1M context, 128K output, adaptive thinking on by default,
+    # and ``output_config.effort`` as the only depth control — low … max,
+    # default medium. Any temperature but the default is a 400, so none is
+    # declared. The rate depends on prompt length: $0.10/$0.50 per 1M up to a
+    # 100K-token prompt, $0.50/$2.50 above. Anthropic deletes API inputs and
+    # outputs within 30 days by default and its commercial terms exclude
+    # training on them; there is no routing flag to set, unlike OpenRouter's.
+    # Documented, not yet called live from this repo (docs/PENDING.md).
+    "claude-haiku-5-5": ModelOption(
+        "claude-haiku-5-5", PROVIDER_ANTHROPIC, ANTHROPIC_HAIKU_55_MODEL,
+        "Claude Haiku 5.5",
+        "Anthropic Messages API — $0.10/$0.50 per 1M up to 100K-token prompts, $0.50/$2.50 above",
+        default_reasoning_effort="medium",
+        supported_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
+    ),
     # The same weights as ``gemma-4``, reached through OpenRouter under
     # ``data_collection: deny``. The Gemini route serves Gemma on the free tier,
     # whose content Google states it uses to improve its products — so this is
@@ -449,6 +468,10 @@ MODEL_ALIASES = {
     "deepseek/deepseek-v4-flash": "deepseek-v4-flash",
     "deepseek-pro": "deepseek-v4-pro",
     "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
+    "haiku": "claude-haiku-5-5",
+    "claude-haiku": "claude-haiku-5-5",
+    "claude-haiku-5.5": "claude-haiku-5-5",
+    "haiku-5.5": "claude-haiku-5-5",
 }
 
 
@@ -474,7 +497,7 @@ TEXT_OPEN_MODELS: List[str] = [
 ]
 TEXT_EXTENDED_MODELS: List[str] = [
     DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "gemma-4-openrouter",
-    "mistral-small", "qwen3.5-moe",
+    "mistral-small", "qwen3.5-moe", "claude-haiku-5-5",
 ]
 # The one tier with room for models that have no authority item yet: OCR
 # correction, its only user, writes no model annotation of its own.
@@ -523,10 +546,20 @@ def resolve_reasoning_effort(option: ModelOption, requested: Optional[str]) -> O
     * **OpenRouter and self-hosted** endpoints fall back to the model's own
       default: with ``require_parameters`` on, forwarding an undeclared effort
       can leave the request with no eligible backend.
+    * **Anthropic** has no ``minimal`` or ``none``; either becomes the lowest
+      declared level (the ladder is listed weakest first), so a request for as
+      little as possible still gets as little as the model offers. Any other
+      undeclared value falls back to the model's default.
     * **OpenAI and Gemini** are returned unchanged. OpenAI takes the effort as
       asked; Gemini never receives one (its depth is ``thinking_level``).
     """
     supported = option.supported_reasoning_efforts
+    if option.provider == PROVIDER_ANTHROPIC:
+        if requested and requested in supported:
+            return requested
+        if requested in ("none", "minimal") and supported:
+            return supported[0]
+        return option.default_reasoning_effort
     if option.provider == PROVIDER_MISTRAL:
         if not requested or not supported:
             return None
