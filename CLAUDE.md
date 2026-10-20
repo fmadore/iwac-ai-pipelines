@@ -32,12 +32,19 @@ Which architecture rules apply depends on the pipeline's category:
 - **Multimodal** — `AI_audio_summary`, `AI_htr_extraction`, `AI_ocr_extraction`,
   `AI_publication_extraction`, `AI_video_summary`, `AI_summary_issue`,
   `AI_youtube_transcription`
+- **Agent-assisted curation** — `AI_authority_curation`
 
-Every pipeline is a numbered run of Python scripts. The repository carries no
-Claude Code agents or skills: the two that once drove reference indexing and
-magazine indexing were replaced by `AI_reference_indexing/02_enrich_references.py`
-and the Gemini/Mistral magazine scripts on 2026-09-02, so that a reader of the
-paper can reproduce every step from the code alone.
+Every pipeline is a numbered run of Python scripts. The two Claude Code agents
+that once drove reference indexing and magazine indexing were replaced by
+`AI_reference_indexing/02_enrich_references.py` and the Gemini/Mistral magazine
+scripts on 2026-09-02, so that a reader of the paper can reproduce every step
+from the code alone. The one exception since 2026-10-17 is authority curation:
+`.claude/skills/iwac-authority-curation` and its Haiku reviewer
+(`.claude/agents/iwac-authority-reviewer.md`) draft descriptions, propose person
+roles and judge duplicate pairs. It is not one of the paper's pipelines. The
+agent's judgments stay in the run's verdict files, and every Omeka read and
+write is a numbered script in `AI_authority_curation/` behind the write guard.
+Do not add other agents or skills to the repo.
 
 `serving/` is not a pipeline: it is the Slurm/vLLM setup for running an
 open-weights model on your own GPU and the probe that checks a route's reasoning
@@ -234,6 +241,11 @@ and leaves links already on the item untouched. The write steps recover the
 model from the checkpoint the AI step left beside its CSV, and ask when that
 key has no authority item — a registry key is not enough, because the route is
 half of what the provenance claims (`gemma-4` vs `gemma-4-openrouter`).
+
+**An AI-written authority description carries `iwac:descriptionModel`** (IWAC
+vocabulary v1.5) on both its `fr` and `en` literals, pointing at the model
+that drafted it. `AI_authority_curation/03_apply.py` writes it only where a
+record has no description yet, and leaves it off any text the curator edited.
 
 Instance-specific constants — property IDs, authority item sets, the `AI_MODEL_ITEMS`
 model-provenance registry — belong in `common/iwac_config.py`, not inline in scripts.

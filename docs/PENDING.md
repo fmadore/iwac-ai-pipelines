@@ -49,6 +49,33 @@ after the thinking blocks, and that `usage` carries `thinking_tokens`. Compare
 its entities against DeepSeek 0731 on the same items before a bulk pass, then
 change the registry comment to "verified live" with the date.
 
+## Authority curation: before and after the first live pass
+
+1. **Upload IWAC vocabulary v1.5.** It adds `iwac:descriptionModel`;
+   `00_setup_properties.py --verify` passed on 2026-10-17 (one addition,
+   nothing omitted holds values). Admin → Vocabularies → IWAC Ontology →
+   Update. Until then `AI_authority_curation/03_apply.py` refuses annotated
+   descriptions.
+2. **Review the organisations pilot.** Twelve descriptions were drafted on
+   2026-10-17 (`AI_authority_curation/output/organisations_20261017T182725`)
+   and 35 pairs judged (`…181850`, one merge ready: AMOCI into AMSCI). Approve
+   or edit them, then run more organisations before persons.
+3. **Sort "Notices d'autorités à traiter".** 3,005 stubs in set 12826, most
+   linked first, in runs of about 60 (`--kind unsorted --limit 60`, repeated).
+   Decide what happens to the stubs no document links to
+   (`unlinked_stubs.csv`): file them or delete them. The 7 already in set 266
+   only need to leave the set: they are `ready` rows of the first run's
+   `plan_sort.csv`. Two stubs can duplicate each other; the second is caught
+   as a duplicate once the first has been filed.
+4. **Wikidata for the rest.** After the organisations pilot, run
+   `--task wikidata` over organisations (203 without a Wikidata item),
+   subjects (156), events (131), places (189), then persons, where name-only
+   matches are riskiest.
+5. **Scholarly authors.** The 546 people named in references' author and
+   editor lists need descriptions from professional sources, and ORCID and
+   IdRef identifiers. That means the `wikicite` resolvers and an identifier
+   write step, neither of which exists here yet. See the skill's last section.
+
 ## Dates
 
 - **2026-10-23** — GPT-5 and GPT-5.1 snapshots shut down. Their keys already

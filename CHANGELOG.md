@@ -25,6 +25,53 @@ the changelog tells stories.
 - `TruncatedOutputError` also covers Anthropic's
   `model_context_window_exceeded`.
 
+### 2026-10-17 — Authority curation with Haiku reviewers
+
+- New `AI_authority_curation/`.
+  - `01_collect.py` finds authority records with no description (and persons
+    with no role category), quotes the documents that link to each, and lists
+    candidate duplicate pairs.
+  - `02_build_plan.py` checks the reviewers' verdicts and writes three review
+    CSVs.
+  - `03_apply.py` fills empty descriptions (`fr` + `en`) and adds role links.
+  - `04_merge.py` repoints every link from a duplicate to its survivor, never
+    deleting.
+- The judgments come from Claude Haiku 5.5 reviewers through the repo's first
+  tracked skill and agent (`.claude/skills/iwac-authority-curation`,
+  `.claude/agents/iwac-authority-reviewer.md`). `.gitignore` now tracks those
+  two folders and still ignores the rest of `.claude/`. CLAUDE.md records why
+  this is the exception to the scripts-only rule.
+- Descriptions are annotated `iwac:descriptionModel`, new in v1.5 of the IWAC
+  vocabulary. Role links get `iwac:nerModel`.
+- `01_collect.py --kind unsorted` and `05_sort.py` file the stubs of
+  "Notices d'autorités à traiter" (set 12826, 3,012 records) into the
+  authority sets. Each stub gets its kind's class and template, a cleaned
+  title, and its dates in the person fields. A stub that duplicates an
+  authority becomes a merge instead. Stubs are taken most linked first,
+  from a cached count. Each run skips stubs already reviewed, and stubs
+  nothing links to are listed for the curator rather than filed.
+- Reviewers may use general knowledge for widely known entities. Every such
+  fact is listed and flagged for the curator.
+- Wikidata reconciliation.
+  - `01_collect.py` offers Wikidata candidates (via the new `wikidata.py`)
+    for records that have no Wikidata item, and `--task wikidata` does only
+    that.
+  - The reviewer picks one or none. `02` accepts only an offered QID, and
+    flags one already on another authority as a possible duplicate.
+  - `03_apply.py` writes approved matches as `dcterms:identifier`, in the
+    archive's existing shape.
+- Merges never leave an item naming the same entity twice in one property.
+  The item's own existing link is kept over a retargeted one, so a hand-made
+  link does not pick up an AI annotation. After the writes, every property
+  is searched again for links to the loser. Only a loser with none left is
+  reported safe to delete.
+- The pilots found and fixed four problems.
+  - Acronym alternatives matched ordinary words (*FOI* in every *foi*).
+  - Single-word spelling variants were never compared.
+  - An acronym shared by unrelated associations scored as a certain duplicate.
+  - The verdict check crashed on the second record of a batch with a missing
+    verdict.
+
 ## 1.3.1 — 2026-10-06
 
 Patch release, and the version to cite for *When AI Meets the Archive* in
