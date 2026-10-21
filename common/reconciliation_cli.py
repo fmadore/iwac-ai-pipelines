@@ -7,6 +7,13 @@ term that maps to different items in each set is reported as ambiguous rather
 than silently resolved), then fuzzy candidates for whatever did not match.
 The matching itself lives in ``common/reconciliation.py``; this module is the
 run around it.
+
+NER runs with ``extended_matching``: word-order keys on both columns, the
+plural fold on subjects other than persons (names are proper nouns: "Lago", a
+village in Zondoma, must not become "Lagos", nor "Prophètes" the Prophet),
+and subject terms that name a place
+linked as ``dcterms:spatial``. Reference indexing does not, so its matching is
+unchanged until those rules have been checked on its own output.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ from rich.panel import Panel
 
 from common.console_utils import key_value_table
 from common.iwac_config import (
+    PERSON_AUTHORITY_ITEM_SET,
     SPATIAL_AUTHORITY_ITEM_SETS,
     SUBJECT_AUTHORITY_ITEM_SETS,
     TOPIC_AUTHORITY_ITEM_SETS,
@@ -28,6 +36,7 @@ from common.omeka_client import OmekaClient
 from common.reconciliation import (
     DEFAULT_MAX_CANDIDATES,
     MULTI_WORD_MIN_SIMILARITY,
+    Redirect,
     build_authority_dict,
     create_potential_reconciliation_csv,
     display_authority_stats,
@@ -64,12 +73,14 @@ def run_reconciliation(
     *,
     subject_tag: str,
     console: Optional[Console] = None,
+    extended_matching: bool = False,
 ) -> Path:
     """Reconcile one CSV and write the derived files beside it.
 
     *subject_tag* names the subject-side files (``_unreconciled_<tag>.csv`` …);
     NER uses ``subject_and_topic``, reference indexing ``subject``, because
-    their step-4 tooling looks for those names.
+    their step-4 tooling looks for those names. *extended_matching* is
+    described in the module docstring.
 
     Returns the path of the main ``*_reconciled.csv``.
     """
@@ -90,7 +101,7 @@ def run_reconciliation(
     # --- Spatial ---------------------------------------------------------
     console.rule("[bold cyan]Step 1: Spatial Reconciliation")
     spatial_dict, spatial_ambiguous, spatial_metadata = build_authority_dict(
-        client, SPATIAL_AUTHORITY_ITEM_SETS, "SPATIAL"
+        client, SPATIAL_AUTHORITY_ITEM_SETS, "SPATIAL", token_order=extended_matching,
     )
     display_authority_stats(spatial_dict, spatial_ambiguous, "Spatial/Location")
     write_ambiguous_terms_to_file(spatial_ambiguous, f"{base}_ambiguous_authorities_{TAG_SPATIAL}.csv")
@@ -109,8 +120,14 @@ def run_reconciliation(
 
     # --- Subject + topic, built in ONE call so ambiguity spans both sets ----
     console.rule("[bold cyan]Step 2: Subject & Topic Reconciliation")
+    subject_sets = SUBJECT_AUTHORITY_ITEM_SETS + TOPIC_AUTHORITY_ITEM_SETS
     combined_dict, combined_ambiguous, combined_metadata = build_authority_dict(
-        client, SUBJECT_AUTHORITY_ITEM_SETS + TOPIC_AUTHORITY_ITEM_SETS, "SUBJECT+TOPIC"
+        client, subject_sets, "SUBJECT+TOPIC",
+        token_order=extended_matching,
+        plural_fold_sets=(
+            [s for s in subject_sets if s != PERSON_AUTHORITY_ITEM_SET]
+            if extended_matching else ()
+        ),
     )
     display_authority_stats(combined_dict, combined_ambiguous, "Subject + Topic")
     write_ambiguous_terms_to_file(combined_ambiguous, f"{base}_ambiguous_authorities_{subject_tag}.csv")
@@ -123,6 +140,10 @@ def run_reconciliation(
         initial_csv_base_for_unreconciled=base,
         output_file_tag=subject_tag,
         ambiguous_authority_dict=combined_ambiguous,
+        redirect=(
+            Redirect(spatial_dict, spatial_ambiguous, SPATIAL_OUTPUT_COLUMN)
+            if extended_matching else None
+        ),
     )
     display_reconciliation_stats(matched, total, unreconciled, "Subject & Topic")
     console.print()
@@ -169,6 +190,7 @@ def main(
     banner: str,
     description: str,
     accept: Callable[[str], bool] = lambda name: True,
+    extended_matching: bool = False,
 ) -> int:
     """Argument parsing, input discovery and the run, for both entry points."""
     console = Console()
@@ -187,7 +209,10 @@ def main(
         return 1
 
     try:
-        run_reconciliation(client, Path(input_path), subject_tag=subject_tag, console=console)
+        run_reconciliation(
+            client, Path(input_path), subject_tag=subject_tag, console=console,
+            extended_matching=extended_matching,
+        )
     except RuntimeError as exc:
         console.print(f"[red]✗[/] {exc}")
         return 1

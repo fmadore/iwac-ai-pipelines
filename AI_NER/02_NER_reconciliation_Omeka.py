@@ -14,7 +14,9 @@ terms against the subject and topic authorities, and writes beside it:
 
 The run is ``common/reconciliation_cli.py``, shared with
 ``AI_reference_indexing/03_reconcile_metadata.py``; the matching rules and their
-thresholds are in ``common/reconciliation.py``.
+thresholds are in ``common/reconciliation.py``. NER alone runs it with
+``extended_matching`` (word order, plural fold, subject terms naming a place
+linked as ``dcterms:spatial``), described in ``common/reconciliation_cli.py``.
 
 Usage:
     python 02_NER_reconciliation_Omeka.py
@@ -42,6 +44,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         subject_tag=TAG_SUBJECT_AND_TOPIC,
         banner="[bold]NER Reconciliation Pipeline[/bold]\nReconciles AI-generated entities with Omeka S authority records",
         description="Reconcile NER entities against Omeka S authority records",
+        extended_matching=True,
     )
 
 

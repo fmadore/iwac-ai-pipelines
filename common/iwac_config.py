@@ -19,6 +19,8 @@ from typing import Dict, Iterable, List, Optional
 
 SPATIAL_AUTHORITY_ITEM_SETS: List[str] = ["268"]
 SUBJECT_AUTHORITY_ITEM_SETS: List[str] = ["854", "2", "266"]
+#: Individus — the person authorities among the subject sets.
+PERSON_AUTHORITY_ITEM_SET: str = "266"
 TOPIC_AUTHORITY_ITEM_SETS: List[str] = ["1"]
 
 # ---------------------------------------------------------------------------

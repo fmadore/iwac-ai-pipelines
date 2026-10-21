@@ -27,7 +27,7 @@ csv.field_size_limit(10 * 1024 * 1024)
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import Dict, List, Optional, Tuple
+from typing import Collection, Dict, List, Optional, Tuple
 
 from rich.console import Console
 from rich.table import Table
@@ -70,6 +70,14 @@ MATCH_TYPE_PRIMARY = "primary_title"
 MATCH_TYPE_ALTERNATIVE = "alternative"
 AMBIGUOUS_MARKER = "(Ambiguous)"
 
+#: The looser keys live in the same dict as the exact ones under their own
+#: prefix, and are only consulted once the exact keys have missed: a looser
+#: key can neither shadow an exact match nor make it ambiguous.
+ORDER_KEY_PREFIX = "[order] "
+FOLD_KEY_PREFIX = "[fold] "
+#: Single-letter tokens that are elided articles, not initials.
+_ELISIONS = {'d', 'l'}
+
 # ---------------------------------------------------------------------------
 # Text normalisation helpers
 # ---------------------------------------------------------------------------
@@ -100,6 +108,41 @@ def normalize_location_name(name: str) -> str:
     return text_no_diacritics.replace('-', '').replace(' ', '')
 
 
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def token_order_key(text: str) -> str:
+    """The words of *text* in sorted order, so that "Kassoum Coulibaly" and
+    "Coulibaly Kassoum" share a key. Only ever compared for equality.
+
+    Needs two words of two letters or more, and a title carrying initials gets
+    no key at all: "A. B." and "B. A." are two different signatures.
+    """
+    tokens = _WORD_RE.findall(_strip_diacritics(text.lower()))
+    if any(len(token) == 1 and token not in _ELISIONS for token in tokens):
+        return ''
+    if sum(len(token) > 1 for token in tokens) < 2:
+        return ''
+    return ORDER_KEY_PREFIX + ' '.join(sorted(tokens))
+
+
+def plural_fold_key(text: str) -> str:
+    """The words of *text* with a trailing s or x dropped from any word of
+    five letters or more: "Cercle d'Étude, de Recherche…" meets "Cercle
+    d'Études, de Recherches…". Punctuation is ignored.
+
+    Accents are kept, unlike the exact keys: dropping them as well would give
+    "Jeunes" and "Jeûne" the same key.
+    """
+    tokens = _WORD_RE.findall(unicodedata.normalize('NFC', text.lower()))
+    if not tokens:
+        return ''
+    return FOLD_KEY_PREFIX + ' '.join(
+        token[:-1] if len(token) > 4 and token[-1] in 'sx' else token
+        for token in tokens
+    )
+
+
 # ---------------------------------------------------------------------------
 # Authority dictionary builder
 # ---------------------------------------------------------------------------
@@ -123,13 +166,17 @@ def _authority_titles(item: Dict) -> Tuple[Dict, List[str]]:
     return metadata, titles
 
 
-def _authority_variants(title: str) -> set[str]:
+def _authority_variants(
+    title: str, token_order: bool = False, plural_fold: bool = False,
+) -> set[str]:
     lower = title.lower()
     return {
         variant for variant in (
             lower,
             normalize_location_name(title),
             _strip_diacritics(lower),
+            token_order_key(title) if token_order else '',
+            plural_fold_key(title) if plural_fold else '',
         ) if variant
     }
 
@@ -154,8 +201,17 @@ def build_authority_dict(
     client: OmekaClient,
     item_set_ids: List[str],
     authority_type: str = "authority",
+    *,
+    token_order: bool = False,
+    plural_fold_sets: Collection[str] = (),
 ) -> Tuple[Dict[str, str], Dict[str, List[str]], Dict[str, Dict]]:
     """Build a lookup dict of authority terms from specified item sets.
+
+    *token_order* adds the key of :func:`token_order_key` to every title, and
+    titles in *plural_fold_sets* also get that of :func:`plural_fold_key`;
+    reconciliation tries them only after every exact key has missed, in that
+    order. Leave persons out of the fold: a plural never names one person, and
+    "Prophètes" would otherwise reach Mahomet through his alias "Prophète".
 
     Returns:
         (authority_dict, ambiguous_terms_dict, authority_metadata)
@@ -183,13 +239,15 @@ def build_authority_dict(
             if not all_items:
                 continue
 
+            plural_fold = item_set_id in plural_fold_sets
             for item in all_items:
                 item_id = str(item['o:id'])
                 metadata, titles_to_process = _authority_titles(item)
                 authority_metadata[item_id] = metadata
                 for title_text in titles_to_process:
                     potential_lookups.extend(
-                        (variant, item_id) for variant in _authority_variants(title_text)
+                        (variant, item_id)
+                        for variant in _authority_variants(title_text, token_order, plural_fold)
                     )
 
     authority, ambiguous = _resolve_authority_lookups(potential_lookups)
@@ -410,9 +468,22 @@ def create_potential_reconciliation_csv(
 @dataclass
 class ReconciliationState:
     matched_count: int = 0
+    redirected_count: int = 0
     total_values: int = 0
     unreconciled_counts: Counter = field(default_factory=Counter)
     ambiguous_terms: set[str] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class Redirect:
+    """A second authority dict for values the first one does not know, whose
+    matches are written to another column. NER uses it to send a subject term
+    that names a place to ``dcterms:spatial``, where the catalogue links every
+    place, rather than leave it unreconciled."""
+
+    authority_dict: Dict[str, str]
+    ambiguous_dict: Dict[str, List[str]]
+    target_column: str
 
 
 def _value_variants(value: str) -> Tuple[str, str, str]:
@@ -420,23 +491,52 @@ def _value_variants(value: str) -> Tuple[str, str, str]:
     return lower, normalize_location_name(value), _strip_diacritics(lower)
 
 
+def _value_key_tiers(value: str) -> Tuple[Tuple[str, ...], ...]:
+    """Exact keys first, then word order, then plural fold. A dict built
+    without a looser key simply never contains it."""
+    return _value_variants(value), (token_order_key(value),), (plural_fold_key(value),)
+
+
+def _lookup(
+    value: str,
+    authority_dict: Dict[str, str],
+    ambiguous_authority_dict: Dict[str, List[str]],
+) -> Tuple[Optional[str], bool]:
+    """(item id, ambiguous) from the first key tier that knows *value*."""
+    for tier in _value_key_tiers(value):
+        keys = [key for key in tier if key]
+        if any(key in ambiguous_authority_dict for key in keys):
+            return None, True
+        for key in keys:
+            if key in authority_dict:
+                return authority_dict[key], False
+    return None, False
+
+
 def _reconcile_value(
     value: str,
     authority_dict: Dict[str, str],
     ambiguous_authority_dict: Dict[str, List[str]],
     state: ReconciliationState,
-) -> Optional[str]:
-    variants = _value_variants(value)
-    if any(variant in ambiguous_authority_dict for variant in variants):
+    redirect: Optional[Redirect] = None,
+) -> Tuple[Optional[str], bool]:
+    """(item id, redirected) for one value, counting it in *state*."""
+    item_id, ambiguous = _lookup(value, authority_dict, ambiguous_authority_dict)
+    if ambiguous:
         state.ambiguous_terms.add(value)
         state.unreconciled_counts[f"{value} {AMBIGUOUS_MARKER}"] += 1
-        return None
-    for variant in variants:
-        if variant in authority_dict:
+        return None, False
+    if item_id is not None:
+        state.matched_count += 1
+        return item_id, False
+    if redirect is not None:
+        item_id, ambiguous = _lookup(value, redirect.authority_dict, redirect.ambiguous_dict)
+        if item_id is not None and not ambiguous:
             state.matched_count += 1
-            return authority_dict[variant]
+            state.redirected_count += 1
+            return item_id, True
     state.unreconciled_counts[value] += 1
-    return None
+    return None, False
 
 
 def _reconcile_row(
@@ -446,23 +546,33 @@ def _reconcile_row(
     authority_dict: Dict[str, str],
     ambiguous_authority_dict: Dict[str, List[str]],
     state: ReconciliationState,
+    redirect: Optional[Redirect] = None,
 ) -> Dict[str, str]:
     processed = row.copy()
+    if redirect is not None:
+        processed.setdefault(redirect.target_column, "")
     source = processed.get(source_column_name)
     if not source:
         processed.setdefault(target_column_name, "")
         return processed
     values = source.split('|')
     state.total_values += len(values)
-    reconciled = [
-        item_id
-        for raw_value in values
-        if (value := raw_value.strip())
-        if (item_id := _reconcile_value(
-            value, authority_dict, ambiguous_authority_dict, state
-        )) is not None
-    ]
+    reconciled: List[str] = []
+    redirected: List[str] = []
+    for raw_value in values:
+        if not (value := raw_value.strip()):
+            continue
+        item_id, was_redirected = _reconcile_value(
+            value, authority_dict, ambiguous_authority_dict, state, redirect
+        )
+        if item_id is not None:
+            (redirected if was_redirected else reconciled).append(item_id)
     processed[target_column_name] = '|'.join(reconciled)
+    if redirected:
+        existing = [i for i in processed[redirect.target_column].split('|') if i]
+        processed[redirect.target_column] = '|'.join(
+            existing + [i for i in dict.fromkeys(redirected) if i not in existing]
+        )
     return processed
 
 
@@ -492,8 +602,14 @@ def reconcile_column_values(
     initial_csv_base_for_unreconciled: str,
     output_file_tag: str,
     ambiguous_authority_dict: Dict[str, List[str]],
+    redirect: Optional[Redirect] = None,
 ) -> Tuple[str, int, int, int]:
-    """Reconcile pipe-separated values and write IDs plus an exception report."""
+    """Reconcile pipe-separated values and write IDs plus an exception report.
+
+    With *redirect*, a value unknown to *authority_dict* (and not ambiguous
+    there) that matches the redirect dict is appended, deduplicated, to
+    ``redirect.target_column`` instead. It counts as matched.
+    """
     unreconciled_path = (
         f"{initial_csv_base_for_unreconciled}_unreconciled_{output_file_tag}.csv"
     )
@@ -509,6 +625,8 @@ def reconcile_column_values(
     output_fieldnames = list(original_fieldnames)
     if target_column_name not in output_fieldnames:
         output_fieldnames.append(target_column_name)
+    if redirect is not None and redirect.target_column not in output_fieldnames:
+        output_fieldnames.append(redirect.target_column)
 
     state = ReconciliationState()
     if source_column_name not in original_fieldnames:
@@ -519,6 +637,9 @@ def reconcile_column_values(
         processed_rows = [
             {**row, target_column_name: row.get(target_column_name, "")} for row in rows
         ]
+        if redirect is not None:
+            for row in processed_rows:
+                row.setdefault(redirect.target_column, "")
     else:
         processed_rows = []
         with standard_progress(console) as progress:
@@ -533,6 +654,7 @@ def reconcile_column_values(
                     authority_dict,
                     ambiguous_authority_dict,
                     state,
+                    redirect,
                 ))
                 progress.update(task, advance=1)
 
@@ -546,6 +668,11 @@ def reconcile_column_values(
         console.print(
             f"[yellow]⚠[/] {len(state.ambiguous_terms)} ambiguous terms skipped "
             "(see unreconciled file)"
+        )
+    if state.redirected_count:
+        console.print(
+            f"[dim]{state.redirected_count} of the matched values written to "
+            f"{redirect.target_column}[/]"
         )
     return (
         output_reconciled_csv_path,

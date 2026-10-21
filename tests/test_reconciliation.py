@@ -5,11 +5,14 @@ import csv
 import pytest
 
 from common.reconciliation import (
+    Redirect,
     build_authority_dict,
     calculate_similarity,
     find_potential_matches,
     normalize_location_name,
+    plural_fold_key,
     reconcile_column_values,
+    token_order_key,
 )
 
 
@@ -138,3 +141,138 @@ def test_reconcile_column_preserves_ambiguity_and_counts(tmp_path):
     )
     assert "Union (Ambiguous)" in unreconciled
     assert "Unknown" in unreconciled
+
+
+def _reconcile_one(tmp_path, value, authority, ambiguous, redirect=None, extra=None):
+    """Reconcile one Subject AI cell; return (output row, result tuple)."""
+    source = tmp_path / "input.csv"
+    output = tmp_path / "output.csv"
+    row = {"o:id": "1", "Subject AI": value, **(extra or {})}
+    with source.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+    result = reconcile_column_values(
+        str(source), str(output), authority, "Subject AI", "Subject IDs",
+        str(tmp_path / "input"), "subject", ambiguous, redirect=redirect,
+    )
+    with output.open("r", encoding="utf-8", newline="") as handle:
+        return next(csv.DictReader(handle)), result
+
+
+def test_token_order_matches_reversed_person_name(tmp_path):
+    client = FakeOmekaClient({266: [_item(67772, "Coulibaly Kassoum")]})
+    authority, ambiguous, _ = build_authority_dict(client, ["266"], token_order=True)
+    row, _ = _reconcile_one(tmp_path, "Kassoum Coulibaly", authority, ambiguous)
+    assert row["Subject IDs"] == "67772"
+
+
+def test_token_order_is_off_unless_asked(tmp_path):
+    # Reference indexing builds its dicts without the looser keys.
+    client = FakeOmekaClient({266: [_item(67772, "Coulibaly Kassoum")]})
+    authority, ambiguous, _ = build_authority_dict(client, ["266"])
+    row, _ = _reconcile_one(tmp_path, "Kassoum Coulibaly", authority, ambiguous)
+    assert row["Subject IDs"] == ""
+
+
+def test_token_order_is_exact_never_fuzzy():
+    assert token_order_key("Kassoum Coulibaly") == token_order_key("Coulibaly Kassoum")
+    assert token_order_key("Kassoum Coulibali") != token_order_key("Coulibaly Kassoum")
+    # Same words is not enough: the multiset must be equal.
+    assert token_order_key("Kassoum Kassoum Coulibaly") != token_order_key("Coulibaly Kassoum")
+
+
+def test_token_order_gives_no_key_to_initials_or_single_words():
+    # "A. S." and "S. A." are two different signatures.
+    assert token_order_key("A. S.") == ""
+    assert token_order_key("Sawadogo A.") == ""
+    assert token_order_key("Ouagadougou") == ""
+    # Elided articles are not initials.
+    assert token_order_key("Institut Musulman d'Éducation et d'Enseignement") == token_order_key(
+        "Institut Musulman d'Enseignement et d'Éducation"
+    )
+
+
+def test_exact_match_wins_over_a_reordered_one(tmp_path):
+    # Two records whose words are the same in another order: each exact title
+    # still reaches its own record, and only an unseen order is ambiguous.
+    client = FakeOmekaClient({266: [
+        _item(1, "Moussa Ibrahim"),
+        _item(2, "Ibrahim Moussa"),
+        _item(3, "Ibrahim Moussa Diallo"),
+        _item(4, "Diallo Ibrahim Moussa"),
+    ]})
+    authority, ambiguous, _ = build_authority_dict(client, ["266"], token_order=True)
+    row, _ = _reconcile_one(tmp_path, "Moussa Ibrahim|Ibrahim Moussa", authority, ambiguous)
+    assert row["Subject IDs"] == "1|2"
+    row, _ = _reconcile_one(tmp_path, "Moussa Diallo Ibrahim", authority, ambiguous)
+    assert row["Subject IDs"] == ""
+    assert "Moussa Diallo Ibrahim (Ambiguous)" in (
+        tmp_path / "input_unreconciled_subject.csv"
+    ).read_text(encoding="utf-8")
+
+
+def test_plural_fold_matches_singular_and_plural(tmp_path):
+    client = FakeOmekaClient({854: [
+        _item(571, "Cercle d'Études, de Recherches et de Formation Islamiques"),
+    ]})
+    authority, ambiguous, _ = build_authority_dict(client, ["854"], plural_fold_sets=["854"])
+    row, _ = _reconcile_one(
+        tmp_path, "Cercle D'Étude, de Recherche et de Formation Islamique", authority, ambiguous,
+    )
+    assert row["Subject IDs"] == "571"
+
+
+def test_plural_fold_keeps_accents_and_short_words():
+    # Stripping accents too would give "Jeunes" (youth) the key of "Jeûne" (fasting).
+    assert plural_fold_key("Jeunes") != plural_fold_key("Jeûne")
+    assert plural_fold_key("Jeunes") == plural_fold_key("Jeune")
+    # Words of four letters or fewer keep their final letter.
+    assert plural_fold_key("Unis") != plural_fold_key("Uni")
+    assert plural_fold_key("Lieux de culte") == plural_fold_key("Lieu de culte")
+    # Decomposed accents fold like composed ones.
+    assert plural_fold_key("Études") == plural_fold_key("Étude")
+
+
+def test_plural_fold_does_not_link_jeunes_to_jeune(tmp_path):
+    client = FakeOmekaClient({1: [_item(76041, "Jeûne")]})
+    authority, ambiguous, _ = build_authority_dict(
+        client, ["1"], token_order=True, plural_fold_sets=["1"],
+    )
+    row, _ = _reconcile_one(tmp_path, "Jeunes", authority, ambiguous)
+    assert row["Subject IDs"] == ""
+
+
+def test_redirect_sends_a_subject_naming_a_place_to_spatial(tmp_path):
+    place = {"universite de ouagadougou": "444"}
+    row, result = _reconcile_one(
+        tmp_path, "Université de Ouagadougou|Islam", {"islam": "5"}, {},
+        redirect=Redirect(place, {}, "Spatial IDs"),
+        extra={"Spatial IDs": "268|444"},
+    )
+    assert row["Subject IDs"] == "5"
+    assert row["Spatial IDs"] == "268|444"  # deduplicated, order kept
+    assert result[1] == 2  # both values matched
+
+
+def test_redirect_never_overrides_a_subject_or_its_ambiguity(tmp_path):
+    place = {"sahel": "60540", "union": "99"}
+    row, _ = _reconcile_one(
+        tmp_path, "Sahel|Union", {"sahel": "7"}, {"union": ["20", "30"]},
+        redirect=Redirect(place, {}, "Spatial IDs"),
+    )
+    assert row["Subject IDs"] == "7"
+    assert row["Spatial IDs"] == ""
+
+
+def test_plural_fold_skips_sets_left_out(tmp_path):
+    # "Prophète" is an alias of Mahomet; "Prophètes" are the prophets.
+    client = FakeOmekaClient({
+        266: [_item(2013, "Mahomet", ["Prophète"])],
+        1: [_item(78445, "Confréries")],
+    })
+    authority, ambiguous, _ = build_authority_dict(
+        client, ["266", "1"], token_order=True, plural_fold_sets=["1"],
+    )
+    row, _ = _reconcile_one(tmp_path, "Prophètes|Confrérie|Prophète", authority, ambiguous)
+    assert row["Subject IDs"] == "78445|2013"

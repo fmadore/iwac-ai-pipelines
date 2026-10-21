@@ -175,9 +175,16 @@ The reconciliation script uses conservative defaults to minimize false matches. 
 
 The constants live in `common/reconciliation.py` (`BASE_MIN_SIMILARITY`,
 `MIN_TOKEN_OVERLAP`, `DEFAULT_MAX_CANDIDATES`), shared with the
-reference-indexing pipeline so both reconcile the same way. Steps 2 and 3 are
-entry points for `common/reconciliation_cli.py` and `common/link_update_cli.py`;
-the reference-indexing pipeline's steps 3 and 5 run the same code.
+reference-indexing pipeline. Steps 2 and 3 are entry points for
+`common/reconciliation_cli.py` and `common/link_update_cli.py`; the
+reference-indexing pipeline's steps 3 and 5 run the same code.
+
+NER alone reconciles with `extended_matching`. After the exact keys miss, a
+term may still match on its words in another order ("Kassoum Coulibaly" →
+"Coulibaly Kassoum", never for initials), and a subject other than a person
+on a trailing s/x ("Confrérie" → "Confréries", accents kept). A subject term that names a place
+in set 268 ("Université de Ouagadougou") is written to the spatial column, as
+the catalogue links places.
 
 ## Customization
 

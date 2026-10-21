@@ -9,6 +9,43 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-20 — NER reconciliation finds records under another word order, number or set
+
+A review of what the Haiku 5.5 pass over the 8,045 Burkinabè articles left
+unreconciled found many terms that already had a record: "Kassoum Coulibaly"
+for "Coulibaly Kassoum" (67772), "Cercle d'Étude, de Recherche et de
+Formation Islamique" for 571's plural title, "Université de Ouagadougou" (444)
+in the subject column while places are only in set 268.
+
+- `build_authority_dict(token_order=, plural_fold_sets=)` adds two looser keys,
+  under their own prefix, which a value reaches only once every exact key
+  has missed — so neither can shadow an exact match or make it ambiguous.
+  `token_order_key()` is the sorted words, matched for equality only, and
+  absent from any title carrying initials ("A. S." and "S. A." are two
+  signatures). `plural_fold_key()` drops a trailing s/x from words of five
+  letters or more and keeps accents, so "Jeunes" stays apart from "Jeûne".
+- `Redirect` lets `reconcile_column_values()` send a value its own dict does
+  not know to another column. Subject terms that name a place now go to
+  `Spatial AI Reconciled ID`, deduplicated. Not to `dcterms:subject`: none of
+  nine institution places checked live (444, 323, 552, 559 …) is linked as a
+  subject anywhere, all are `dcterms:spatial`, and set 268 has one class and
+  template for cities and mosques alike, so no "institution" subset exists to
+  search.
+- Only `AI_NER/02` turns these on (`extended_matching`), and the plural fold
+  on subjects other than persons: "Lago", a village in Zondoma, would
+  otherwise become Lagos, and "Prophètes" Mahomet through his alias
+  "Prophète". `PERSON_AUTHORITY_ITEM_SET` joins `common/iwac_config.py`.
+  Reference indexing matches as before.
+- On the full dictionaries, the order key adds no spatial ambiguity and 42
+  subject ones, nearly all a person recorded twice in both orders (Niang
+  Abdoulaye / Abdoulaye Niang); the fold adds 15, mostly existing duplicates
+  (Orphelin / Orphelins, Peul ×2).
+- Re-run on the Burkinabè CSV: subject 43.4 % → 44.2 % (+670 subject links,
+  +215 values linked as places, of which 184 are new spatial links); the
+  spatial column itself is unchanged at 67.4 %. 571 rises from 293 to 446
+  mentions, 67772 from 0 to 35, 444 from 3 to 91 spatial links. No link of
+  the previous run was lost.
+
 ### 2026-10-17 — Claude Haiku 5.5 for NER
 
 - New provider `anthropic`: `AnthropicClient` in `common/llm_provider.py`,
