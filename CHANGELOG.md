@@ -9,6 +9,18 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
+
+- `build_authority_dict(country=)` also keys a title or alternative ending in
+  "(Country)" without the qualifier when that country is the run's
+  (`strip_country_qualifier()`), as an exact key: "Ministère de la Santé"
+  in a Burkinabè run finds "Ministère de la Santé (Burkina Faso)" and never a
+  "(Togo)" record, and a record carrying the bare name elsewhere makes the
+  term ambiguous instead. `AI_NER/02` reads the country from the NER
+  checkpoint (`country`, else `spatial_filter`); reference indexing passes
+  none. On the Burkinabè run, after the new records: spatial 84.3 %, subject
+  50.9 %.
+
 ### 2026-10-21 — Authority records from the NER leftovers
 
 - `AI_authority_curation/06_ner_plan.py` turns a review of unreconciled NER

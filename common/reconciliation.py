@@ -143,6 +143,25 @@ def plural_fold_key(text: str) -> str:
     )
 
 
+_QUALIFIED = re.compile(r"^(.*\S)\s*\(([^()]+)\)\s*$")
+
+
+def strip_country_qualifier(title: str, country: str) -> str:
+    """*title* without a trailing "(Country)" naming *country*, else ''.
+
+    A ministry, a region or a national body with a generic name carries its
+    country in the title — "Ministère de la Santé (Burkina Faso)" — because the
+    archive covers six countries and the press names them bare. Reconciling
+    one country's articles, the bare name may stand for that country's record
+    and no other: "(Togo)" stays on in a Burkinabè run.
+    """
+    match = _QUALIFIED.match(title.strip())
+    if not match or not country.strip():
+        return ''
+    same = _strip_diacritics(match.group(2).strip().lower()) == _strip_diacritics(country.strip().lower())
+    return match.group(1).strip() if same else ''
+
+
 # ---------------------------------------------------------------------------
 # Authority dictionary builder
 # ---------------------------------------------------------------------------
@@ -204,6 +223,7 @@ def build_authority_dict(
     *,
     token_order: bool = False,
     plural_fold_sets: Collection[str] = (),
+    country: Optional[str] = None,
 ) -> Tuple[Dict[str, str], Dict[str, List[str]], Dict[str, Dict]]:
     """Build a lookup dict of authority terms from specified item sets.
 
@@ -212,6 +232,10 @@ def build_authority_dict(
     reconciliation tries them only after every exact key has missed, in that
     order. Leave persons out of the fold: a plural never names one person, and
     "Prophètes" would otherwise reach Mahomet through his alias "Prophète".
+
+    With *country*, a title qualified by that country is also keyed without
+    the qualifier (:func:`strip_country_qualifier`), as an exact key: a record
+    of the same bare name elsewhere makes the term ambiguous, never resolved.
 
     Returns:
         (authority_dict, ambiguous_terms_dict, authority_metadata)
@@ -245,10 +269,11 @@ def build_authority_dict(
                 metadata, titles_to_process = _authority_titles(item)
                 authority_metadata[item_id] = metadata
                 for title_text in titles_to_process:
-                    potential_lookups.extend(
-                        (variant, item_id)
-                        for variant in _authority_variants(title_text, token_order, plural_fold)
-                    )
+                    variants = _authority_variants(title_text, token_order, plural_fold)
+                    bare = strip_country_qualifier(title_text, country) if country else ''
+                    if bare:
+                        variants |= _authority_variants(bare, token_order, plural_fold)
+                    potential_lookups.extend((variant, item_id) for variant in variants)
 
     authority, ambiguous = _resolve_authority_lookups(potential_lookups)
     return authority, ambiguous, authority_metadata

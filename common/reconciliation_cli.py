@@ -11,8 +11,10 @@ run around it.
 NER runs with ``extended_matching``: word-order keys on both columns, the
 plural fold on subjects other than persons (names are proper nouns: "Lago", a
 village in Zondoma, must not become "Lagos", nor "Prophètes" the Prophet),
-and subject terms that name a place
-linked as ``dcterms:spatial``. Reference indexing does not, so its matching is
+subject terms that name a place
+linked as ``dcterms:spatial``, and titles qualified by the run's country
+("Ministère de la Santé (Burkina Faso)") also matched bare. The country comes
+from the NER checkpoint beside the input. Reference indexing does not, so its matching is
 unchanged until those rules have been checked on its own output.
 """
 
@@ -25,6 +27,7 @@ from typing import Callable, Optional, Sequence
 from rich.console import Console
 from rich.panel import Panel
 
+from common.checkpoint import read_checkpoint_context
 from common.console_utils import key_value_table
 from common.iwac_config import (
     PERSON_AUTHORITY_ITEM_SET,
@@ -74,6 +77,7 @@ def run_reconciliation(
     subject_tag: str,
     console: Optional[Console] = None,
     extended_matching: bool = False,
+    country: Optional[str] = None,
 ) -> Path:
     """Reconcile one CSV and write the derived files beside it.
 
@@ -95,6 +99,7 @@ def run_reconciliation(
         ("Spatial item sets", ", ".join(SPATIAL_AUTHORITY_ITEM_SETS)),
         ("Subject item sets", ", ".join(SUBJECT_AUTHORITY_ITEM_SETS)),
         ("Topic item sets", ", ".join(TOPIC_AUTHORITY_ITEM_SETS)),
+        ("Country qualifier", country or "none"),
     ]))
     console.print()
 
@@ -102,6 +107,7 @@ def run_reconciliation(
     console.rule("[bold cyan]Step 1: Spatial Reconciliation")
     spatial_dict, spatial_ambiguous, spatial_metadata = build_authority_dict(
         client, SPATIAL_AUTHORITY_ITEM_SETS, "SPATIAL", token_order=extended_matching,
+        country=country,
     )
     display_authority_stats(spatial_dict, spatial_ambiguous, "Spatial/Location")
     write_ambiguous_terms_to_file(spatial_ambiguous, f"{base}_ambiguous_authorities_{TAG_SPATIAL}.csv")
@@ -128,6 +134,7 @@ def run_reconciliation(
             [s for s in subject_sets if s != PERSON_AUTHORITY_ITEM_SET]
             if extended_matching else ()
         ),
+        country=country,
     )
     display_authority_stats(combined_dict, combined_ambiguous, "Subject + Topic")
     write_ambiguous_terms_to_file(combined_ambiguous, f"{base}_ambiguous_authorities_{subject_tag}.csv")
@@ -208,10 +215,14 @@ def main(
         console.print(f"[red]✗[/] No suitable CSV found in {output_dir}")
         return 1
 
+    country = None
+    if extended_matching:
+        context = read_checkpoint_context(Path(input_path))
+        country = context.get("country") or context.get("spatial_filter") or None
     try:
         run_reconciliation(
             client, Path(input_path), subject_tag=subject_tag, console=console,
-            extended_matching=extended_matching,
+            extended_matching=extended_matching, country=country,
         )
     except RuntimeError as exc:
         console.print(f"[red]✗[/] {exc}")

@@ -276,3 +276,33 @@ def test_plural_fold_skips_sets_left_out(tmp_path):
     )
     row, _ = _reconcile_one(tmp_path, "Prophètes|Confrérie|Prophète", authority, ambiguous)
     assert row["Subject IDs"] == "78445|2013"
+
+
+def test_country_qualifier_matches_bare_name_for_the_runs_country_only():
+    from common.reconciliation import strip_country_qualifier
+    assert strip_country_qualifier("Ministère de la Santé (Burkina Faso)", "Burkina Faso") == "Ministère de la Santé"
+    assert strip_country_qualifier("Région des Savanes (Togo)", "Burkina Faso") == ""
+    assert strip_country_qualifier("Ministère de la Santé", "Burkina Faso") == ""
+    assert strip_country_qualifier("Bénin (pays)", "Benin") == ""
+
+    client = FakeOmekaClient({854: [
+        _item(1, "Ministère de la Santé (Burkina Faso)"),
+        _item(2, "Ministère de la Santé (Togo)"),
+        _item(3, "Gendarmerie nationale (Burkina Faso)"),
+    ]})
+    authority, ambiguous, _ = build_authority_dict(client, ["854"], country="Burkina Faso")
+    assert authority["ministère de la santé"] == "1"
+    assert authority["gendarmerie nationale"] == "3"
+    assert "ministère de la santé (togo)" in authority
+    unqualified, _, _ = build_authority_dict(client, ["854"])
+    assert "ministère de la santé" not in unqualified
+
+
+def test_country_qualifier_never_resolves_a_name_another_record_carries_bare():
+    client = FakeOmekaClient({854: [
+        _item(1, "Conseil constitutionnel (Burkina Faso)"),
+        _item(4, "Conseil constitutionnel"),
+    ]})
+    authority, ambiguous, _ = build_authority_dict(client, ["854"], country="Burkina Faso")
+    assert "conseil constitutionnel" not in authority
+    assert ambiguous["conseil constitutionnel"] == ["1", "4"]
