@@ -67,6 +67,15 @@ the changelog tells stories.
   654, a second Burkinabè "CNOPM" record most of whose 32 articles come from
   Ivorian and Beninese papers, is left for an article-by-article review.
   Backups in `AI_authority_curation/output/hajj_bodies_backup/`.
+- Then, after Claude Haiku 5.5 read the 56 articles linked to 654 and to the
+  Hajj stubs (`AI_authority_curation/output/hajj_review/hajj_links_review.csv`,
+  one row per article with the deciding quote) and the curator approved: 15
+  articles moved off 654 — 12 Ivorian papers to 23540, two Burkinabè ones to
+  665, one to the AMOP (46321); stubs 28033, 14111 and 13115 merged into
+  26349, 579 and 781; stub 27663 filed as "Commission nationale
+  d'organisation du Hadj (Togo)", the 1996 body that preceded the 2008 CNH.
+  Left for the curator: 654's other 17 articles, eight of them on Bénin's
+  state pilgrimage committee of 1972–1983, which has no record yet.
 
 ### 2026-10-20 — NER reconciliation finds records under another word order, number or set
 
