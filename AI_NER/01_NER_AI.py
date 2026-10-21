@@ -135,7 +135,7 @@ class Config:
     llm_config: LLMConfig
     batch_size: int = BATCH_SIZE
 
-LOWER_PREFIXES = {"el", "van", "de", "von", "der", "den", "hadj", "ben", "ibn", "et", "du", "des", "le", "la", "les", "l", "d"}
+LOWER_PREFIXES = {"el", "van", "de", "von", "der", "den", "hadj", "ben", "ibn", "et", "du", "des", "au", "aux", "le", "la", "les", "l", "d"}
 
 # ---------------------------------------------------------------------------
 # Config & Prompt
@@ -259,35 +259,61 @@ def get_value(item: Dict[str, Any], prop: str) -> str:
     fr_val = next((v.get('@value', '') for v in values if v.get('@language') == 'fr'), None)
     return fr_val if fr_val is not None else values[0].get('@value', '')
 
-def clean_entity(entity: str) -> str:
+def _clean_segment(segment: str, initial: bool, person: bool = False) -> str:
+    """Case one hyphen-free piece of a word.
+
+    A piece the model already capitalised is kept as written, so acronyms
+    (``UEMOA``) and inner capitals survive; only an all-lowercase piece is
+    capitalised. Particles are lowercased except at the start of the entity.
+    In a person's name, capitals longer than three letters mark the surname
+    (``Abdoulaye TRAORÉ``), not an acronym; ``IBK`` and ``ADO`` stay.
+    """
+    if not segment:
+        return segment
+    if person and segment.isupper() and sum(ch.isalpha() for ch in segment) > 3:
+        segment = segment.lower()
+    if segment.lower() in LOWER_PREFIXES:
+        return segment.capitalize() if initial else segment.lower()
+    elided = re.match(r"^(\w)['’](.+)$", segment)
+    if elided:
+        # d'Ivoire, l'Information, N'Djamena: the letter before the
+        # apostrophe is an elision, the name starts after it.
+        head, rest = elided.groups()
+        head = head.upper() if initial or head.lower() not in LOWER_PREFIXES else head.lower()
+        return f"{head}'{rest.capitalize() if rest.islower() else rest}"
+    return segment.capitalize() if segment.islower() else segment
+
+
+def clean_entity(entity: str, person: bool = False) -> str:
     if not entity:
         return ''
     entity = entity.strip()
     parts = entity.split()
+    # A whole name in capitals is a shouted headline, not a run of acronyms.
+    if len(parts) > 1 and entity.isupper():
+        parts = entity.lower().split()
     cleaned: List[str] = []
-    for part in parts:
-        if part.lower() in LOWER_PREFIXES:
-            cleaned.append(part.lower())
-        elif "'" in part or "’" in part:
-            segs = re.split(r"['’]", part)
-            if len(segs) == 2:
-                cleaned.append(f"{segs[0].capitalize()}'{segs[1].capitalize()}")
-            else:
-                cleaned.append(part.capitalize())
-        else:
-            cleaned.append(part.capitalize())
+    for i, part in enumerate(parts):
+        segments = part.split('-')
+        # Ki-ZERBO: a capitalised piece followed by capitals is one surname.
+        if not segments[0].isupper():
+            segments = [segments[0]] + [s.lower() if s.isupper() else s for s in segments[1:]]
+        cleaned.append('-'.join(
+            _clean_segment(seg, initial=(i == 0 and j == 0), person=person)
+            for j, seg in enumerate(segments)
+        ))
     return ' '.join(cleaned)
 
 def clean_apostrophes(text: str) -> str:
     return text.replace("’", "'") if text else ''
 
-def deduplicate_entities(entities: List[str]) -> List[str]:
+def deduplicate_entities(entities: List[str], person: bool = False) -> List[str]:
     seen = set()
     out: List[str] = []
     for e in entities:
         if not e:
             continue
-        c = clean_entity(e)
+        c = clean_entity(e, person=person)
         key = c.lower()
         if key not in seen:
             seen.add(key)
@@ -343,7 +369,7 @@ def perform_ner(llm_client: BaseLLMClient, text_content: str) -> NERResult:
     )
     # Apply deduplication and cleaning to the structured result
     return NERResult(
-        persons=deduplicate_entities(result.persons),
+        persons=deduplicate_entities(result.persons, person=True),
         organizations=deduplicate_entities(result.organizations),
         locations=deduplicate_entities(result.locations),
         subjects=deduplicate_entities(result.subjects),

@@ -46,6 +46,33 @@ in the subject column while places are only in set 268.
   mentions, 67772 from 0 to 35, 444 from 3 to 91 spatial links. No link of
   the previous run was lost.
 
+### 2026-10-20 — Less noise in NER extraction
+
+Reviewing what the Burkinabè run (8,045 articles, Claude Haiku 5.5) left
+unreconciled found that most leftovers were not missing authority records:
+of the mentions discarded, 13,582 were generic themes from the `subjects`
+list (Islam 4,983, Religion 1,115, Dialogue, Tradition, Fête…) and 1,700 the
+outlet the article was sourced from (Agence d'Information du Burkina 691,
+Sidwaya 269, Le Pays, L'Observateur Paalga, RFI…). The cleaning step also
+damaged names on its own: "Uemoa", "Rfi", "Ki-zerbo", "Agence D'Information".
+
+- `AI_NER/ner_system_prompt.md`: subjects are now 1–6 themes of the kind
+  the subject vocabulary (item set 1) holds, spelled as its records are,
+  never "islam", "religion" or a catch-all noun, with the precise theme
+  preferred over the general word ("dialogue interreligieux", not
+  "dialogue"). Media cited as source, author or interviewer are not
+  extracted unless the article is about them; nor are scriptural figures
+  cited in a sermon or bare compass points. The prompt hash changes, so
+  existing NER checkpoints no longer resume.
+- `clean_entity()` keeps words the model already capitalised (acronyms,
+  inner capitals), capitalises each piece of a hyphenated word, keeps
+  particles and elisions lowercase inside a name (`Côte d'Ivoire`) and
+  capitalises the first word (`Le Pays`, `Hadj`, previously `hadj`). In
+  person names a surname in capitals (`TRAORÉ`) is still recased.
+- On item set 112536 (18 articles), Subject AI fell from 185 to 127 entries,
+  "Islam" from 12 articles to none; on 18 articles where the full run had
+  extracted a medium, none was extracted again.
+
 ### 2026-10-17 — Claude Haiku 5.5 for NER
 
 - New provider `anthropic`: `AnthropicClient` in `common/llm_provider.py`,
@@ -61,9 +88,9 @@ in the subject column while places are only in set 268.
   call is in `docs/PENDING.md`.
 - `TruncatedOutputError` also covers Anthropic's
   `model_context_window_exceeded`.
-- 2026-10-20: first live calls, on three Sidwaya articles, accepted
+- 2026-10-20: first live run, over the 8,045 Burkinabè articles, accepted
   `output_config` with `effort: "medium"` and the transformed `NERResult`
-  schema and reported reasoning tokens.
+  schema and reported reasoning tokens; no item failed.
 - `AI_NER/01 --country NAME` runs NER over every press article (class 36) in
   the item sets whose `dcterms:spatial` is that country, instead of whole item
   sets. `ARTICLE_RESOURCE_CLASS_ID` joins `common/iwac_config.py`.

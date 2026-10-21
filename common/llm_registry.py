@@ -283,8 +283,7 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     # 100K-token prompt, $0.50/$2.50 above. Anthropic deletes API inputs and
     # outputs within 30 days by default and its commercial terms exclude
     # training on them; there is no routing flag to set, unlike OpenRouter's.
-    # First called live 2026-10-20 (AI_NER/01); the entity comparison
-    # against DeepSeek 0731 is in docs/PENDING.md.
+    # Verified live 2026-10-20 (AI_NER/01, 8,045 articles).
     "claude-haiku-5-5": ModelOption(
         "claude-haiku-5-5", PROVIDER_ANTHROPIC, ANTHROPIC_HAIKU_55_MODEL,
         "Claude Haiku 5.5",

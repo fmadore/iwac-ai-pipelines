@@ -38,14 +38,6 @@ the video summary). The steps below are in order: each depends on the one before
    `tests/test_summary_annotation.py` fails if a stamping tier gets a model
    with no authority item.
 
-## Claude Haiku 5.5: compare before writing
-
-The first live calls (2026-10-20) accepted `output_config` with
-`effort: "medium"` and the `NERResult` schema and reported reasoning tokens.
-Before `AI_NER/03` writes the Burkinabè run
-(`country_burkina_faso_articles_processed_claude_haiku_5_5.csv`), compare its
-entities against DeepSeek 0731 on a sample of the same articles.
-
 ## Authority curation: before and after the first live pass
 
 1. **Upload IWAC vocabulary v1.5.** It adds `iwac:descriptionModel`;

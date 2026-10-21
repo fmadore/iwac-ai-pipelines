@@ -83,10 +83,9 @@ evaluation — compare its entities against a known-good model on the same item
 set before committing to a bulk pass.
 
 `claude-haiku-5-5` needs `ANTHROPIC_API_KEY` and receives the `medium` request
-as its effort level, which is also its default. First called live on 2026-10-20 (the
-comparison against DeepSeek 0731 is still pending, `docs/PENDING.md`):
-three Sidwaya articles took 4–8 s each, at about 4,000 tokens in and 1,100 out
-(reasoning included), which puts the 8,045 Burkinabè articles near $8.
+as its effort level, which is also its default. On 2026-10-20 it ran over
+the 8,045 Burkinabè articles in 1 h 38 with `--async` and no failure: 35.5M
+tokens in and 5.9M out (4.4M of them reasoning), about $6.50.
 
 `--country` replaces `--item-set-id` with a country name, matched without regard
 to case or accents (`benin` finds `Bénin`). It selects the item sets whose
@@ -102,10 +101,16 @@ The pipeline extracts four entity types:
 
 | Category | Examples | Formatting Rules |
 |----------|----------|------------------|
-| **Persons** | Amadou Hampâté Bâ | Full names, no titles (Sheikh, Dr.) |
-| **Organizations** | Union Musulmane du Togo | Full names, no acronyms |
-| **Locations** | Ouagadougou, Zinder | Simple names, no political qualifiers |
-| **Subjects** | islam, hajj, laïcité | Thematic keywords (max 8 per text) |
+| **Persons** | Amadou Hampâté Bâ | Full names, no titles (Sheikh, Dr.), no scriptural figures cited in a sermon |
+| **Organizations** | Union Musulmane du Togo | Full names, no acronyms; not the outlet or agency an article is sourced from |
+| **Locations** | Ouagadougou, Zinder | Simple names, no political qualifiers, no bare compass points |
+| **Subjects** | Hadj, laïcité, dialogue interreligieux | 1–6 themes of the kind the subject vocabulary (item set 1) holds; never "islam", "religion" or catch-all nouns |
+
+Every entity is then recased by `clean_entity()`: an all-lowercase word is
+capitalised, a word the model already capitalised is kept, so acronyms
+(`UEMOA`) survive; each piece of a hyphenated word is capitalised
+(`Ki-Zerbo`), particles and elisions stay lowercase inside a name (`Côte
+d'Ivoire`), and in person names a surname in capitals (`TRAORÉ`) is recased.
 
 ## Output Files
 
