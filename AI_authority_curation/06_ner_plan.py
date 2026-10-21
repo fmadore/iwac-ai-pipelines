@@ -12,17 +12,25 @@ Claude Haiku 5.5 reviewers judge each cluster from article snippets, and write
   plan_sort.csv          stubs of set 12826 to file, for 05_sort.py
   plan_descriptions.csv  descriptions drafted for those stubs, for 03_apply.py
   plan_roles.csv         categories proposed for those stubs, for 03_apply.py
-  plan_merges.csv        duplicate pairs, for 04_merge.py — never pre-approved
+  duplicates_to_examine.csv  the reviewers' remarks on possible duplicates
+
+No merge plan is written. A reviewer judging one term sometimes remarked
+that other records looked alike; on 2026-10-21 turning those remarks into
+pairs merged an event into its place ("Affrontements intercommunautaires
+Yirgou (2019)" / the village), an arrest into the person arrested, the FAIB
+into the AIMB and Nas-Air into Air Afrique. Duplicates are the curator's to
+find and confirm; ``04_merge.py`` applies a ``plan_merges.csv`` the curator
+writes.
 
 It writes nothing to Omeka. It reads the person, organisation and place sets
 once to turn the reviewers' category and country labels into the items that
 already stand for them; a label with no item is kept as text and linked to
 nothing. Rows are pre-approved unless something needs the curator: a record
-that may already exist, low confidence, a stub filed as a mere theme, any
-merge.
+that may already exist, low confidence, a stub filed as a mere theme.
 
-Apply in this order: 05_sort.py, 03_apply.py, 07_create.py, then 04_merge.py
-once the curator has approved merges.
+Apply in this order: 05_sort.py, 03_apply.py, 07_create.py, then reconcile
+again (AI_NER/02): its ambiguous-terms files show the duplicates worth
+examining. Merge only those the curator has confirmed.
 
 Usage:
     python AI_authority_curation/06_ner_plan.py --proposals path/to/proposals.json --label burkina_faso
@@ -69,9 +77,8 @@ DESCRIPTION_COLUMNS = ["approve", "status", "authority_id", "title", "url", "des
                        "batch", "model"]
 ROLE_COLUMNS = ["approve", "status", "authority_id", "title", "url", "role_id", "role_title",
                 "new_role", "evidence", "problems", "batch", "model"]
-MERGE_COLUMNS = ["approve", "status", "survivor_id", "survivor_title", "survivor_url", "loser_id",
-                 "loser_title", "loser_url", "score", "candidate_reason", "reviewer_reason",
-                 "evidence", "problems", "batch", "model"]
+EXAMINE_COLUMNS = ["record_a", "title_a", "kind_a", "url_a", "record_b", "title_b", "kind_b", "url_b",
+                   "reviewer_note"]
 
 
 def label_maps(records: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, int], Dict[str, int]]:
@@ -176,22 +183,14 @@ def stub_rows(stubs: List[Dict[str, Any]], categories: Dict[str, int]) -> Tuple[
     return sort, descriptions, roles
 
 
-def merge_rows(pairs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """The classified record survives a stub; otherwise the first id does."""
-    rows = []
-    for p in pairs:
-        a, b = (p["id A"], p["titre A"], p["type A"]), (p["id B"], p["titre B"], p["type B"])
-        survivor, loser = (b, a) if a[2] == "stub" and b[2] != "stub" else (a, b)
-        rows.append({
-            "approve": "", "status": "ready" if p.get("vraisemblance") == "plausible" else "flagged",
-            "survivor_id": survivor[0], "survivor_title": survivor[1], "survivor_url": SITE + str(survivor[0]),
-            "loser_id": loser[0], "loser_title": loser[1], "loser_url": SITE + str(loser[0]),
-            "score": "", "candidate_reason": "NER leftover review",
-            "reviewer_reason": p.get("note") or "", "evidence": "",
-            "problems": "" if p.get("vraisemblance") == "plausible" else p.get("vraisemblance", ""),
-            "batch": "", "model": REVIEWER_MODEL_KEY,
-        })
-    return rows
+def examine_rows(pairs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The reviewers' duplicate remarks as they were made, for the curator to
+    examine. Not a merge plan: no survivor, no approval column."""
+    return [{
+        "record_a": p["id A"], "title_a": p["titre A"], "kind_a": p["type A"], "url_a": SITE + str(p["id A"]),
+        "record_b": p["id B"], "title_b": p["titre B"], "kind_b": p["type B"], "url_b": SITE + str(p["id B"]),
+        "reviewer_note": p.get("note") or "",
+    } for p in pairs]
 
 
 def write_csv(path: Path, columns: List[str], rows: List[Dict[str, Any]]) -> None:
@@ -223,7 +222,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "plan_sort.csv": (SORT_COLUMNS, sort),
         "plan_descriptions.csv": (DESCRIPTION_COLUMNS, descriptions),
         "plan_roles.csv": (ROLE_COLUMNS, roles),
-        "plan_merges.csv": (MERGE_COLUMNS, merge_rows(proposals["doublons"])),
+        "duplicates_to_examine.csv": (EXAMINE_COLUMNS, examine_rows(proposals["doublons"])),
     }
     run_dir = OUTPUT_DIR / f"ner_{args.label}_{datetime.now():%Y%m%dT%H%M%S}"
     run_dir.mkdir(parents=True)
@@ -236,7 +235,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     console.print(count_table(
-        [(name, f"{sum(r['approve'] == 'yes' for r in rows)} approved / {len(rows)}")
+        [(name, f"{sum(r.get('approve') == 'yes' for r in rows)} approved / {len(rows)}")
          for name, (_, rows) in plans.items()], title="Plans"))
     console.print(f"Run: [cyan]{run_dir}[/]")
     return 0

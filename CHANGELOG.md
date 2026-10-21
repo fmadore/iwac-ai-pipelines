@@ -26,9 +26,13 @@ the changelog tells stories.
 - `AI_authority_curation/06_ner_plan.py` turns a review of unreconciled NER
   entities (`proposals.json`, from the `iwac-data` skill's `ner_leftovers`
   scripts) into plans: new records, alternative names, stubs to file, their
-  descriptions and categories, and duplicate pairs. Category and country
-  labels become links only where a record already stands for them. Nothing
-  that may already exist, and no merge, is pre-approved.
+  descriptions and categories. Category and country labels become links only
+  where a record already stands for them. Nothing that may already exist is
+  pre-approved. It writes no merge plan: the reviewers' remarks about other
+  records that look alike, made into pairs, paired events with their places
+  and persons (Yirgou, the arrest of Inoussa Kanazoé) and unrelated bodies
+  (FAIB/AIMB, Nas-Air/Air Afrique); 59 such pairs were withdrawn unapplied, and
+  the remarks now go to `duplicates_to_examine.csv`.
 - `AI_authority_curation/07_create.py` creates the approved records — kind's
   class, template and set, Notice d'autorité, French description annotated
   `iwac:descriptionModel`, category and country links annotated
@@ -47,6 +51,14 @@ the changelog tells stories.
   674 new records created (items 125796 onwards, 506 of them cited in fewer
   than 20 articles), and 68 existing records given the alternative names they
   lacked. No merge: the 60 candidate pairs await the curator.
+- Duplicates the next reconciliation exposed, same day: merged 14587 into
+  636 (BID), 126600 into 126067 (CCI-BF, former name), 126779 into 126000
+  (FAMa) and 15008 into 76313 (Kaaba, whose description was copied over with
+  its annotation); the curator deleted the four losers.
+  Misplaced alternatives removed: "Gulmu" from 127150 (it names the kingdom,
+  126862), the father's three names from 69261 Mahamat Idriss Déby Itno (he is
+  13546), and "Ministère de la Justice et des Droits humains" from 126362
+  (it is 126319's title). Backups in the run folder's `backups/`.
 
 ### 2026-10-20 — NER reconciliation finds records under another word order, number or set
 

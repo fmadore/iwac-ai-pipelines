@@ -504,7 +504,7 @@ def test_curator_rewrite_is_not_stamped_with_the_model():
     assert create.is_model_text({**row, "draft_fr": "Texte revu."})
 
 
-def test_plan_holds_back_what_may_exist_and_never_preapproves_merges():
+def test_plan_holds_back_what_may_exist_and_writes_no_merge_plan():
     plan = _load("06_ner_plan.py")
     categories, countries = plan.label_maps([
         {"o:id": 546, "o:title": "Burkina Faso",
@@ -520,7 +520,8 @@ def test_plan_holds_back_what_may_exist_and_never_preapproves_merges():
     rows = plan.create_rows(new, categories, countries)
     assert rows[0]["approve"] == "yes" and rows[0]["category_id"] == 8990 and rows[0]["country_id"] == 546
     assert rows[1]["approve"] == "" and rows[1]["status"].startswith("check")
-    merges = plan.merge_rows([{"id A": 15171, "titre A": "Barkhane", "type A": "stub",
-                               "id B": 65, "titre B": "Opération Barkhane", "type B": "subject",
-                               "vraisemblance": "plausible", "note": ""}])
-    assert merges[0]["survivor_id"] == 65 and merges[0]["loser_id"] == 15171 and merges[0]["approve"] == ""
+    remarks = plan.examine_rows([{"id A": 13757, "titre A": "Affrontements intercommunautaires Yirgou (2019)",
+                                  "type A": "event", "id B": 14061, "titre B": "Yirgou", "type B": "stub",
+                                  "note": "the curator may prefer to link the event"}])
+    assert "approve" not in remarks[0] and "survivor_id" not in remarks[0]
+    assert not hasattr(plan, "merge_rows")

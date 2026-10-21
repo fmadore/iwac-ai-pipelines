@@ -201,13 +201,20 @@ into authority work, the review runs from the `iwac-data` skill
 Haiku review, `country_rule.py`, workbook. The curator reads the workbook;
 then this pipeline writes:
 
-1. `06_ner_plan.py --proposals <run>/proposals.json --label <country>` — six
-   plans in `output/ner_<country>_<ts>/`, no Omeka write.
+1. `06_ner_plan.py --proposals <run>/proposals.json --label <country>` — five
+   plans and `duplicates_to_examine.csv` in `output/ner_<country>_<ts>/`, no
+   Omeka write.
 2. `05_sort.py --run <that folder>` — files the stubs the review matched.
 3. `03_apply.py --run <that folder>` — their descriptions and categories.
 4. `07_create.py --run <that folder>` — new records and alternative names.
-5. `04_merge.py --run <that folder>` — only the merges the curator approved;
-   `06` approves none.
+5. `04_merge.py` — only for duplicates the curator has confirmed, in a
+   `plan_merges.csv` written for them. `06` writes no merge plan: the
+   reviewers' duplicate remarks of 2026-10-21, made into pairs, would have
+   merged events into places and persons (the Yirgou clashes into the village,
+   an arrest into Inoussa Kanazoé), the FAIB into the AIMB, Nas-Air into Air
+   Afrique, the Jeunesse Étudiante Catholique of Burkina Faso into the
+   movement, and the Fédération des Églises et Missions Évangéliques into the
+   Église évangélique du Togo. Treat every such remark as a lead, never a pair.
 
 Dry run each before its live run, as separate invocations. Things the
 2026-10-21 Burkinabè pass taught:
@@ -221,6 +228,16 @@ Dry run each before its live run, as separate invocations. Things the
   category record is the curator's decision.
 - Proposals whose title may already exist (18 of 731) and flagged ones (39)
   are held back for the curator.
+- **Reconcile again after creating, before `AI_NER/03`.** The new records only
+  count once `AI_NER/02` has rebuilt its dictionaries; its ambiguous-terms
+  files then show the duplicates the pass created (two names of one chamber,
+  a stub filed beside an existing place). Merge those before writing links.
+- **Pick the survivor from the merge dry run**, not from the titles: its
+  `linking_items` and `loser_fields_survivor_lacks` columns showed that the
+  bare "Kaaba" (76313) held 150 links, coordinates and Wikidata, so it
+  survived and the filed stub's description was copied over.
+- A merged loser keeps its names until the curator deletes it, so those names
+  stay ambiguous to the reconciler — and unlinked — until then.
 
 ## After a pass
 
