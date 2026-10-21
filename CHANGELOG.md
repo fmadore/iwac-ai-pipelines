@@ -9,6 +9,33 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-21 — Authority records from the NER leftovers
+
+- `AI_authority_curation/06_ner_plan.py` turns a review of unreconciled NER
+  entities (`proposals.json`, from the `iwac-data` skill's `ner_leftovers`
+  scripts) into plans: new records, alternative names, stubs to file, their
+  descriptions and categories, and duplicate pairs. Category and country
+  labels become links only where a record already stands for them. Nothing
+  that may already exist, and no merge, is pre-approved.
+- `AI_authority_curation/07_create.py` creates the approved records — kind's
+  class, template and set, Notice d'autorité, French description annotated
+  `iwac:descriptionModel`, category and country links annotated
+  `iwac:nerModel` — and adds alternatives by whole-item PATCH. It checks every
+  title against the authority sets and set 12826 read once (a title search
+  takes 6–8 s), and journals each creation so a re-run never duplicates one.
+- The curator's rule for names shared across countries: a ministry, region or
+  national body with a generic name carries its country in the title, and no
+  bare generic name is an alternative. Written to the archive on 2026-10-21:
+  60542, 60559, 73331 and 73334 renamed "Région des Savanes (Togo)",
+  "Région des Plateaux (Togo)", "Région centrale (Togo)", "Région maritime
+  (Togo)" (backups in `AI_authority_curation/output/togo_regions_backup/`).
+- First pass, 2026-10-21, from the Burkinabè NER run
+  (`AI_authority_curation/output/ner_burkina_faso_20261021T112819`): 69 stubs
+  filed out of set 12826, 68 descriptions and 33 categories written on them,
+  674 new records created (items 125796 onwards, 506 of them cited in fewer
+  than 20 articles), and 68 existing records given the alternative names they
+  lacked. No merge: the 60 candidate pairs await the curator.
+
 ### 2026-10-20 — NER reconciliation finds records under another word order, number or set
 
 A review of what the Haiku 5.5 pass over the 8,045 Burkinabè articles left

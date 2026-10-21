@@ -193,6 +193,35 @@ text is still the model's.
 - **Persons are the sensitive set.** Pilot organisations first, and keep person
   runs small enough for the curator to read every description.
 
+## NER leftovers
+
+When the curator wants the entities an `AI_NER` pass left unreconciled turned
+into authority work, the review runs from the `iwac-data` skill
+(`scripts/ner_leftovers/`, documented in its `omeka-curation.md`): cluster,
+Haiku review, `country_rule.py`, workbook. The curator reads the workbook;
+then this pipeline writes:
+
+1. `06_ner_plan.py --proposals <run>/proposals.json --label <country>` — six
+   plans in `output/ner_<country>_<ts>/`, no Omeka write.
+2. `05_sort.py --run <that folder>` — files the stubs the review matched.
+3. `03_apply.py --run <that folder>` — their descriptions and categories.
+4. `07_create.py --run <that folder>` — new records and alternative names.
+5. `04_merge.py --run <that folder>` — only the merges the curator approved;
+   `06` approves none.
+
+Dry run each before its live run, as separate invocations. Things the
+2026-10-21 Burkinabè pass taught:
+
+- **Country in the title** for ministries, regions and national bodies with a
+  generic name, never a bare generic alternative ("Nord", "Gendarmerie
+  nationale"). The curator's rule; the four Togolese regions were renamed to
+  match ("Région des Savanes (Togo)" …).
+- A category label with no record ("Ministère", "Commune", "Province du
+  Burkina Faso") stays text in the plan and links nothing. Creating such a
+  category record is the curator's decision.
+- Proposals whose title may already exist (18 of 731) and flagged ones (39)
+  are held back for the curator.
+
 ## After a pass
 
 - The Hugging Face `index` subset and the IWAC MCP server see the changes only

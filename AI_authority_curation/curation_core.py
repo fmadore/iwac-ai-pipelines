@@ -817,3 +817,76 @@ def missing_alternatives(survivor: Dict[str, Any], loser: Dict[str, Any]) -> Lis
                 have.add(key)
                 out.append(part)
     return out
+
+
+# ---------------------------------------------------------------------------
+# NER leftovers: records proposed from the entities AI_NER/02 could not match
+# ---------------------------------------------------------------------------
+
+#: The reviewer's entity type → the kind it is filed under.
+NER_KIND = {"person": "persons", "organisation": "organisations", "place": "places",
+            "subject": "subjects", "event": "events"}
+
+CREATE_COLUMNS = ["approve", "status", "kind", "title", "alternatives", "description_fr", "draft_fr",
+                  "category", "category_id", "country", "country_id", "mentions", "confidence",
+                  "flags", "exists", "evidence", "note", "model"]
+ALTERNATIVE_COLUMNS = ["approve", "status", "authority_id", "title", "url", "kind", "current_alternatives",
+                       "alternatives", "mentions", "confidence", "flags", "evidence", "note", "model"]
+
+
+def split_names(text: str) -> List[str]:
+    """``"a | b"`` → ``["a", "b"]``, blanks dropped."""
+    return [n.strip() for n in (text or "").split("|") if n.strip()]
+
+
+def new_record_payload(row: Dict[str, str], props: Dict[str, int], *, type_value: Dict[str, Any],
+                       description_annotation: Optional[Dict[str, Any]],
+                       link_annotation: Optional[Dict[str, Any]], link_value) -> Dict[str, Any]:
+    """The whole item a ``plan_create.csv`` row becomes.
+
+    Class, template and item set of its kind; ``dcterms:type`` → Notice
+    d'autorité; title; each alternative once; the French description annotated
+    with the model that drafted it (unannotated when ``description_annotation``
+    is None, i.e. the curator rewrote it). The category becomes
+    ``dcterms:isPartOf``; the country becomes ``dcterms:isPartOf`` for a place,
+    as every place record carries it, and ``dcterms:spatial`` for a person or
+    an organisation. Both links carry ``iwac:nerModel`` → the reviewer.
+    ``link_value(id)`` builds a ``resource:item`` value.
+    """
+    kind = KINDS[row["kind"]]
+
+    def literal(term: str, text: str, **extra: Any) -> Dict[str, Any]:
+        return {"type": "literal", "property_id": props[term], "is_public": True, "@value": text, **extra}
+
+    def link(term: str, rid: int) -> Dict[str, Any]:
+        value = {**link_value(rid), "property_id": props[term]}
+        if link_annotation is not None:
+            value["@annotation"] = {LINK_MODEL_TERM: [dict(link_annotation)]}
+        return value
+
+    title = row["title"].strip()
+    item: Dict[str, Any] = {
+        "o:item_set": [{"o:id": kind.item_set_id}],
+        "o:resource_class": {"o:id": kind.resource_class_id},
+        "o:resource_template": {"o:id": kind.template_id},
+        "dcterms:title": [literal("dcterms:title", title)],
+        "dcterms:type": [{**type_value, "property_id": props["dcterms:type"]}],
+    }
+    seen = {normalize_name(title)}
+    for name in split_names(row.get("alternatives", "")):
+        if normalize_name(name) not in seen:
+            seen.add(normalize_name(name))
+            item.setdefault("dcterms:alternative", []).append(literal("dcterms:alternative", name))
+    description = (row.get("description_fr") or "").strip()
+    if description:
+        extra = {"@language": "fr"}
+        if description_annotation is not None:
+            extra["@annotation"] = {DESCRIPTION_MODEL_TERM: [dict(description_annotation)]}
+        item["dcterms:description"] = [literal("dcterms:description", description, **extra)]
+    if (row.get("category_id") or "").strip():
+        item.setdefault("dcterms:isPartOf", []).append(link("dcterms:isPartOf", int(row["category_id"])))
+    if (row.get("country_id") or "").strip():
+        term = "dcterms:isPartOf" if row["kind"] == "places" else "dcterms:spatial"
+        if row["kind"] in ("places", "persons", "organisations"):
+            item.setdefault(term, []).append(link(term, int(row["country_id"])))
+    return item

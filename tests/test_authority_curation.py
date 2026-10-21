@@ -461,3 +461,66 @@ def test_an_acronym_matches_as_written_not_as_a_word():
     text = "Leur foi est grande. Le FOI a organisé le pèlerinage."
     [snippet] = cc.find_snippets(text, ["FOI"], width=5)
     assert "FOI" in snippet and "foi est" not in snippet
+
+
+# --- NER leftovers: plans and new records --------------------------------------
+
+PROPS = {"dcterms:title": 1, "dcterms:alternative": 17, "dcterms:description": 4, "dcterms:type": 8,
+         "dcterms:isPartOf": 33, "dcterms:spatial": 40}
+ANNOTATION = {"type": "resource:item", "value_resource_id": 125443}
+
+
+def _payload(**row):
+    base = {"kind": "places", "title": "Région du Nord (Burkina Faso)", "alternatives": "",
+            "description_fr": "", "category_id": "", "country_id": ""}
+    return cc.new_record_payload({**base, **row}, PROPS, type_value={"value_resource_id": 67568},
+                                 description_annotation=ANNOTATION, link_annotation=ANNOTATION,
+                                 link_value=lambda rid: {"type": "resource:item", "value_resource_id": rid})
+
+
+def test_new_place_is_filed_with_its_country_as_parent():
+    item = _payload(alternatives="Yaadga | yaadga | Région du Nord (Burkina Faso)", country_id="546",
+                    description_fr="Région administrative du nord du Burkina Faso.")
+    assert item["o:item_set"] == [{"o:id": 268}] and item["o:resource_class"] == {"o:id": 9}
+    assert [v["@value"] for v in item["dcterms:alternative"]] == ["Yaadga"]
+    assert [v["value_resource_id"] for v in item["dcterms:isPartOf"]] == [546]
+    assert "dcterms:spatial" not in item
+    assert item["dcterms:isPartOf"][0]["@annotation"] == {"iwac:nerModel": [ANNOTATION]}
+    description = item["dcterms:description"][0]
+    assert description["@language"] == "fr" and description["@annotation"] == {"iwac:descriptionModel": [ANNOTATION]}
+
+
+def test_new_person_gets_country_as_spatial_and_category_as_parent():
+    item = _payload(kind="persons", title="Mohamed Bazoum", category_id="8990", country_id="540")
+    assert item["o:item_set"] == [{"o:id": 266}]
+    assert [v["value_resource_id"] for v in item["dcterms:isPartOf"]] == [8990]
+    assert [v["value_resource_id"] for v in item["dcterms:spatial"]] == [540]
+
+
+def test_curator_rewrite_is_not_stamped_with_the_model():
+    create = _load("07_create.py")
+    row = {"model": "claude-haiku-5-5", "description_fr": "Texte revu.", "draft_fr": "Texte du modèle."}
+    assert not create.is_model_text(row)
+    assert create.is_model_text({**row, "draft_fr": "Texte revu."})
+
+
+def test_plan_holds_back_what_may_exist_and_never_preapproves_merges():
+    plan = _load("06_ner_plan.py")
+    categories, countries = plan.label_maps([
+        {"o:id": 546, "o:title": "Burkina Faso",
+         "dcterms:isPartOf": [{"value_resource_id": 15835, "display_title": "Pays"}]},
+        {"o:id": 901, "o:title": "Roch Marc Christian Kaboré",
+         "dcterms:isPartOf": [{"value_resource_id": 8990, "display_title": "Politicien.ne"}]},
+    ])
+    assert countries == {"burkina faso": 546} and categories["politicien.ne"] == 8990
+    new = [{"type": "person", "titre proposé": "Ousmane Bougouma", "alternatifs": "", "catégorie": "Politicien.ne",
+            "pays": "Burkina Faso", "mentions": 59, "confiance": "high", "existe déjà ?": ""},
+           {"type": "place", "titre proposé": "Turquie", "alternatifs": "", "catégorie": "Pays", "pays": "",
+            "mentions": 16, "confiance": "high", "existe déjà ?": "545 Turquie (place)"}]
+    rows = plan.create_rows(new, categories, countries)
+    assert rows[0]["approve"] == "yes" and rows[0]["category_id"] == 8990 and rows[0]["country_id"] == 546
+    assert rows[1]["approve"] == "" and rows[1]["status"].startswith("check")
+    merges = plan.merge_rows([{"id A": 15171, "titre A": "Barkhane", "type A": "stub",
+                               "id B": 65, "titre B": "Opération Barkhane", "type B": "subject",
+                               "vraisemblance": "plausible", "note": ""}])
+    assert merges[0]["survivor_id"] == 65 and merges[0]["loser_id"] == 15171 and merges[0]["approve"] == ""

@@ -15,6 +15,28 @@ by the curator, not by an agent.
 | `03_apply.py` | yes | Writes approved descriptions (`fr` + `en`), role links and Wikidata identifiers |
 | `04_merge.py` | yes | Repoints every link from an approved loser to its survivor and keeps the loser's names as alternatives |
 | `05_sort.py` | yes | Files approved stubs from "Notices d'autorités à traiter" (set 12826): class, template, item set, `dcterms:type`, cleaned title, alternatives, person dates |
+| `06_ner_plan.py` | no | Turns a review of `AI_NER` leftovers (`proposals.json`) into plans for 03, 04, 05 and 07 |
+| `07_create.py` | yes | Creates approved new records and adds approved alternative names to existing ones |
+
+## NER leftovers
+
+The entities `AI_NER/02` could not reconcile are reviewed outside this folder:
+the `iwac-data` skill's `scripts/ner_leftovers/` clusters them, Haiku 5.5
+reviewers judge each cluster from article snippets, and the result is a
+curator workbook plus `proposals.json`. `06_ner_plan.py --proposals … --label
+<country>` writes a run folder with six plans. New records and alternatives
+are pre-approved unless flagged; a proposal whose title may already exist is
+held back, and no merge is ever pre-approved. Apply them in order:
+`05_sort.py` (stubs), `03_apply.py` (their descriptions and categories),
+`07_create.py` (new records, alternatives), then `04_merge.py` once the
+curator has approved merges.
+
+A new record's French description is annotated `iwac:descriptionModel` unless
+the curator rewrote it, and its category and country links `iwac:nerModel`.
+A ministry, a region or a national body with a generic name carries its
+country in the title — "Ministère de la Santé (Burkina Faso)" — because the
+reconciler matches names regardless of country; the review applies that rule
+before the plan is built.
 
 Records without a Wikidata item are offered candidates from the Wikidata API
 (`wikidata.py`, answers cached in `output/wikidata_cache.json`); the reviewer
