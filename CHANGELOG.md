@@ -59,6 +59,14 @@ the changelog tells stories.
   126862), the father's three names from 69261 Mahamat Idriss Déby Itno (he is
   13546), and "Ministère de la Justice et des Droits humains" from 126362
   (it is 126319's title). Backups in the run folder's `backups/`.
+- The national Hajj bodies, which share names and the acronym CNOPM across
+  countries, qualified by country the same day: 579 and 665 and 753 "(Burkina
+  Faso)", 23540 and 63449 "(Côte d'Ivoire)" (was "(CI)"), 26349 "(Togo)", and
+  their colliding names with them ("CNOPM (Burkina Faso)", "CNOPM (Côte
+  d'Ivoire)", "CNP (Burkina Faso)", "CNH (Togo)"). 781 already says "au Bénin".
+  654, a second Burkinabè "CNOPM" record most of whose 32 articles come from
+  Ivorian and Beninese papers, is left for an article-by-article review.
+  Backups in `AI_authority_curation/output/hajj_bodies_backup/`.
 
 ### 2026-10-20 — NER reconciliation finds records under another word order, number or set
 
