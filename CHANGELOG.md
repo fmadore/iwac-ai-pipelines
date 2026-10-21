@@ -74,8 +74,13 @@ the changelog tells stories.
   665, one to the AMOP (46321); stubs 28033, 14111 and 13115 merged into
   26349, 579 and 781; stub 27663 filed as "Commission nationale
   d'organisation du Hadj (Togo)", the 1996 body that preceded the 2008 CNH.
-  Left for the curator: 654's other 17 articles, eight of them on Bénin's
-  state pilgrimage committee of 1972–1983, which has no record yet.
+  The curator deleted the three merged stubs. Created 127882 "Comité
+  national d'organisation du pèlerinage à la Mecque (Bénin)" — the
+  Dahomeyan, then Beninese, state committee chaired by the Interior minister
+  (1972–1981) and the Foreign minister (1982–1983), its description and
+  country link annotated Claude Opus 5.5 — and moved the seven Daho-Express
+  and Ehuzu articles of 1972–1983 from 654 to it. 654 keeps ten links for the
+  curator to decide.
 
 ### 2026-10-20 — NER reconciliation finds records under another word order, number or set
 
