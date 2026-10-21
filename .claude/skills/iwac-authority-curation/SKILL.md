@@ -238,6 +238,10 @@ Dry run each before its live run, as separate invocations. Things the
   survived and the filed stub's description was copied over.
 - A merged loser keeps its names until the curator deletes it, so those names
   stay ambiguous to the reconciler — and unlinked — until then.
+- `04_merge.py` copies the loser's names to the survivor as written, so a
+  merge into a country-qualified record can bring a bare generic name back
+  ("Comité pour le Pèlerinage de la Mecque 1973" onto the Bénin committee).
+  Read the survivor's alternatives after the merge and qualify such names.
 
 ## After a pass
 

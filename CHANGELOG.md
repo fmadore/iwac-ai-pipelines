@@ -80,7 +80,9 @@ the changelog tells stories.
   (1972–1981) and the Foreign minister (1982–1983), its description and
   country link annotated Claude Opus 5.5 — and moved the seven Daho-Express
   and Ehuzu articles of 1972–1983 from 654 to it. 654 keeps ten links for the
-  curator to decide.
+  curator to decide. Stub 14112 "Comité pour le Pèlerinage de la Mecque 1973"
+  (one article, 1974) merged into 127882; the name the merge carried over
+  was qualified to "Comité pour le Pèlerinage de la Mecque (Bénin)".
 
 ### 2026-10-20 — NER reconciliation finds records under another word order, number or set
 
