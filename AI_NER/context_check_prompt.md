@@ -34,7 +34,13 @@ Rules:
   contradicts the text. Descriptions are written today, the articles may be
   decades old: "ancien président", "former secretary general" in a
   description does not contradict an article in which the person still holds
-  the post. Only a different role, country or field is a contradiction.
+  the post. Careers change and people hold several posts: a minister becomes
+  prime minister, an abbé becomes bishop, a coordinator becomes president,
+  one man heads a travel agency and a pilgrimage committee. A role the
+  description does not mention is NOT a contradiction. Only a different
+  country, an incompatible calling (a Catholic priest is not an imam), or
+  dates that cannot fit (a priest born in 1984 cannot have led a movement in
+  1973) are.
 - The journalist who signed the article, the news agency that relayed it
   ("selon l'AIB", "(AIB)") and a page header are not subjects: null. A party,
   association, ministry or official whose statement or communiqué the article

@@ -9,6 +9,17 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-22 — Gemini Transcribe loops collapsed by speaking rate
+
+- `AI_audio_summary/02c` gains `collapse_loops()`: a run of at least 20 words
+  repeated faster than 10 words a second is cut to one copy and `[…]` before
+  the text body is built. Raw words stay in the sidecar; collapses are listed
+  under `collapsed_loops` and counted in the header.
+- Found on the first recording of item set 2184 (Hausa sermon VCDs): item
+  15852's third segment repeated one phrase 651 times at 38.8 words a second,
+  over noise and near-silent audio, and step 03 would have uploaded it as
+  `bibo:content`. Every genuine repetition in the same item ran under 9.
+
 ### 2026-10-21 — NER links checked against their article
 
 - New `AI_NER/02b_context_check.py`: one model call per article decides,
@@ -24,6 +35,23 @@ the changelog tells stories.
   article was its communiqué. The prompt now says descriptions are written
   today, and that only the article's journalist, agency and page header are
   bylines.
+- 2026-10-22, full run over the 8,045 Burkinabè articles: 87,450 matches
+  kept, 2,656 dropped, 426 fuzzy and 38 ambiguous terms linked. The drops
+  included all 182 links of the word "foi" to the Front de la Oumma
+  Islamique (FOI) and Ivorian person records taken for Burkinabè namesakes,
+  but also people whose description named another post than the article
+  (Tertius Zongo as finance minister, Léopold Ouédraogo as abbé). The prompt
+  now says a role the description does not mention is no contradiction —
+  only another country, an incompatible calling or impossible dates are —
+  and `--recheck-dropped` re-checks only the articles where something was
+  dropped.
+- Written the same day: five Burkinabè persons distinct from their Ivorian
+  namesakes — 127886 Kassoum Coulibaly (defence minister), 127891 Mamadou
+  Traoré (colonel), 127895 Boukary Savadogo (ambassador in Riyadh, not the
+  scholar 1295), 127898 Mamadou Coulibaly (ambassador in Rabat), 127901
+  Yacouba Traoré (imam, Poni) — with descriptions and links annotated Claude
+  Opus 5.5; and 125817 Moussa Kouanda's description now names both his CMBF
+  and his FAIB presidencies.
 
 ### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
 

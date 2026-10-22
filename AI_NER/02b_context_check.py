@@ -225,6 +225,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--force", action="store_true", help="Discard decisions made under another model/prompt")
+    parser.add_argument("--recheck-dropped", action="store_true",
+                        help="After a prompt change: re-check only the articles where a link was dropped, "
+                             "keeping every other decision")
     args = parser.parse_args(argv)
 
     input_path: Path = args.input
@@ -273,15 +276,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     out_csv = input_path.with_name(f"{input_path.stem}_checked.csv")
     journal_path = out_csv.with_suffix(".decisions.jsonl")
     run = model_context(option, config)
+    # --recheck-dropped adopts the new prompt for the run while keeping the
+    # decisions that dropped nothing: a prompt change that only narrows when a
+    # link may be dropped cannot change a "keep".
     JsonCheckpoint.open(out_csv.with_suffix(".checkpoint.json"),
                         {"pipeline": "ner-context-check-v1", **run, "prompt_sha256": sha256_text(prompt)},
-                        reset=args.force)
+                        reset=args.force or args.recheck_dropped)
     if args.force and journal_path.exists():
         journal_path.unlink()
     done: Dict[str, Dict[str, Any]] = {}
     if journal_path.exists():
         for line in journal_path.read_text(encoding="utf-8").splitlines():
             record = json.loads(line)
+            if args.recheck_dropped and any(o["change"] == "drop" for o in record["outcomes"]):
+                done.pop(str(record["o:id"]), None)
+                continue
             done[str(record["o:id"])] = record
 
     llm = build_llm_client(option, config=config)
