@@ -277,6 +277,7 @@ are in [`serving/README.md`](../serving/README.md).
 ```bash
 python AI_sentiment_analysis/02_pilot_new_panel.py --sample-size 200 --seed 42
 python AI_sentiment_analysis/02_pilot_new_panel.py --models qwen3_8_27b_openrouter --sample-size 50
+python AI_sentiment_analysis/02_pilot_new_panel.py --models claude_haiku_5_5 --sample-size 200 --seed 42
 python AI_sentiment_analysis/02_pilot_new_panel.py --repeats 3 --sample-size 50
 python AI_sentiment_analysis/03_pilot_report.py
 ```
@@ -289,8 +290,16 @@ model whose credentials are missing is skipped and named. An interrupted pilot
 resumes only when it is re-run with the same `--output` path, because the
 default name carries a timestamp.
 
-The only candidate now is Qwen3.8 27B's OpenRouter twin, which measures the
-route against the self-hosted member; it must never be promoted beside it.
+Two candidates now:
+
+- **Claude Haiku 5.5** (`claude-haiku-5-5`, Anthropic Messages API), Anthropic's
+  high-volume tier and a lab no member shares. It is sent the panel's `medium`,
+  a real rung of its `output_config.effort` ladder (low / medium / high / xhigh
+  / max), so it would join Luna and Qwen3.8 at a genuine middle setting. Its
+  authority item is 125443; promoting it needs its six `iwac:claudeHaiku55*`
+  properties uploaded first (see below).
+- **Qwen3.8 27B's OpenRouter twin**, which measures the route against the
+  self-hosted member; it must never be promoted beside it.
 
 `03` reports, per dimension, each model's agreement with the majority of the
 *other* members (leave-one-out), pairwise Cohen's κ, and with `--repeats` > 1
@@ -380,6 +389,7 @@ OMEKA_KEY_CREDENTIAL=your_key_credential
 OPENAI_API_KEY=...        # GPT-5.6 Luna
 MISTRAL_API_KEY=...       # Mistral Small 4
 OPENROUTER_API_KEY=...    # Gemma 4 31B and DeepSeek V4 Flash 0731
+ANTHROPIC_API_KEY=...     # Claude Haiku 5.5 (pilot candidate)
 
 # Only to annotate with Qwen3.8 on your own server (see serving/README.md).
 # Writing its imported answers with --from-cache needs neither.

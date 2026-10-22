@@ -289,15 +289,21 @@ PANEL: Dict[str, PanelMember] = {
 #: Omeka authority item exists: the record comes first, then the code that
 #: cites it.
 #:
-#: The remaining candidate is Qwen3.8 27B's OpenRouter twin. The same weights
-#: are in :data:`PANEL` on the self-hosted route; running both on one sample
-#: measures the route (latency, structured-output reliability, whether the
-#: middle reasoning rung survives a third-party backend). It must never be
-#: promoted beside the self-hosted member — one model counted twice measures
-#: routing, not the construct.
+#: Two candidates:
+#:
+#: * Claude Haiku 5.5, Anthropic's high-volume tier and a lab no member
+#:   shares, so it fits the membership rules above as a sixth voice.
+#: * Qwen3.8 27B's OpenRouter twin. The same weights are in :data:`PANEL` on
+#:   the self-hosted route; running both on one sample measures the route
+#:   (latency, structured-output reliability, whether the middle reasoning
+#:   rung survives a third-party backend). It must never be promoted beside
+#:   the self-hosted member — one model counted twice measures routing, not
+#:   the construct.
 PILOT_CANDIDATES: Dict[str, PanelMember] = {
     m.key: m
     for m in (
+        PanelMember("claude_haiku_5_5", "claude-haiku-5-5",
+                    "Claude Haiku 5.5", "claudeHaiku55"),
         PanelMember("qwen3_8_27b_openrouter", "qwen3.8-27b-openrouter",
                     "Qwen3.8 27B (OpenRouter)", "qwen3827bOr"),
     )
@@ -307,9 +313,10 @@ PILOT_CANDIDATES: Dict[str, PanelMember] = {
 #: because the vendors split on naming (Gemini ``thinking_level``, the rest
 #: ``reasoning_effort``); each client reads only its own.
 #:
-#: Only GPT-5.6 Luna and Qwen3.8 accept a genuine middle; Gemma 4, DeepSeek
-#: 0731 and Mistral Small 4 have no such rung and are rounded up to ``high``
-#: (:data:`PANEL_REASONING_OVERRIDES`). That is a real limit on comparability
+#: Only GPT-5.6 Luna and Qwen3.8 accept a genuine middle (so does the
+#: candidate Claude Haiku 5.5, whose ``output_config.effort`` runs low … max);
+#: Gemma 4, DeepSeek 0731 and Mistral Small 4 have no such rung and are rounded
+#: up to ``high`` (:data:`PANEL_REASONING_OVERRIDES`). That is a real limit on comparability
 #: and belongs in any write-up. Gemma's depth through OpenRouter is on/off
 #: rather than graduated — read it as requested, never as measured. The
 #: levels each API accepts, and when they were verified: CHANGELOG.md.
@@ -338,8 +345,8 @@ _ROUNDED_UP_REASONING: Dict[str, str] = {
     "gemma_4_31b_it": "high (model has only MINIMAL|HIGH; medium rounded up)",
 }
 #: Covers candidates too, so a pilot manifest records the same fact production
-#: does. Qwen3.8 is absent from ``_ROUNDED_UP_REASONING`` on purpose: its ladder
-#: has a real middle rung, which is most of why it is being piloted.
+#: does. Qwen3.8 and Claude Haiku 5.5 are absent from ``_ROUNDED_UP_REASONING``
+#: on purpose: both ladders have a real middle rung.
 PANEL_REASONING_EFFECTIVE: Dict[str, str] = {
     key: _ROUNDED_UP_REASONING.get(key, "medium")
     for key in {**PANEL, **PILOT_CANDIDATES}

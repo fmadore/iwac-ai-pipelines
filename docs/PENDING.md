@@ -38,6 +38,21 @@ the video summary). The steps below are in order: each depends on the one before
    `tests/test_summary_annotation.py` fails if a stamping tier gets a model
    with no authority item.
 
+## Claude Haiku 5.5 in the sentiment panel
+
+A pilot candidate since 2026-10-22 (`claude_haiku_5_5` in
+`AI_sentiment_analysis/sentiment_core.PILOT_CANDIDATES`). In order:
+
+1. **Pilot it.** `02_pilot_new_panel.py --models claude_haiku_5_5
+   --sample-size 200 --seed 42`, then a `--repeats 3` run for
+   self-consistency, and `03_pilot_report.py`. Needs `ANTHROPIC_API_KEY`.
+   Record latency, cost per article (thinking tokens included) and agreement
+   in `PANEL_RECORD.md`.
+2. **Promote, if the pilot supports it.** Move the member into `PANEL`, emit
+   and `--verify` the six `iwac:claudeHaiku55*` properties, upload the
+   vocabulary, then run `01` with `--models claude_haiku_5_5`. Update the
+   README's panel and reasoning tables.
+
 ## Authority curation: before and after the first live pass
 
 1. **Upload IWAC vocabulary v1.5.** It adds `iwac:descriptionModel`;
