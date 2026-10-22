@@ -156,7 +156,7 @@ def test_every_member_has_a_declared_effective_reasoning_depth():
 def test_claude_haiku_is_sent_the_panel_middle_rung():
     # Haiku 5.5's effort ladder has a real ``medium``, so the panel's request
     # reaches the API unchanged and the manifest may say so.
-    option = MODEL_REGISTRY[PILOT_CANDIDATES["claude_haiku_5_5"].registry_key]
+    option = MODEL_REGISTRY[PANEL["claude_haiku_5_5"].registry_key]
     requested = panel_reasoning("claude_haiku_5_5")["reasoning_effort"]
     assert resolve_reasoning_effort(option, requested) == "medium"
     assert PANEL_REASONING_EFFECTIVE["claude_haiku_5_5"] == "medium"
@@ -472,6 +472,7 @@ def test_cache_is_granular_to_the_model(tmp_path, good_result):
     reloaded.load()
     assert reloaded.missing_models(1, PANEL) == [
         "mistral_small_2603", "deepseek_v4_flash_0731", "qwen3_8_27b",
+        "claude_haiku_5_5",
     ]
 
 

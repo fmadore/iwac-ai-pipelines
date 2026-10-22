@@ -40,18 +40,24 @@ the video summary). The steps below are in order: each depends on the one before
 
 ## Claude Haiku 5.5 in the sentiment panel
 
-A pilot candidate since 2026-10-22 (`claude_haiku_5_5` in
-`AI_sentiment_analysis/sentiment_core.PILOT_CANDIDATES`). In order:
+In `PANEL` since 2026-10-22, promoted without a pilot; nothing annotated yet.
+In order:
 
-1. **Pilot it.** `02_pilot_new_panel.py --models claude_haiku_5_5
-   --sample-size 200 --seed 42`, then a `--repeats 3` run for
-   self-consistency, and `03_pilot_report.py`. Needs `ANTHROPIC_API_KEY`.
-   Record latency, cost per article (thinking tokens included) and agreement
-   in `PANEL_RECORD.md`.
-2. **Promote, if the pilot supports it.** Move the member into `PANEL`, emit
-   and `--verify` the six `iwac:claudeHaiku55*` properties, upload the
-   vocabulary, then run `01` with `--models claude_haiku_5_5`. Update the
-   README's panel and reasoning tables.
+1. **Upload its properties.** Add the output of
+   `AI_sentiment_analysis/00_setup_properties.py --emit-ttl` to
+   `iwac-vocabulary.ttl`, run `--verify`, then Admin → Vocabularies → IWAC
+   Ontology → Update. Until then `01` stops at startup ("Vocabulary not
+   ready") whenever Haiku is in the run, and with `ANTHROPIC_API_KEY` set a
+   run with no `--models` includes it: scope other members' runs with
+   `--models` until this is done.
+2. **Annotate the corpus.** `01_sentiment_analysis.py --resource-class-id 36
+   --models claude_haiku_5_5 --dry-run` on a small `--limit` first. Needs
+   `ANTHROPIC_API_KEY`. Record latency, cost per article (thinking tokens
+   included) and the wall clock in `PANEL_RECORD.md`, and set its coverage in
+   the README's panel table.
+3. **Measure what the pilot would have.** `02_pilot_new_panel.py --repeats 3
+   --sample-size 50` and `03_pilot_report.py` for its agreement and
+   self-consistency, before a write-up leans on it.
 
 ## Authority curation: before and after the first live pass
 

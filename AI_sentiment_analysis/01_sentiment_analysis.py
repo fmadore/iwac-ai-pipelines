@@ -5,7 +5,7 @@
 
 AI Sentiment Analysis Pipeline for IWAC Omeka S Items — generation 2.
 
-Annotates items with the five-model panel defined in ``sentiment_core.PANEL``
+Annotates items with the six-model panel defined in ``sentiment_core.PANEL``
 and writes the results to Omeka, each model into its own six properties named
 for that model.
 
@@ -43,7 +43,7 @@ concurrent structured requests without one rejection, so the parallelism is free
 
 Concurrency multiplies with the per-item model fan-out. Running the panel one
 member at a time — the normal mode — keeps in-flight requests equal to
-``--concurrency``; running the whole panel multiplies it by five.
+``--concurrency``; running the whole panel multiplies it by six.
 
 Resuming
 --------
@@ -66,7 +66,7 @@ One model at a time
 -------------------
 ``--models`` restricts a run to part of the panel, and this is a first-class
 mode rather than a degraded one. Each member writes to its own six properties,
-so running them one after another builds the same result as running all five at
+so running them one after another builds the same result as running all six at
 once — with a much smaller blast radius per run, and a clean read on one model's
 cost and failure rate before committing to the next.
 
@@ -309,7 +309,7 @@ def build_property_values(
     per item, that no query could ever reach.
 
     This is also why the panel keeps six model-keyed properties per member —
-    thirty across the five — instead of six multi-valued ones. The tidier design — one ``iwac:polarite`` holding a
+    thirty-six across the six — instead of six multi-valued ones. The tidier design — one ``iwac:polarite`` holding a
     value per model — puts the only thing distinguishing those values in the
     unsearchable layer, so "polarité = Négatif according to DeepSeek" stops
     being answerable by query at all.

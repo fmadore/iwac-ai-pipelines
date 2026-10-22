@@ -1,7 +1,7 @@
 # AI Sentiment Analysis Pipeline
 
 Annotates how French- and English-language West African press articles treat
-Islam and Muslims, with a panel of five language models working as independent
+Islam and Muslims, with a panel of six language models working as independent
 annotators. Each model's answers are stored in Omeka under properties named for
 that model, so every value says which model produced it.
 
@@ -63,15 +63,18 @@ cache keys and the pilot are all derived from it.
 | Mistral Small 4 | `mistral-small-2603`, Mistral | `iwac:mistralSmall2603*` | 79614 | `mistral_small_2603_` | 12,298 |
 | DeepSeek V4 Flash 0731 | `deepseek/deepseek-v4-flash-0731`, OpenRouter | `iwac:deepseekV4Flash0731*` | 83261 | `deepseek_v4_flash_0731_` | 12,298 |
 | Qwen3.8 27B | `Qwen/Qwen3.8-27B`, self-hosted vLLM | `iwac:qwen3827b*` | 111933 | `qwen3_8_27b_` | 12,098 |
+| Claude Haiku 5.5 | `claude-haiku-5-5`, Anthropic | `iwac:claudeHaiku55*` | 125443 | `claude_haiku_5_5_` | 0 |
 
 Coverage is the number of articles carrying the member's values on the live
 archive, read on 6 October 2026. The four API members cover every eligible
 article. Qwen3.8 covers 12,098 of the 12,251 articles in its input and stays
 there by decision: the 153 it never annotated concentrate on articles where
 Islam is marginal, so **its missing subjectivité is not missing at random**
-([details](PANEL_RECORD.md#corpus-pass)).
+([details](PANEL_RECORD.md#corpus-pass)). Claude Haiku 5.5 joined on
+2026-10-22 without a pilot and has not yet run; its properties need the
+vocabulary upload first (see [Adding a model](#adding-a-model-to-the-panel)).
 
-### Why these five
+### Why these six
 
 - **Every member is its vendor's high-volume tier**, so the panel is a set of
   readings of the construct rather than a quality ladder. The Google slot held
@@ -85,7 +88,7 @@ Islam is marginal, so **its missing subjectivité is not missing at random**
   because Google serves it on the Gemini API only on a free tier whose content
   Google uses. Qwen3.8 is the self-hosted run; the same weights on OpenRouter
   are a separate registry key and a pilot candidate only.
-- **Four of the five are open weights** (Gemma, Mistral Small 4, DeepSeek,
+- **Four of the six are open weights** (Gemma, Mistral Small 4, DeepSeek,
   Qwen), so their annotations can in principle be re-run from archived weights.
   Gemma and DeepSeek reached the panel through OpenRouter at whatever
   quantization the chosen backend served, which qualifies that claim.
@@ -95,7 +98,7 @@ agreement figure partly measures model size; a write-up should say so.
 
 ### Reasoning depth
 
-The panel asks every member for a middle reasoning setting, and only two have
+The panel asks every member for a middle reasoning setting, and only three have
 one. The others are sent `high`, explicitly, in `PANEL_REASONING_OVERRIDES` or
 by the Mistral client's documented rounding, so that a run records a decision
 rather than a fallback.
@@ -104,16 +107,18 @@ rather than a fallback.
 |---|---|---|
 | GPT-5.6 Luna | none / low / medium / high / xhigh / max | `medium` |
 | Qwen3.8 27B | low / medium / xhigh | `medium` |
+| Claude Haiku 5.5 | low / medium / high / xhigh / max | `medium` |
 | Gemma 4 31B | minimal / high | `high` |
 | DeepSeek V4 Flash 0731 | low / high / max | `high` |
 | Mistral Small 4 | none / high | `high` |
 
-So **two of five sit at a genuine middle setting and three are rounded up**,
+So **three of six sit at a genuine middle setting and three are rounded up**,
 which is a real limit on comparability. Through OpenRouter Gemma's reasoning is
 on/off rather than graduated, so read its depth as requested, never as
 measured. Temperature is not standardised: it is vendor-owned in
 `MODEL_REGISTRY` (1.0 for DeepSeek and Qwen, 0.3 for Mistral Small 4, unset for
-Gemma and Luna). Without a self-consistency figure from `02 --repeats`, a
+Gemma, Luna and Haiku, whose API rejects any but the default). Without a
+self-consistency figure from `02 --repeats`, a
 low-agreement high-temperature model cannot be told apart from noise.
 
 ## Provenance
@@ -200,7 +205,7 @@ python AI_sentiment_analysis/01_sentiment_analysis.py --resource-class-id 36 \
 ```
 
 `--concurrency` multiplies with the per-item fan-out: one member keeps that many
-requests in flight, the whole panel five times as many. Measured wall clocks
+requests in flight, the whole panel six times as many. Measured wall clocks
 range from 2.7 h (Luna) to 31.5 h (DeepSeek) per corpus pass at the default
 ([table](PANEL_RECORD.md#throughput)).
 
@@ -277,7 +282,6 @@ are in [`serving/README.md`](../serving/README.md).
 ```bash
 python AI_sentiment_analysis/02_pilot_new_panel.py --sample-size 200 --seed 42
 python AI_sentiment_analysis/02_pilot_new_panel.py --models qwen3_8_27b_openrouter --sample-size 50
-python AI_sentiment_analysis/02_pilot_new_panel.py --models claude_haiku_5_5 --sample-size 200 --seed 42
 python AI_sentiment_analysis/02_pilot_new_panel.py --repeats 3 --sample-size 50
 python AI_sentiment_analysis/03_pilot_report.py
 ```
@@ -290,16 +294,8 @@ model whose credentials are missing is skipped and named. An interrupted pilot
 resumes only when it is re-run with the same `--output` path, because the
 default name carries a timestamp.
 
-Two candidates now:
-
-- **Claude Haiku 5.5** (`claude-haiku-5-5`, Anthropic Messages API), Anthropic's
-  high-volume tier and a lab no member shares. It is sent the panel's `medium`,
-  a real rung of its `output_config.effort` ladder (low / medium / high / xhigh
-  / max), so it would join Luna and Qwen3.8 at a genuine middle setting. Its
-  authority item is 125443; promoting it needs its six `iwac:claudeHaiku55*`
-  properties uploaded first (see below).
-- **Qwen3.8 27B's OpenRouter twin**, which measures the route against the
-  self-hosted member; it must never be promoted beside it.
+The only candidate now is Qwen3.8 27B's OpenRouter twin, which measures the
+route against the self-hosted member; it must never be promoted beside it.
 
 `03` reports, per dimension, each model's agreement with the majority of the
 *other* members (leave-one-out), pairwise Cohen's κ, and with `--repeats` > 1
@@ -389,7 +385,7 @@ OMEKA_KEY_CREDENTIAL=your_key_credential
 OPENAI_API_KEY=...        # GPT-5.6 Luna
 MISTRAL_API_KEY=...       # Mistral Small 4
 OPENROUTER_API_KEY=...    # Gemma 4 31B and DeepSeek V4 Flash 0731
-ANTHROPIC_API_KEY=...     # Claude Haiku 5.5 (pilot candidate)
+ANTHROPIC_API_KEY=...     # Claude Haiku 5.5
 
 # Only to annotate with Qwen3.8 on your own server (see serving/README.md).
 # Writing its imported answers with --from-cache needs neither.
