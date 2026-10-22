@@ -14,7 +14,8 @@ Omeka S items → AI entity extraction → Authority reconciliation → Database
 
 1. **Extract** (`01_NER_AI.py`): AI identifies persons, organizations, locations, and subjects
 2. **Reconcile** (`02_NER_reconciliation_Omeka.py`): Match entities against existing authority records
-3. **Update** (`03_Omeka_update.py`): Link reconciled entities back to Omeka S items
+3. **Check in context** (`02b_context_check.py`, optional): a model reads each article and keeps, drops or settles every link
+4. **Update** (`03_Omeka_update.py`): Link reconciled entities back to Omeka S items
 
 ## Quick Start
 
@@ -30,6 +31,10 @@ python 01_NER_AI.py --country "Burkina Faso" --model claude-haiku-5-5 --async
 
 # Match against authority records (newest CSV in output/, or --input)
 python 02_NER_reconciliation_Omeka.py
+
+# Optional: check every link against its article (a 100-article pilot first)
+python 02b_context_check.py --input output/x_reconciled.csv --limit 100
+python 02b_context_check.py --input output/x_reconciled.csv
 
 # Preview the Omeka writes — no PATCH is sent
 python 03_Omeka_update.py --dry-run
@@ -138,6 +143,31 @@ Before reconciliation, you may want to manually review the AI-extracted entities
 - Export a clean CSV with only validated entities
 
 This step is optional but recommended for quality control, especially when working with new document types or testing different AI models.
+
+## Checking links in context
+
+Step 02 matches by name alone, so a shared name is taken for one entity: three
+persons called Abdoulaye Ouédraogo, six countries' health ministries, a
+village and the clashes named after it. `02b_context_check.py` sends the model
+one call per article with its text and every entry step 02 produced — the
+match it made, the candidates of an ambiguous term, the fuzzy candidates of an
+unreconciled one — each with the record's type, country and description. The
+model returns, per entry, one of the offered ids or none; any other id is
+refused. The rules it follows are `context_check_prompt.md`.
+
+It writes `*_reconciled_checked.csv` (same columns; pass it to `03` with
+`--input`, and its provenance still traces to the NER checkpoint) and
+`*_context_decisions.csv`, one row per entry with the model's reason. With
+`--limit` the checked CSV holds only the sample, so a pilot cannot be written
+in place of the full run. Decisions are journalled, so a re-run resumes.
+
+The 100-article pilot of 2026-10-21 (Burkinabè run, Haiku 5.5): of 950
+matches 930 kept and 20 dropped — "Foi" the word read as the Front de la Oumma
+Islamique, the Mouhoun river as the region, Kuwait's foreign ministry as
+Burkina's, bylines, a hallucinated "Niger", themes the text never treats —
+and 7 fuzzy terms linked (EIGS, Balai Citoyen, Médine). About $0.08 and one
+minute per 100 articles with 8 workers. Generic themes (Santé, Sécurité) are
+the decisions that vary between runs.
 
 ## Limitations
 

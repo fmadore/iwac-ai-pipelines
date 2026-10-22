@@ -9,6 +9,22 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-21 — NER links checked against their article
+
+- New `AI_NER/02b_context_check.py`: one model call per article decides,
+  for every entry step 02 produced, which offered record the article means,
+  or none. It cannot introduce an id it was not offered. Writes
+  `*_reconciled_checked.csv` for `03` and a decisions log; resumable.
+- `common/reconciliation.py` gains `resolve_term()` (the candidates of an
+  ambiguous term); `reconciliation_cli.build_dictionaries()` is shared with
+  02b so both see the same matches; `provenance_model_key()` follows
+  `*_reconciled_checked.csv` back to the NER checkpoint.
+- The pilot's first prompt dropped Souleymane Compaoré and Abdou Rasmané
+  Sana because their descriptions say "former", and the UPC because the
+  article was its communiqué. The prompt now says descriptions are written
+  today, and that only the article's journalist, agency and page header are
+  bylines.
+
 ### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
 
 - `build_authority_dict(country=)` also keys a title or alternative ending in

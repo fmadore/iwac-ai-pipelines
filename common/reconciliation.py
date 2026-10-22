@@ -522,20 +522,35 @@ def _value_key_tiers(value: str) -> Tuple[Tuple[str, ...], ...]:
     return _value_variants(value), (token_order_key(value),), (plural_fold_key(value),)
 
 
+def resolve_term(
+    value: str,
+    authority_dict: Dict[str, str],
+    ambiguous_authority_dict: Dict[str, List[str]],
+) -> Tuple[Optional[str], List[str]]:
+    """(item id, []) or (None, the ids it is ambiguous between) or (None, []).
+
+    The first key tier that knows *value* decides, exactly as reconciliation
+    does; ``AI_NER/02b`` uses the candidates to let a model choose in context.
+    """
+    for tier in _value_key_tiers(value):
+        keys = [key for key in tier if key]
+        ambiguous = [key for key in keys if key in ambiguous_authority_dict]
+        if ambiguous:
+            return None, sorted({i for key in ambiguous for i in ambiguous_authority_dict[key]})
+        for key in keys:
+            if key in authority_dict:
+                return authority_dict[key], []
+    return None, []
+
+
 def _lookup(
     value: str,
     authority_dict: Dict[str, str],
     ambiguous_authority_dict: Dict[str, List[str]],
 ) -> Tuple[Optional[str], bool]:
     """(item id, ambiguous) from the first key tier that knows *value*."""
-    for tier in _value_key_tiers(value):
-        keys = [key for key in tier if key]
-        if any(key in ambiguous_authority_dict for key in keys):
-            return None, True
-        for key in keys:
-            if key in authority_dict:
-                return authority_dict[key], False
-    return None, False
+    item_id, candidates = resolve_term(value, authority_dict, ambiguous_authority_dict)
+    return item_id, bool(candidates)
 
 
 def _reconcile_value(

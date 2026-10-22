@@ -168,6 +168,8 @@ def provenance_model_key(reconciled_csv: str | Path) -> str | None:
     """
     reconciled_csv = Path(reconciled_csv)
     stem, suffix = reconciled_csv.stem, reconciled_csv.suffix
+    # ``AI_NER/02b`` writes ``*_reconciled_checked.csv``: same lineage.
+    stem = stem.removesuffix("_checked")
     if not stem.endswith("_reconciled"):
         return None
     source = reconciled_csv.with_name(stem[: -len("_reconciled")] + suffix)
