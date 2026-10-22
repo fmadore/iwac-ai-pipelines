@@ -9,6 +9,18 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-22 — Acronyms match only in capitals
+
+- `build_authority_dict(acronyms_need_capitals=)`: a name of 2–6 capitals
+  (dots allowed) gets only a case-sensitive key (`acronym_key()`), so "FOI"
+  matches the Front de la Oumma Islamique and "foi" no longer does. NER
+  reconciliation turns it on. Measured on the Burkinabè run: twelve acronyms
+  are common words in the articles (UN 43,823 times in lower case, AU, CAR,
+  CET, FOI 2,245, AIDE 971, AIT, UNIR, UL, SEMI, AD, UP); "Foi" and "Aide"
+  had produced 226 matches. That run predates `clean_entity()` keeping
+  capitals, so re-reconciling it would lose its 995 acronym-only matches, 736
+  of them kept by the context check; new runs keep their acronyms.
+
 ### 2026-10-22 — Gemini Transcribe loops collapsed by speaking rate
 
 - `AI_audio_summary/02c` gains `collapse_loops()`: a run of at least 20 words

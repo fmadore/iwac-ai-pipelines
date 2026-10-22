@@ -221,6 +221,15 @@ on a trailing s/x ("Confrérie" → "Confréries", accents kept). A subject term
 in set 268 ("Université de Ouagadougou") is written to the spatial column, as
 the catalogue links places.
 
+An acronym name (2–6 capitals, dots allowed) matches only a term written in
+capitals: "FOI" reaches the Front de la Oumma Islamique, "Foi" and "foi" do
+not. Twelve of the archive's acronyms are common French words (UN, AU, CAR,
+CET, FOI, AIDE, AIT, UNIR…), and the word "foi" had been linked to the FOI 317
+times. The rule relies on `01`'s `clean_entity()`, which keeps capitals since
+2026-10-20; output made before then title-cased its acronyms ("Cedeao",
+"Cerfi"), so reconciling it again would lose them — 995 matches on the
+Burkinabè run, 736 of which the context check had kept.
+
 ## Customization
 
 Edit `ner_system_prompt.md` to modify:

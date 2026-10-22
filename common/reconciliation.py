@@ -75,6 +75,12 @@ AMBIGUOUS_MARKER = "(Ambiguous)"
 #: key can neither shadow an exact match nor make it ambiguous.
 ORDER_KEY_PREFIX = "[order] "
 FOLD_KEY_PREFIX = "[fold] "
+#: An acronym keyed case-sensitively. With ``acronyms_need_capitals`` an
+#: acronym name gets only this key, so "FOI" (the Front de la Oumma
+#: Islamique) no longer matches the word "foi": 317 such links had to be
+#: removed from the archive on 2026-10-22.
+ACRONYM_KEY_PREFIX = "[acronym] "
+_ACRONYM = re.compile(r"^(?:[A-Z]\.?){2,6}$")
 #: Single-letter tokens that are elided articles, not initials.
 _ELISIONS = {'d', 'l'}
 
@@ -185,9 +191,19 @@ def _authority_titles(item: Dict) -> Tuple[Dict, List[str]]:
     return metadata, titles
 
 
+def acronym_key(text: str) -> str:
+    """The case-sensitive key of an acronym ("FOI", "F.O.I"), or '' for
+    anything else, including the same letters in lower or title case."""
+    text = text.strip()
+    return ACRONYM_KEY_PREFIX + text.replace('.', '') if _ACRONYM.match(text) else ''
+
+
 def _authority_variants(
     title: str, token_order: bool = False, plural_fold: bool = False,
+    acronyms_need_capitals: bool = False,
 ) -> set[str]:
+    if acronyms_need_capitals and (key := acronym_key(title)):
+        return {key}
     lower = title.lower()
     return {
         variant for variant in (
@@ -224,6 +240,7 @@ def build_authority_dict(
     token_order: bool = False,
     plural_fold_sets: Collection[str] = (),
     country: Optional[str] = None,
+    acronyms_need_capitals: bool = False,
 ) -> Tuple[Dict[str, str], Dict[str, List[str]], Dict[str, Dict]]:
     """Build a lookup dict of authority terms from specified item sets.
 
@@ -236,6 +253,13 @@ def build_authority_dict(
     With *country*, a title qualified by that country is also keyed without
     the qualifier (:func:`strip_country_qualifier`), as an exact key: a record
     of the same bare name elsewhere makes the term ambiguous, never resolved.
+
+    With *acronyms_need_capitals*, a name that is an acronym (2-6 capitals,
+    dots allowed) is keyed only case-sensitively (:func:`acronym_key`): it
+    matches "FOI" but not "Foi" or "foi". Twelve IWAC acronyms are common
+    French words (UN, AU, CAR, CET, FOI, AIDE, AIT, UNIR…). It needs input
+    that keeps acronyms in capitals, as ``AI_NER/01`` has since 2026-10-20;
+    on older output, which title-cased them, it loses every acronym match.
 
     Returns:
         (authority_dict, ambiguous_terms_dict, authority_metadata)
@@ -269,10 +293,12 @@ def build_authority_dict(
                 metadata, titles_to_process = _authority_titles(item)
                 authority_metadata[item_id] = metadata
                 for title_text in titles_to_process:
-                    variants = _authority_variants(title_text, token_order, plural_fold)
+                    variants = _authority_variants(title_text, token_order, plural_fold,
+                                                   acronyms_need_capitals)
                     bare = strip_country_qualifier(title_text, country) if country else ''
                     if bare:
-                        variants |= _authority_variants(bare, token_order, plural_fold)
+                        variants |= _authority_variants(bare, token_order, plural_fold,
+                                                        acronyms_need_capitals)
                     potential_lookups.extend((variant, item_id) for variant in variants)
 
     authority, ambiguous = _resolve_authority_lookups(potential_lookups)
@@ -519,7 +545,7 @@ def _value_variants(value: str) -> Tuple[str, str, str]:
 def _value_key_tiers(value: str) -> Tuple[Tuple[str, ...], ...]:
     """Exact keys first, then word order, then plural fold. A dict built
     without a looser key simply never contains it."""
-    return _value_variants(value), (token_order_key(value),), (plural_fold_key(value),)
+    return (*_value_variants(value), acronym_key(value)), (token_order_key(value),), (plural_fold_key(value),)
 
 
 def resolve_term(

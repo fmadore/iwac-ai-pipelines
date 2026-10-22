@@ -306,3 +306,24 @@ def test_country_qualifier_never_resolves_a_name_another_record_carries_bare():
     authority, ambiguous, _ = build_authority_dict(client, ["854"], country="Burkina Faso")
     assert "conseil constitutionnel" not in authority
     assert ambiguous["conseil constitutionnel"] == ["1", "4"]
+
+
+def test_acronyms_match_only_in_capitals_when_asked():
+    from common.reconciliation import resolve_term
+    client = FakeOmekaClient({854: [
+        _item(23699, "Front de la Oumma Islamique", ["FOI"]),
+        _item(578, "Communauté Musulmane du Burkina Faso", ["C.M.B.F"]),
+        _item(579, "Commission Nationale d'Organisation du Pèlerinage (Burkina Faso)", ["CNOPM (Burkina Faso)"]),
+    ]})
+    authority, ambiguous, _ = build_authority_dict(client, ["854"], country="Burkina Faso",
+                                                   acronyms_need_capitals=True)
+    assert resolve_term("FOI", authority, ambiguous) == ("23699", [])
+    assert resolve_term("Foi", authority, ambiguous) == (None, [])
+    assert resolve_term("foi", authority, ambiguous) == (None, [])
+    assert resolve_term("CMBF", authority, ambiguous) == ("578", [])
+    assert resolve_term("CNOPM", authority, ambiguous) == ("579", [])
+    assert resolve_term("Cnopm", authority, ambiguous) == (None, [])
+    assert resolve_term("Front de la Oumma Islamique", authority, ambiguous) == ("23699", [])
+
+    lenient, lenient_ambiguous, _ = build_authority_dict(client, ["854"])
+    assert resolve_term("Foi", lenient, lenient_ambiguous) == ("23699", [])

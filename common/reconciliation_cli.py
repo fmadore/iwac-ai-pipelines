@@ -13,8 +13,9 @@ plural fold on subjects other than persons (names are proper nouns: "Lago", a
 village in Zondoma, must not become "Lagos", nor "Prophètes" the Prophet),
 subject terms that name a place
 linked as ``dcterms:spatial``, and titles qualified by the run's country
-("Ministère de la Santé (Burkina Faso)") also matched bare. The country comes
-from the NER checkpoint beside the input. Reference indexing does not, so its matching is
+("Ministère de la Santé (Burkina Faso)") also matched bare, and acronyms matched
+only when written in capitals ("FOI", never "foi"). The country comes from the
+NER checkpoint beside the input. Reference indexing does not, so its matching is
 unchanged until those rules have been checked on its own output.
 """
 
@@ -93,7 +94,7 @@ def build_dictionaries(
     """
     spatial, spatial_ambiguous, spatial_metadata = build_authority_dict(
         client, SPATIAL_AUTHORITY_ITEM_SETS, "SPATIAL", token_order=extended_matching,
-        country=country,
+        country=country, acronyms_need_capitals=extended_matching,
     )
     subject_sets = SUBJECT_AUTHORITY_ITEM_SETS + TOPIC_AUTHORITY_ITEM_SETS
     subject, subject_ambiguous, subject_metadata = build_authority_dict(
@@ -103,7 +104,7 @@ def build_dictionaries(
             [s for s in subject_sets if s != PERSON_AUTHORITY_ITEM_SET]
             if extended_matching else ()
         ),
-        country=country,
+        country=country, acronyms_need_capitals=extended_matching,
     )
     return AuthorityDicts(spatial, spatial_ambiguous, spatial_metadata,
                           subject, subject_ambiguous, subject_metadata)
