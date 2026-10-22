@@ -52,6 +52,18 @@ the changelog tells stories.
   Yacouba Traoré (imam, Poni) — with descriptions and links annotated Claude
   Opus 5.5; and 125817 Moussa Kouanda's description now names both his CMBF
   and his FAIB presidencies.
+- After the re-check (1,776 drops, 97 ambiguous terms settled), `AI_NER/03`
+  wrote the checked CSV on 2026-10-22: 7,709 of the 8,045 Burkinabè articles,
+  10,036 spatial and 40,763 subject links annotated `iwac:nerModel` → Claude
+  Haiku 5.5, no error. Pre-write payloads in
+  `AI_NER/output/_pre_write_ner_links_20261022T093608Z_9e466e51.jsonl`.
+- The same day, the 410 items already linked to the FOI (23699, Ivorian) were
+  read by Haiku 5.5 and cross-checked against their full text: 317 links were
+  the word "foi" (faith), including every Burkinabè, Beninese and Togolese
+  one, and were removed on the curator's approval; 92 name the front and
+  stay, with 77180 left for the curator. Four Haiku "drops" whose full text
+  names the front were caught by the cross-check and kept. Review and
+  backups in `AI_authority_curation/output/foi_review/`.
 
 ### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
 
