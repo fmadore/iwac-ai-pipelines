@@ -21,6 +21,13 @@ and redaction comes with it::
 
 ``install_credential_redaction()`` on its own is for the few entry points
 that hand logging setup to a shared runner.
+
+An exception that escapes ``main()`` never becomes a log record: Python's
+excepthook prints it straight to stderr, and a ``requests`` error's message
+carries the request URL. On 2026-10-23 a lost connection during a sentiment
+run printed both Omeka keys that way. So installing redaction also replaces
+``sys.excepthook`` and ``threading.excepthook`` with versions that scrub the
+formatted traceback.
 """
 
 from __future__ import annotations
@@ -28,6 +35,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
+import threading
+import traceback
 from pathlib import Path
 from typing import Any, Iterable, Optional, TextIO, Union
 
@@ -207,6 +217,36 @@ def _install_record_factory() -> None:
     logging.setLogRecordFactory(factory)
 
 
+def _redacted_traceback(exc_type, exc_value, exc_traceback) -> str:
+    return redact("".join(
+        traceback.format_exception(exc_type, exc_value, exc_traceback)
+    ))
+
+
+def _redacting_excepthook(exc_type, exc_value, exc_traceback) -> None:
+    sys.stderr.write(_redacted_traceback(exc_type, exc_value, exc_traceback))
+
+
+def _redacting_threading_excepthook(args) -> None:
+    if args.exc_type is SystemExit:
+        return  # what the default hook does too
+    name = args.thread.name if args.thread is not None else threading.get_ident()
+    sys.stderr.write(
+        f"Exception in thread {name}:\n"
+        + _redacted_traceback(args.exc_type, args.exc_value, args.exc_traceback)
+    )
+
+
+def _install_excepthooks() -> None:
+    """Scrub uncaught tracebacks, in the main thread and in worker threads.
+
+    Replaces rather than wraps whatever hook is there: a previous hook would
+    print the unscrubbed text, which is the leak this closes.
+    """
+    sys.excepthook = _redacting_excepthook
+    threading.excepthook = _redacting_threading_excepthook
+
+
 def install_credential_redaction(
     logger_names: Optional[Iterable[str]] = None,
 ) -> CredentialRedactingFilter:
@@ -224,6 +264,7 @@ def install_credential_redaction(
     is reused rather than stacked.
     """
     _install_record_factory()
+    _install_excepthooks()
 
     root = logging.getLogger()
     existing = next(

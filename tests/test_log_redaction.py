@@ -289,3 +289,54 @@ def test_an_already_configured_process_gets_no_log_file(tmp_path):
         root.addHandler(logging.NullHandler())
         configure_logging(log_file=log_file, terminal=False)
     assert not log_file.parent.exists()
+
+
+# ---------------------------------------------------------------------------
+# Uncaught exceptions — they bypass logging entirely
+# ---------------------------------------------------------------------------
+
+def test_uncaught_exception_traceback_is_redacted():
+    """A requests error escaping main() prints its URL through the excepthook.
+
+    Run in a subprocess, because only a real interpreter exit goes through
+    ``sys.excepthook``.
+    """
+    import subprocess
+
+    script = (
+        "import sys; sys.path.insert(0, sys.argv[1])\n"
+        "from common.log_redaction import configure_logging\n"
+        "configure_logging()\n"
+        f"raise ConnectionError('Max retries exceeded with url: {OMEKA_URL}')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(Path(__file__).resolve().parent.parent)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 1
+    assert "ConnectionError" in result.stderr
+    assert "Max retries exceeded" in result.stderr
+    assert f"key_credential={REDACTED}" in result.stderr
+    assert IDENTITY not in result.stderr and CREDENTIAL not in result.stderr
+
+
+def test_uncaught_exception_in_a_worker_thread_is_redacted(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    install_credential_redaction()
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    def fail():
+        raise ConnectionError(f"Max retries exceeded with url: {OMEKA_URL}")
+
+    worker = threading.Thread(target=fail, name="annotator-1")
+    worker.start()
+    worker.join()
+
+    printed = stderr.getvalue()
+    assert "Exception in thread annotator-1" in printed
+    assert "ConnectionError" in printed
+    assert IDENTITY not in printed and CREDENTIAL not in printed

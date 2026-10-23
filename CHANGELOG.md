@@ -70,6 +70,15 @@ the changelog tells stories.
   single-file recordings under it and found no item; an identifier ending in a
   short number would have received all seven joined.
 
+### 2026-10-23 — Uncaught tracebacks are redacted
+
+- `install_credential_redaction()`, and so every `configure_logging()`,
+  now replaces `sys.excepthook` and `threading.excepthook` with hooks that
+  pass the formatted traceback through `redact()`. An exception escaping
+  `main()` never becomes a log record, so the record factory and filters
+  could not reach it: a lost connection during the Haiku sentiment pass
+  printed both Omeka keys from a `requests` error message.
+
 ### 2026-10-23 — Claude Haiku 5.5 annotates the corpus
 
 - IWAC vocabulary v1.6 declares its six `iwac:claudeHaiku55*` properties
@@ -80,9 +89,9 @@ the changelog tells stories.
   returned a null subjectivité beside centralité `Marginal`, Qwen3.8's fault.
 - The class has grown to 16,715 items since the August passes, so about
   4,300 articles carry Haiku's reading alone (`docs/PENDING.md`).
-- An unhandled `requests.ConnectionError` prints the Omeka request URL,
-  credentials included, in its traceback: `configure_logging()` redacts log
-  records, not tracebacks. The run's log was scrubbed by hand.
+- An unhandled `requests.ConnectionError` printed the Omeka request URL,
+  credentials included, in its traceback; the run's log was scrubbed by
+  hand. Fixed in the entry above.
 
 ### 2026-10-22 — Claude Haiku 5.5 joins the sentiment panel
 
