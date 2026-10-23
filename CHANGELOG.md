@@ -99,6 +99,15 @@ the changelog tells stories.
   stay, with 77180 left for the curator. Four Haiku "drops" whose full text
   names the front were caught by the cross-check and kept. Review and
   backups in `AI_authority_curation/output/foi_review/`.
+- 2026-10-23, the other ten acronym records that are also words: of their 722
+  item links, 579 name the record in full or in capitals; Haiku 5.5 read the
+  other 143 and a full-text cross-check overturned ten of its drops (seven
+  "Nations-Unies" for the UN, two Tidjania for the AIT, one bishops'
+  conference for the CET). 108 links were removed on the curator's request,
+  99 of them "aide" on the Turkish NGO AIDE (23467); none carried
+  `iwac:nerModel`, so all predate the annotation. Seven AIT/UL links are
+  left for the curator. Review and backups in
+  `AI_authority_curation/output/acronym_review/`.
 
 ### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
 
