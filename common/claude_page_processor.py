@@ -77,6 +77,18 @@ def claude_request_config(
     return config
 
 
+def claude_document_block(page_bytes: bytes) -> Dict[str, Any]:
+    """A single-page PDF as a Messages API ``document`` content block."""
+    return {
+        "type": "document",
+        "source": {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": base64.standard_b64encode(page_bytes).decode("ascii"),
+        },
+    }
+
+
 def is_credit_exhausted(error: Exception) -> bool:
     """True when the account can make no more requests until it is topped up."""
     if is_quota_exhausted(error):
@@ -90,18 +102,10 @@ class ClaudePageProcessor(GeminiPageProcessor):
 
     def _create(self, page_bytes: bytes):
         self.rate_limiter.wait()
-        document = {
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": base64.standard_b64encode(page_bytes).decode("ascii"),
-            },
-        }
         return self.client.messages.create(
             model=self.model_name,
             messages=[{"role": "user", "content": [  # document first, then prompt
-                document, {"type": "text", "text": self.policy.user_prompt},
+                claude_document_block(page_bytes), {"type": "text", "text": self.policy.user_prompt},
             ]}],
             **self.generation_config,
         )

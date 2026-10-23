@@ -9,6 +9,17 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-23 — Magazine indexes: one provider per profile, Sonnet 5.5 added
+
+- `AI_summary_issue/02_AI_generate_summaries_issue.py` profiles no longer mix
+  providers: `standard` (Gemini Pro pages, Gemini 3.8 Flash consolidates),
+  `light` (Gemini 3.8 Flash for both) and the new `sonnet` (Claude Sonnet 5.5
+  for both, menu choice `3`/`c`). Each needs one API key. Consolidation used to
+  go to DeepSeek through OpenRouter, a second key on every run.
+- The `sonnet` profile reads the same single-page PDF into the same
+  `PageExtraction` schema through structured output at `low` effort. Step 03
+  stamps the consolidator: Gemini 3.8 Flash (195175) or Sonnet 5.5 (188959).
+
 ### 2026-10-23 — Gemini 3.7 Flash is answered by 3.8; pages read at HIGH
 
 - Google now answers every request for `gemini-3.7-flash` with Gemini 3.8

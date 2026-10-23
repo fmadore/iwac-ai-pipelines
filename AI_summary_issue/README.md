@@ -23,6 +23,7 @@ PDF Magazine → Page-by-page AI extraction → Article consolidation → Search
 python 02_AI_generate_summaries_issue.py            # prompts you to choose a profile
 python 02_AI_generate_summaries_issue.py --light    # skip the prompt, use the light profile
 python 02_AI_generate_summaries_issue.py --profile standard
+python 02_AI_generate_summaries_issue.py --profile sonnet   # Claude for both steps
 ```
 
 The script auto-detects PDFs and processes them sequentially. On start it asks
@@ -30,13 +31,15 @@ which **model profile** to run (or pass `--profile` / `--light` to skip the prom
 
 | Choice | Profile | Step 1 — per page | Step 2 — consolidation | Best for |
 |--------|---------|-------------------|------------------------|----------|
-| `1` / `a` | standard | Gemini Pro | DeepSeek V4 Flash 0731 | Best extraction quality |
-| `2` / `b` | light | Gemini 3.8 Flash | DeepSeek V4 Flash 0731 | Cheaper extraction |
+| `1` / `a` | standard | Gemini Pro | Gemini 3.8 Flash | Best Gemini extraction |
+| `2` / `b` | light | Gemini 3.8 Flash | Gemini 3.8 Flash | Cheaper extraction |
+| `3` / `c` | sonnet | Claude Sonnet 5.5 | Claude Sonnet 5.5 | The Anthropic alternative |
 
-The profile controls only the quality-critical visual extraction. Both variants
-send the resulting typed page JSON to the shared default text model,
-`deepseek-v4-flash-0731`, for consolidation. The Mistral variant likewise uses
-Mistral OCR for step 1 and DeepSeek for step 2.
+Each profile runs on a single provider, so it needs a single API key:
+`GEMINI_API_KEY` for `standard` and `light`, `ANTHROPIC_API_KEY` for `sonnet`.
+The consolidating model is what step 03 stamps, so it is always a pinned key
+with an authority item. The Mistral variant uses Mistral OCR for step 1 and
+DeepSeek (`OPENROUTER_API_KEY`) for step 2.
 
 ### With Omeka S Integration
 
@@ -54,8 +57,9 @@ item it fetches the full record, modifies only the table-of-contents property,
 and PATCHes the whole record back — aborting that item if any existing property
 would be lost. Run `--dry-run` first to review; the live run dumps every pre-write
 payload to `backups/` and asks for confirmation (`--yes` for unattended runs).
-The updater asks which model consolidated the index, with `DeepSeek V4 Flash 0731`
-(authority item 83261) preselected; pass `--model` to answer on the command line.
+The updater reads which model consolidated the index from the run's sidecars
+(Gemini 3.8 Flash, Claude Sonnet 5.5, or DeepSeek V4 Flash 0731 for the Mistral
+variant and older runs); `--model` only cross-checks it.
 Older indexes read by a Claude model keep their `claude-opus-*` keys in
 `common/iwac_config.py` so their annotations still resolve.
 
@@ -63,8 +67,9 @@ Older indexes read by a Claude model keep their `claude-opus-*` keys in
 
 | Provider | Model | Best For |
 |----------|-------|----------|
-| **Gemini** (standard profile) | Gemini Pro → DeepSeek V4 Flash 0731 | Best extraction quality, accurate article detection |
-| **Gemini** (light profile) | Gemini 3.8 Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
+| **Gemini** (standard profile) | Gemini Pro → Gemini 3.8 Flash | Best extraction quality, accurate article detection |
+| **Gemini** (light profile) | Gemini 3.8 Flash → Gemini 3.8 Flash | Cheaper visual extraction |
+| **Claude** (sonnet profile) | Claude Sonnet 5.5 → Claude Sonnet 5.5 | Same page and schema through Anthropic; a refused page is not retried |
 | Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |
 
 Gemini model IDs come from the shared registry (`common/llm_registry.py`). The
@@ -124,9 +129,10 @@ writes the result straight to Omeka via the API — no intermediate CSV.
 Create `.env` in project root:
 
 ```bash
-GEMINI_API_KEY=your_key    # For Gemini version
+GEMINI_API_KEY=your_key    # standard and light profiles
+ANTHROPIC_API_KEY=your_key # sonnet profile
 MISTRAL_API_KEY=your_key   # For Mistral version
-OPENROUTER_API_KEY=your_key # DeepSeek consolidation in both versions
+OPENROUTER_API_KEY=your_key # DeepSeek consolidation in the Mistral version
 
 # Optional: Omeka S integration
 OMEKA_BASE_URL=https://your-instance.org

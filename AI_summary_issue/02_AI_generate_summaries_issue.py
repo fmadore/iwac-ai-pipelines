@@ -3,11 +3,10 @@
 This script implements a two-step pipeline to extract and consolidate articles
 from an Islamic magazine using Gemini's native PDF understanding with structured outputs.
 
-Supported extraction profiles:
-- standard: Gemini Pro (step 1, per page)
-- light: Gemini Flash (step 1, per page)
-
-Both profiles use the repository's default text model for step-2 consolidation.
+Supported profiles — each runs on one provider, so it needs one API key:
+- standard: Gemini Pro per page, Gemini 3.8 Flash consolidates
+- light: Gemini 3.8 Flash for both steps
+- sonnet: Claude Sonnet 5.5 for both steps (same PDF page and JSON schema)
 
 Step 1: Page-by-page extraction (high-performance model)
 - Extracts individual pages using pypdf (document parsed once per magazine)
@@ -45,6 +44,7 @@ API Best Practices:
 Usage:
     python 02_AI_generate_summaries_issue.py
     python 02_AI_generate_summaries_issue.py --profile light --rpm 5
+    python 02_AI_generate_summaries_issue.py --profile sonnet
 """
 
 import os
@@ -64,7 +64,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.llm_provider import (  # noqa: E402
-    DEFAULT_TEXT_MODEL_KEY,
     LLMConfig,
     ModelOption,
     get_model_option,
@@ -75,8 +74,14 @@ from common.gemini_utils import (  # noqa: E402
     build_gemini_client,
     extract_text_from_response,
 )
+from common.claude_page_processor import (  # noqa: E402
+    build_claude_client,
+    claude_document_block,
+    claude_request_config,
+    is_credit_exhausted,
+)
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_quota_exhausted  # noqa: E402
-from common.retry import retry_with_backoff  # noqa: E402
+from common.retry import PermanentError, retry_with_backoff  # noqa: E402
 from common.log_redaction import configure_logging
 
 # Shared magazine-extraction building blocks (models, prompts, step skeletons)
@@ -97,6 +102,7 @@ try:
     from google.genai import errors as genai_errors
 except ImportError as exc:
     raise RuntimeError("google-genai package is required for PDF processing") from exc
+import anthropic  # noqa: E402
 
 # ------------------------------------------------------------------
 # Configuration
@@ -109,21 +115,25 @@ RETRY_DELAY = 2  # seconds
 # ------------------------------------------------------------------
 # Client Initialization
 # ------------------------------------------------------------------
+#: (page reader, consolidator) per profile. A profile never mixes providers:
+#: an operator needs one API key, and step 03 stamps the consolidator as
+#: ``iwac:summaryModel``, so it must be a pinned key with an authority item.
+#: This overrides the shared ``DEFAULT_TEXT_MODEL_KEY`` (DeepSeek through
+#: OpenRouter), which would add a second provider to every run.
+PROFILES = {
+    "standard": ("gemini-pro", "gemini-3.8-flash"),
+    "light": ("gemini-3.8-flash", "gemini-3.8-flash"),
+    "sonnet": ("claude-sonnet-5-5", "claude-sonnet-5-5"),
+}
+#: The one key each profile needs.
+PROFILE_API_KEYS = {"standard": "GEMINI_API_KEY", "light": "GEMINI_API_KEY", "sonnet": "ANTHROPIC_API_KEY"}
+
+
 def get_model_pair(profile: str = "standard") -> Tuple[ModelOption, ModelOption]:
-    """Get the multimodal extraction and text consolidation model pair.
-
-    Profiles:
-        - "standard": Gemini Pro for per-page extraction (best quality).
-        - "light": Gemini Flash for per-page extraction (cheaper/faster).
-
-    Returns:
-        Tuple of (model_step1, model_step2).
-    """
-    if profile == "light":
-        step1_option = get_model_option("gemini-3.8-flash")   # per-page extraction
-    else:
-        step1_option = get_model_option("gemini-pro")
-    step2_option = get_model_option(DEFAULT_TEXT_MODEL_KEY)
+    """The (page extraction, consolidation) model pair of a profile; see ``PROFILES``."""
+    step1_key, step2_key = PROFILES[profile]
+    step1_option = get_model_option(step1_key)
+    step2_option = get_model_option(step2_key)
 
     # Display model configuration in a table
     model_table = Table(title=f"🤖 Model Configuration ({profile})", box=box.ROUNDED, show_header=True, header_style="bold cyan")
@@ -142,24 +152,28 @@ def get_model_pair(profile: str = "standard") -> Tuple[ModelOption, ModelOption]
 def choose_profile() -> str:
     """Interactively ask the user which model profile to run.
 
-    Accepts 1/a for the standard profile and 2/b for the light profile.
+    Accepts 1/a for the standard profile, 2/b for light and 3/c for sonnet.
     """
     table = Table(title="Select model profile", box=box.ROUNDED, show_header=True, header_style="bold cyan")
     table.add_column("#", style="cyan", justify="center")
     table.add_column("Profile", style="green")
     table.add_column("Description", style="white")
-    table.add_row("1 / a", "standard", "Gemini Pro per page - best extraction quality")
-    table.add_row("2 / b", "light", "Gemini Flash per page - cheaper / faster")
+    table.add_row("1 / a", "standard", "Gemini Pro per page, Gemini Flash consolidates")
+    table.add_row("2 / b", "light", "Gemini Flash for both steps - cheaper / faster")
+    table.add_row("3 / c", "sonnet", "Claude Sonnet 5.5 for both steps (ANTHROPIC_API_KEY)")
     console.print(table)
 
-    mapping = {"1": "standard", "a": "standard", "2": "light", "b": "light"}
+    mapping = {"1": "standard", "a": "standard", "2": "light", "b": "light",
+               "3": "sonnet", "c": "sonnet"}
     while True:
-        choice = console.input("\n[bold]Profile (1/a = standard, 2/b = light) [1]:[/] ").strip().lower()
+        choice = console.input(
+            "\n[bold]Profile (1/a = standard, 2/b = light, 3/c = sonnet) [1]:[/] "
+        ).strip().lower()
         if not choice:
             return "standard"
         if choice in mapping:
             return mapping[choice]
-        console.print("[red]Invalid choice - enter 1, 2, a, or b.[/]")
+        console.print("[red]Invalid choice - enter 1, 2, 3, a, b, or c.[/]")
 
 
 # ------------------------------------------------------------------
@@ -220,6 +234,42 @@ def generate_with_gemini(client: genai.Client, model_name: str, page_bytes: byte
         logging.error(f"Generation error for page {page_num}: {e}")
         raise  # Let the retry decorator handle it
 
+@retry_with_backoff(max_retries=MAX_RETRIES, base_delay=RETRY_DELAY)
+def generate_with_claude(client: "anthropic.Anthropic", model_name: str, page_bytes: bytes,
+                         page_num: int, request_config: dict,
+                         rate_limiter: RateLimiter) -> Optional[PageExtraction]:
+    """Structured page extraction with Claude: the same page bytes and schema as Gemini.
+
+    A refusal or a cut-off answer is a PermanentError, not retried: the same
+    page would be declined or cut again. An exhausted credit balance stops the
+    batch. There is no server-side fallback model, for the reason given in
+    ``common/claude_page_processor.py``.
+    """
+    rate_limiter.wait()
+    try:
+        response = client.messages.create(
+            model=model_name,
+            messages=[{"role": "user", "content": [
+                claude_document_block(page_bytes),
+                {"type": "text", "text": f"Analysez la page {page_num} de ce document PDF."},
+            ]}],
+            **request_config,
+        )
+    except anthropic.APIStatusError as e:
+        if is_credit_exhausted(e):
+            raise QuotaExhaustedError(str(e)) from e
+        logging.error(f"Generation error for page {page_num}: {e}")
+        raise
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise PermanentError(f"Claude stopped on page {page_num}: {response.stop_reason}")
+    text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
+    if not text:
+        raise RuntimeError(f"Empty Claude response for page {page_num}")
+    extraction = PageExtraction.model_validate_json(text)
+    extraction.page_number = page_num
+    return extraction
+
+
 # ------------------------------------------------------------------
 # Main Pipeline
 # ------------------------------------------------------------------
@@ -254,13 +304,13 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     if pdf_path.suffix.lower() != '.pdf':
         raise ValueError(f"Input must be a PDF file, got: {pdf_path}")
 
-    # Get API key
-    api_key = os.getenv("GEMINI_API_KEY")
+    is_claude = model_step1.key == "claude-sonnet-5-5"
+    key_name = "ANTHROPIC_API_KEY" if is_claude else "GEMINI_API_KEY"
+    api_key = os.getenv(key_name)
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not found in environment variables")
+        raise RuntimeError(f"{key_name} not found in environment variables")
 
-    # Initialize Gemini client
-    client = build_gemini_client(api_key)
+    client = build_claude_client(api_key) if is_claude else build_gemini_client(api_key)
 
     # Configure for each step - all Gemini 3 models use thinking_level.
     # Step 1 (per-page extraction) is the quality-critical step - Pro (standard)
@@ -294,21 +344,30 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
         # Create output directory
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Shared generation config for step 1 (structured output, thinking level)
-        step1_gen_config = build_generation_config(
-            model_step1.model,
-            thinking_level=config_step1.thinking_level,
-            system_instruction=extraction_prompt,
-            max_output_tokens=8192,
-            response_schema=PageExtraction,
-        )
-        logging.info(f"Using Gemini 3 with thinking_level={config_step1.thinking_level} for step 1")
+        # Shared request settings for step 1 (structured output, lowest depth
+        # but one: LOW thinking on Gemini, low effort on Claude).
+        if is_claude:
+            step1_config = claude_request_config(model_step1, extraction_prompt, effort="low")
+            step1_config["output_config"]["format"] = {
+                "type": "json_schema",
+                "schema": anthropic.transform_schema(PageExtraction),
+            }
+        else:
+            step1_config = build_generation_config(
+                model_step1.model,
+                thinking_level=config_step1.thinking_level,
+                system_instruction=extraction_prompt,
+                max_output_tokens=8192,
+                response_schema=PageExtraction,
+            )
+            logging.info(f"Using Gemini 3 with thinking_level={config_step1.thinking_level} for step 1")
+        generate = generate_with_claude if is_claude else generate_with_gemini
 
         def extract_page(page_num: int) -> Optional[PageExtraction]:
             """Provider callable for the shared step-1 loop."""
             page_bytes = page_source.page_bytes(page_num - 1)  # 0-indexed for pypdf
-            return generate_with_gemini(
-                client, model_step1.model, page_bytes, page_num, step1_gen_config, rate_limiter
+            return generate(
+                client, model_step1.model, page_bytes, page_num, step1_config, rate_limiter
             )
 
         consolidate = build_text_consolidator(model_step2)
@@ -355,9 +414,9 @@ def main() -> int:
             description="Islamic magazine article extraction to a table of contents."
         )
         parser.add_argument(
-            "--profile", choices=["standard", "light"], default=None,
-            help="standard = Gemini Pro per page; light = Gemini Flash per page. "
-                 f"Both consolidate with {DEFAULT_TEXT_MODEL_KEY}. "
+            "--profile", choices=["standard", "light", "sonnet"], default=None,
+            help="standard = Gemini Pro per page, Gemini Flash consolidates; "
+                 "light = Gemini Flash for both; sonnet = Claude Sonnet 5.5 for both. "
                  "Omit to choose interactively.",
         )
         parser.add_argument(
@@ -378,13 +437,13 @@ def main() -> int:
         else:
             profile = choose_profile()
 
-        step1_label = "Gemini Flash" if profile == "light" else "Gemini Pro"
+        step1_key, step2_key = PROFILES[profile]
         intro_panel = Panel(
             "[bold cyan]Islamic Magazine Article Extraction Pipeline[/]\n\n"
-            f"[dim]Using Gemini's native PDF understanding — profile: {profile}[/]\n\n"
-            f"📖 [white]Step 1:[/] Page-by-page extraction [dim]({step1_label})[/]\n"
+            f"[dim]Native PDF page understanding — profile: {profile}[/]\n\n"
+            f"📖 [white]Step 1:[/] Page-by-page extraction [dim]({step1_key})[/]\n"
             f"📊 [white]Step 2:[/] Magazine-level consolidation "
-            f"[dim]({DEFAULT_TEXT_MODEL_KEY})[/]",
+            f"[dim]({step2_key})[/]",
             title="🚀 Pipeline Started", border_style="cyan", padding=(1, 2),
         )
 
@@ -404,7 +463,7 @@ def main() -> int:
             ),
             script_dir=Path(__file__).resolve().parent,
             intro_panel=intro_panel,
-            api_key_env=("GEMINI_API_KEY", "OPENROUTER_API_KEY"),
+            api_key_env=PROFILE_API_KEYS[profile],
         )
 
     except KeyboardInterrupt:

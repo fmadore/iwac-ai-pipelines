@@ -81,3 +81,79 @@ def test_mistral_upload_cleanup_is_best_effort():
     mistral_pipeline._delete_mistral_upload(client, "file-123")
 
     client.files.delete.assert_called_once_with(file_id="file-123")
+
+
+# --- Claude Sonnet 5.5 as the page reader (profile "sonnet") -----------------
+
+GEMINI_SCRIPT = SCRIPT.with_name("02_AI_generate_summaries_issue.py")
+_GSPEC = importlib.util.spec_from_file_location("gemini_magazine_pipeline", GEMINI_SCRIPT)
+gemini_pipeline = importlib.util.module_from_spec(_GSPEC)
+sys.modules[_GSPEC.name] = gemini_pipeline
+_GSPEC.loader.exec_module(gemini_pipeline)
+
+
+def _claude_response(text="", stop_reason="end_turn"):
+    from types import SimpleNamespace
+    blocks = [SimpleNamespace(type="text", text=text)] if text else []
+    return SimpleNamespace(content=blocks, stop_reason=stop_reason)
+
+
+def _claude_call(client):
+    from common.rate_limiter import RateLimiter
+    return gemini_pipeline.generate_with_claude(
+        client, "claude-sonnet-5-5", b"%PDF", 4, {"max_tokens": 16000}, RateLimiter(None),
+    )
+
+
+def test_each_profile_stays_with_one_provider():
+    """One profile, one provider, one API key; the consolidator is stamped by 03."""
+    from common.iwac_config import AI_MODEL_ITEMS
+
+    for profile, (reader, consolidator) in gemini_pipeline.PROFILES.items():
+        step1, step2 = gemini_pipeline.get_model_pair(profile)
+        assert (step1.key, step2.key) == (reader, consolidator)
+        assert step1.provider == step2.provider, profile
+        assert step2.key in AI_MODEL_ITEMS, profile
+    assert gemini_pipeline.PROFILES["light"] == ("gemini-3.8-flash", "gemini-3.8-flash")
+    assert gemini_pipeline.PROFILES["sonnet"] == ("claude-sonnet-5-5", "claude-sonnet-5-5")
+    assert gemini_pipeline.PROFILE_API_KEYS["sonnet"] == "ANTHROPIC_API_KEY"
+
+
+def test_claude_page_extraction_parses_the_schema():
+    client = Mock()
+    client.messages.create.return_value = _claude_response(
+        '{"page_number": 1, "articles": [{"titre": "Le Hajj", "resume": "Récit."}]}'
+    )
+    extraction = _claude_call(client)
+    assert extraction.page_number == 4          # the loop's number wins
+    assert extraction.articles[0].titre == "Le Hajj"
+    document = client.messages.create.call_args.kwargs["messages"][0]["content"][0]
+    assert document["source"]["media_type"] == "application/pdf"
+
+
+def test_claude_refusal_is_not_retried():
+    import pytest
+    from common.retry import PermanentError
+
+    client = Mock()
+    client.messages.create.return_value = _claude_response(stop_reason="refusal")
+    with pytest.raises(PermanentError):
+        _claude_call(client)
+    assert client.messages.create.call_count == 1
+
+
+def test_claude_empty_credit_stops_the_batch():
+    import anthropic
+    import httpx2
+    import pytest
+    from common.rate_limiter import QuotaExhaustedError
+
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    client = Mock()
+    client.messages.create.side_effect = anthropic.BadRequestError(
+        "Your credit balance is too low to access the Anthropic API.",
+        response=httpx2.Response(400, request=request), body=None,
+    )
+    with pytest.raises(QuotaExhaustedError):
+        _claude_call(client)
+    assert client.messages.create.call_count == 1
