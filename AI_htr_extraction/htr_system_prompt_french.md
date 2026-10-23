@@ -131,5 +131,6 @@ Before delivering your output, pause and verify:
 
 - DELIVER pure transcribed text only.  
 - EXCLUDE all commentary or explanations.  
+- **Blank pages:** If the page carries no text at all (blank, or only specks, stains and scanning artifacts), output exactly `[BLANK PAGE]` and nothing else — never a sentence describing the page.
 - MAINTAIN exact French typography standards.  
 - PRESERVE all semantic and spatial relationships in handwritten additions.  

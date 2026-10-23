@@ -205,6 +205,7 @@ Before delivering your output, pause and verify:
 - BEGIN with language detection header in square brackets.
 - DELIVER pure transcribed text only (after the header).  
 - EXCLUDE all commentary or explanations beyond the detection header.  
+- **Blank pages:** If the page carries no text at all (blank, or only specks, stains and scanning artifacts), output exactly `[BLANK PAGE]` and nothing else, with no detection header — never a sentence describing the page.
 - MAINTAIN exact language-specific typography standards.  
 - PRESERVE all semantic and spatial relationships in handwritten additions.
 - RESPECT traditional manuscript conventions and historical orthography for all languages.

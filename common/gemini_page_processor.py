@@ -57,6 +57,13 @@ from common.rate_limiter import QuotaExhaustedError, RateLimiter, is_quota_exhau
 
 LOGGER = logging.getLogger(__name__)
 
+#: What the OCR and HTR prompts ask for on a page with no text. A model asked to
+#: transcribe a blank page otherwise describes it ("The page contains no legible
+#: text…"), and that sentence would be uploaded as archive full text; an empty
+#: answer cannot be told from a failed request. The loop turns the marker into
+#: an empty page that still counts as read.
+BLANK_PAGE_MARKER = "[BLANK PAGE]"
+
 # Transient Gemini API errors worth retrying with backoff. Anything else — in
 # particular programming errors — must surface immediately instead of being
 # retried (a NameError was once retried with backoff here for months).
@@ -96,6 +103,7 @@ class PdfResult:
     successful_pages: int = 0
     failed_pages: List[int] = field(default_factory=list)
     truncated_pages: List[int] = field(default_factory=list)
+    blank_pages: List[int] = field(default_factory=list)
     quota_exhausted: bool = False
     output_file: Optional[Path] = None
     output_size: int = 0
@@ -333,7 +341,11 @@ class GeminiPageProcessor:
             page_num = page_idx + 1
             try:
                 text = self.process_page(page_source.page_bytes(page_idx), page_num)
-                if text and text.strip():
+                if text and is_blank_page(text):
+                    pages.append((page_num, ""))
+                    result.successful_pages += 1
+                    result.blank_pages.append(page_num)
+                elif text and text.strip():
                     pages.append((page_num, text))
                     result.successful_pages += 1
                     if TRUNCATION_MARKER in text:
@@ -370,12 +382,17 @@ class GeminiPageProcessor:
             destination = output_file if complete else output_file.parent / "partial" / output_file.name
             atomic_write_text(destination, _join_pages(pages))
             config = self.generation_config
+            if hasattr(config, "model_dump"):
+                config = config.model_dump(mode="json", exclude_none=True)
+            elif not isinstance(config, dict):  # ClaudePageProcessor's request settings are a dict
+                config = str(config)
             context = {"pipeline": "gemini-pages-v2", "model_key": self.model_key, "model_id": self.model_name,
-                       "configuration": config.model_dump(mode="json", exclude_none=True) if hasattr(config, "model_dump") else str(config),
+                       "configuration": config,
                        "user_prompt": self.policy.user_prompt, "media_resolution": self.policy.media_resolution}
             commit_artifact(destination, context=context, source_sha256=source_hash, complete=complete,
                             details={"total_pages": total_pages, "successful_pages": result.successful_pages,
-                                     "failed_pages": result.failed_pages, "truncated_pages": result.truncated_pages})
+                                     "failed_pages": result.failed_pages, "truncated_pages": result.truncated_pages,
+                                     "blank_pages": result.blank_pages})
             result.output_file = destination
             result.output_size = destination.stat().st_size
 
@@ -409,6 +426,8 @@ class GeminiPageProcessor:
                 f"  [green]✓[/] {result.successful_pages}/{result.total_pages} pages "
                 f"({result.success_rate:.0f}%)"
             )
+        if result.blank_pages:
+            self.console.print(f"  [dim]Blank pages:[/] {result.blank_pages}")
         if result.output_size:
             self.console.print(f"  [dim]Output size:[/] {result.output_size:,} bytes")
 
@@ -448,6 +467,17 @@ _API_ERROR_HINTS = {
     500: "Gemini API is experiencing issues. Retry later.",
     503: "Gemini API is experiencing issues. Retry later.",
 }
+
+
+def is_blank_page(text: str) -> bool:
+    """True when a page answer is the blank-page marker.
+
+    Bracketed header lines beside it are tolerated: the multilingual HTR prompt
+    asks every answer to open with a ``[Language: …]`` header.
+    """
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    return (BLANK_PAGE_MARKER in lines
+            and all(line.startswith("[") and line.endswith("]") for line in lines))
 
 
 def _join_pages(pages: List[Tuple[int, str]]) -> str:

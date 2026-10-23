@@ -9,6 +9,27 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-23 — Claude Sonnet 5.5 for OCR and HTR
+
+- `AI_ocr_extraction/02_gemini_ocr_processor.py` and
+  `AI_htr_extraction/gemini_htr_processor.py` accept `--model
+  claude-sonnet-5-5`. Both now offer `DOCUMENT_MODELS`, the Gemini tier plus
+  Sonnet; `common/claude_page_processor.py` runs Claude on the Gemini page loop
+  and replaces only the per-page request.
+- Each page is sent as the single-page PDF Gemini receives. Checked live on a
+  two-up Arabic scan split by cropping: Claude read only the cropped half.
+- A refusal skips the page. Anthropic's server-side `fallbacks` would have
+  re-run it on another model while step 03 stamped Sonnet as its author.
+- Blank pages: both models described them ("The page contains no legible
+  text…"), a sentence step 03 would have uploaded as full text. The OCR and
+  HTR prompts now ask for `[BLANK PAGE]`, which the page loop turns into an
+  empty page that still counts as read (`PdfResult.blank_pages`). An empty
+  answer was not an option: it cannot be told from a failed request. Checked
+  live on both models.
+- Trigger: a 168-page scan of al-Fārābī's *Ārāʾ ahl al-madīna al-fāḍila*,
+  read by Gemini 3.7 Flash and by Sonnet 5.5 for comparison (Sonnet: about
+  $2.70 at `low` effort).
+
 ### 2026-10-23 — Audio write step waits for every media file of an item
 
 - `AI_audio_summary/03` reads each item's `o:media` back and holds an item
@@ -695,6 +716,9 @@ What the constants used to explain in place. Dates are when the archive changed.
   78030) for `AI_NER` and `AI_reference_indexing`. Unlike Opus 5.5 this key is
   a registry key, and it is also the item's `dcterms:alternative`, because the
   registry key was chosen to match the API model id.
+- **2026-10-23** — `claude-sonnet-5-5` (item 188959, listed under category
+  78030) for OCR and HTR, which stamp it as `iwac:ocrModel`. Registry key and
+  `dcterms:alternative` are both the API model id, as for Haiku 5.5.
 
 ## Model registry (`common/llm_registry.py`)
 

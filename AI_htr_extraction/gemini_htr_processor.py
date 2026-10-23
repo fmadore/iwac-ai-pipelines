@@ -1,23 +1,25 @@
 """
-AI-Powered HTR (Handwritten Text Recognition) Script using Google Gemini
+AI-Powered HTR (Handwritten Text Recognition) Script using Google Gemini or Claude
 
 This script performs high-precision transcription of HANDWRITTEN documents (French, Arabic, or
-multilingual) using Google's Gemini vision model with direct PDF processing. It is engineered for
+multilingual) using Google's Gemini or Anthropic's Claude with direct PDF processing. It is engineered for
 research-grade, archival-quality extraction while preserving correct typography, reading order,
 and structural semantics.
 
 The page loop, retry policy, finish-reason handling and batch driver live in
-``common/gemini_page_processor.py``, shared with AI_ocr_extraction. This file
+``common/gemini_page_processor.py``, shared with AI_ocr_extraction; Claude runs
+on the same loop through ``common/claude_page_processor.py``. This file
 supplies what is specific to handwriting: the per-language system prompts, the
-user request, and the RECITATION fallback strategies.
+user request, and the RECITATION fallback strategies (Gemini only).
 
 Usage:
     python gemini_htr_processor.py
     python gemini_htr_processor.py --model gemini-3.1-pro --language arabic
     python gemini_htr_processor.py --pdf-dir /path/to/pdfs --rpm 5
+    python gemini_htr_processor.py --model claude-sonnet-5-5 --language arabic
 
 Requirements:
-    - Environment variable: GEMINI_API_KEY
+    - Environment variable: GEMINI_API_KEY, or ANTHROPIC_API_KEY for Claude
     - PDF files in the PDF/ directory (or --pdf-dir)
     - HTR system prompt files (htr_system_prompt_french.md, htr_system_prompt_arabic.md, etc.)
 """
@@ -37,6 +39,7 @@ from rich.panel import Panel
 console = Console()
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.claude_page_processor import ClaudePageProcessor, build_claude_client, claude_request_config
 from common.console_utils import count_table, key_value_table, print_file_table, standard_progress
 from common.gemini_page_processor import GeminiPageProcessor, PagePolicy, process_pdf_batch
 from common.gemini_utils import (
@@ -45,7 +48,8 @@ from common.gemini_utils import (
     extract_text_from_response,
     get_thinking_level,
 )
-from common.llm_provider import get_model_option, summary_from_option
+from common.llm_provider import DOCUMENT_MODELS, get_model_option, summary_from_option
+from common.llm_registry import PROVIDER_ANTHROPIC
 from common.rate_limiter import QuotaExhaustedError, RateLimiter, is_quota_exhausted
 from common.log_redaction import configure_logging
 
@@ -63,11 +67,10 @@ LANGUAGES = {
     "multilingual": ("text (detect language automatically)", "htr_system_prompt_multilingual.md"),
 }
 
-# Gemini models available for HTR, keyed by llm_provider registry key. Flash is
-# the pinned 3.7 rather than the rolling ``gemini-flash``: HTR output is written
-# back under an ``iwac:ocrModel`` annotation, and a rolling alias reports its own
-# version as "Gemini Flash Latest".
-HTR_MODELS = ["gemini-3.7-flash", "gemini-3.1-pro"]
+# The OCR tier: HTR output is written back under the same ``iwac:ocrModel``
+# annotation, so every key needs an authority item, and Flash is the pinned 3.7
+# because a rolling alias reports its own version as "Gemini Flash Latest".
+HTR_MODELS = DOCUMENT_MODELS
 
 
 def load_system_instruction(language: str) -> str:
@@ -159,7 +162,7 @@ def build_recitation_fallback(client, model_name: str, generation_config,
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Page-by-page handwritten text recognition (HTR) using Google Gemini",
+        description="Page-by-page handwritten text recognition (HTR) using Google Gemini or Claude",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -209,22 +212,31 @@ def main() -> int:
 
     console.print(Panel(
         "Process handwritten PDFs page-by-page without image conversion",
-        title="🚀 Page-by-Page PDF HTR using Google Gemini",
+        title="🚀 Page-by-Page PDF HTR using Google Gemini or Claude",
         border_style="cyan",
     ))
 
+    model_option = get_model_option(args.model, allowed_keys=HTR_MODELS)
+    is_claude = model_option.provider == PROVIDER_ANTHROPIC
+    console.print(f"[green]✅[/] Using model: [cyan]{model_option.model}[/]")
+
     load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
+    key_name = "ANTHROPIC_API_KEY" if is_claude else "GEMINI_API_KEY"
+    api_key = os.getenv(key_name)
     if not api_key:
-        console.print("[red]❌[/] GEMINI_API_KEY not found in environment variables!")
-        return
+        console.print(f"[red]❌[/] {key_name} not found in environment variables!")
+        return 1
     console.print("[green]✅[/] API Key loaded successfully")
 
     language = args.language or select_language_interactive()
     console.print(f"[green]✅[/] Using language: [cyan]{language.capitalize()}[/]")
 
-    model_option = get_model_option(args.model, allowed_keys=HTR_MODELS)
-    console.print(f"[green]✅[/] Using model: [cyan]{model_option.model}[/]")
+    # Both paths ask for as little thinking as the model offers: Gemini through
+    # the thinking-level clamp, Claude through its lowest effort.
+    request_config = (
+        claude_request_config(model_option, load_system_instruction(language), effort="minimal")
+        if is_claude else None
+    )
 
     pdf_dir = Path(args.pdf_dir) if args.pdf_dir else script_dir / "PDF"
     output_dir = script_dir / "OCR_Results"
@@ -233,8 +245,9 @@ def main() -> int:
     console.print(key_value_table([
         ("Model", summary_from_option(model_option)),
         ("Language", language.capitalize()),
-        ("Thinking Level", get_thinking_level(model_option.model)),
-        ("Media Resolution", HTR_MEDIA_RESOLUTION),
+        ("Effort", request_config["output_config"]["effort"]) if is_claude
+        else ("Thinking Level", get_thinking_level(model_option.model)),
+        ("Media Resolution", "n/a (Claude)" if is_claude else HTR_MEDIA_RESOLUTION),
         ("PDF Directory", str(pdf_dir)),
         ("Output Directory", str(output_dir)),
         ("Rate Limit", f"{args.rpm} RPM" if args.rpm else "None"),
@@ -243,36 +256,49 @@ def main() -> int:
     pdf_files = sorted(pdf_dir.glob("*.pdf"))
     if not pdf_files:
         console.print(f"\n[red]❌[/] No PDF files found in [cyan]{pdf_dir}[/]!")
-        return
+        return 1
 
     console.print()
     print_file_table(console, pdf_files, title=f"📚 PDF Files to Process ({len(pdf_files)})")
 
-    client = build_gemini_client(api_key)
     rate_limiter = RateLimiter(args.rpm, logger=LOGGER)
-    generation_config = build_generation_config(
-        model_option.model,
-        system_instruction=load_system_instruction(language),
-        max_output_tokens=65535,
-    )
-
-    processor = GeminiPageProcessor(
-        client,
-        model_option.model,
-        generation_config,
-        PagePolicy(
-            user_prompt=build_user_prompt(language),
-            media_resolution=HTR_MEDIA_RESOLUTION,
-            on_blocked=build_recitation_fallback(
-                client, model_option.model, generation_config, language, rate_limiter
-            ),
-        ),
+    common_kwargs = dict(
         rate_limiter=rate_limiter,
         console=console,
         logger=LOGGER,
         verbose=True,
         model_key=model_option.key,
     )
+    if is_claude:
+        # No RECITATION fallback: a Claude refusal skips the page (see
+        # common/claude_page_processor.py for why there is no model fallback).
+        processor = ClaudePageProcessor(
+            build_claude_client(api_key),
+            model_option.model,
+            request_config,
+            PagePolicy(user_prompt=build_user_prompt(language)),
+            **common_kwargs,
+        )
+    else:
+        client = build_gemini_client(api_key)
+        generation_config = build_generation_config(
+            model_option.model,
+            system_instruction=load_system_instruction(language),
+            max_output_tokens=65535,
+        )
+        processor = GeminiPageProcessor(
+            client,
+            model_option.model,
+            generation_config,
+            PagePolicy(
+                user_prompt=build_user_prompt(language),
+                media_resolution=HTR_MEDIA_RESOLUTION,
+                on_blocked=build_recitation_fallback(
+                    client, model_option.model, generation_config, language, rate_limiter
+                ),
+            ),
+            **common_kwargs,
+        )
 
     console.print()
     console.rule("[bold cyan]📄 Processing PDFs[/]")

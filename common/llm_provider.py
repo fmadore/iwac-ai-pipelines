@@ -74,6 +74,7 @@ from common.retry import PermanentError
 from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_TEXT_MODEL_KEY,
+    DOCUMENT_MODELS,
     GEMINI_DOCUMENT_MODELS,
     LEGACY_CLI_MODEL_KEYS,
     LLMConfig,

@@ -42,6 +42,7 @@ enough for the difference to show.
 | Provider | Approach | Best For |
 |----------|----------|----------|
 | **Gemini** | Vision model with custom prompts | French typography, column layouts, guided extraction |
+| **Claude** | Sonnet 5.5 through the same page loop and prompt | A second reading of the same pages |
 | **Mistral** | Dedicated OCR endpoint (OCR 4) | Fast whole-document extraction, lowest cost per page |
 
 ### Mistral OCR
@@ -61,6 +62,18 @@ python 02_mistral_ocr_processor.py --rpm 30 # space requests to 30/minute
 | Gemini 3.1 Pro (`gemini-3.1-pro`) | Slower | Higher | Higher | Complex layouts, poor scans |
 
 **Recommendation**: Start with Gemini 3.7 Flash. Switch to Pro for challenging documents or frequent copyright blocks.
+
+### Claude Sonnet 5.5
+
+`02_gemini_ocr_processor.py --model claude-sonnet-5-5` runs the same page loop,
+system prompt and output format through `common/claude_page_processor.py`, with
+`ANTHROPIC_API_KEY`. Each page goes in as the same single-page PDF Gemini
+receives; Claude honours its crop box, so a two-up scan split by cropping reads
+as one page. Effort is `low`, the lowest Sonnet has. Differences from Gemini:
+no media-resolution setting, no Files API fallback (a page over 22 MB fails),
+and a refusal skips the page rather than falling back to another model, since
+step 03 would stamp Sonnet on text it did not write. One 168-page Arabic book
+cost about $2.70.
 
 Gemma 4 is not offered: Google serves it on the Gemini API only on a free tier
 whose content it uses to improve its products, and its OpenRouter route cannot

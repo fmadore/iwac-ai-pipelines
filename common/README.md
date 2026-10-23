@@ -307,6 +307,13 @@ Behaviour worth knowing:
 - No output file is written unless at least one page succeeded, so `PdfResult.ok`
   means "this run produced something", not "a file of some size exists".
 
+`claude_page_processor.ClaudePageProcessor` subclasses it for Claude Sonnet 5.5
+and replaces only `process_page`: the page goes in as a PDF `document` block,
+depth is `output_config.effort` (`claude_request_config()`), `max_tokens`
+salvages like `MAX_TOKENS`, a refusal skips the page with no model fallback, and
+an exhausted credit balance — a 400 on Anthropic — raises `QuotaExhaustedError`.
+Build the client with `build_claude_client()` for the finite deadline.
+
 ---
 
 ## Omeka Text Updater (`omeka_text_updater.py`)

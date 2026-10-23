@@ -1,31 +1,31 @@
 """
-AI-Powered Direct PDF Processing using Google Gemini / Gemma (Page-by-Page)
+AI-Powered Direct PDF Processing using Google Gemini or Claude (Page-by-Page)
 
 This script performs high-precision OCR on PDF documents by sending them directly to Gemini
-page-by-page, without converting to images first. This leverages Gemini's native PDF understanding
+or Claude page-by-page, without converting to images first. This leverages Gemini's native PDF understanding
 while maintaining precise control over page-by-page extraction.
 
 The page loop, retry policy, finish-reason handling and batch driver live in
-``common/gemini_page_processor.py``, shared with AI_htr_extraction. This file
+``common/gemini_page_processor.py``, shared with AI_htr_extraction; Claude runs
+on the same loop through ``common/claude_page_processor.py``. This file
 supplies only what is specific to printed-page OCR: the system prompt, the user
 request, and the generation settings.
 
 Usage:
     python 02_gemini_ocr_processor.py
     python 02_gemini_ocr_processor.py --model gemini-3.1-pro --rpm 5
+    python 02_gemini_ocr_processor.py --model claude-sonnet-5-5
 
 Requirements:
-    - Environment variable: GEMINI_API_KEY
+    - Environment variable: GEMINI_API_KEY, or ANTHROPIC_API_KEY for Claude
     - PDF files in the PDF/ directory
     - OCR system prompt in ocr_system_prompt.md
 
-Model Selection:
-    - Uses shared LLM provider with three options (all via the Gemini API):
-        * Gemini 3.7 Flash — faster, cost-effective, uses LOW thinking
-          (3.7 dropped MINIMAL; LOW is the shallowest rung it has.)
-        * Gemini Pro — higher quality, uses LOW thinking
-        * Gemma 4 31B    — open-weights flagship, uses MINIMAL thinking
-          (Gemma 4 accepts only MINIMAL or HIGH; MINIMAL is used for OCR speed.)
+Model Selection (``DOCUMENT_MODELS``):
+    * Gemini 3.7 Flash — faster, cost-effective, uses LOW thinking
+      (3.7 dropped MINIMAL; LOW is the shallowest rung it has.)
+    * Gemini 3.1 Pro — higher quality, uses LOW thinking
+    * Claude Sonnet 5.5 — Anthropic API, uses LOW effort (its lowest)
 
 Advantages over image-based approach:
     - No Poppler dependency needed
@@ -49,9 +49,11 @@ console = Console()
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.console_utils import count_table, key_value_table, print_file_table, standard_progress
+from common.claude_page_processor import ClaudePageProcessor, build_claude_client, claude_request_config
 from common.gemini_page_processor import GeminiPageProcessor, PagePolicy, process_pdf_batch
 from common.gemini_utils import build_generation_config, build_gemini_client, get_thinking_level
-from common.llm_provider import GEMINI_DOCUMENT_MODELS, LLMConfig, get_model_option, summary_from_option
+from common.llm_provider import DOCUMENT_MODELS, LLMConfig, get_model_option, summary_from_option
+from common.llm_registry import PROVIDER_ANTHROPIC
 from common.rate_limiter import RateLimiter
 from common.log_redaction import configure_logging
 
@@ -83,10 +85,10 @@ def load_system_instruction() -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Page-by-page OCR of PDFs using Google Gemini / Gemma."
+        description="Page-by-page OCR of PDFs using Google Gemini or Claude."
     )
     parser.add_argument(
-        "--model", choices=GEMINI_DOCUMENT_MODELS, default=None,
+        "--model", choices=DOCUMENT_MODELS, default=None,
         help="Model to use (default: interactive selection)",
     )
     parser.add_argument(
@@ -106,22 +108,24 @@ def main() -> int:
     configure_logging(log_file=LOG_FILE, terminal=False)
 
     console.print(Panel(
-        "[bold]AI-Powered PDF OCR using Google Gemini[/bold]\n"
+        "[bold]AI-Powered PDF OCR using Google Gemini or Claude[/bold]\n"
         "Processes PDFs page-by-page with native document understanding",
-        title="📄 Gemini OCR Processor",
+        title="📄 OCR Processor",
         border_style="cyan",
     ))
 
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        console.print("[red]✗[/] GEMINI_API_KEY not found in environment variables!")
-        return
-    console.print("[green]✓[/] API Key loaded successfully")
-
     console.print()
     console.rule("[bold cyan]🤖 Model Selection[/]")
-    model_option = get_model_option(args.model, allowed_keys=GEMINI_DOCUMENT_MODELS)
+    model_option = get_model_option(args.model, allowed_keys=DOCUMENT_MODELS)
+    is_claude = model_option.provider == PROVIDER_ANTHROPIC
+
+    load_dotenv()
+    key_name = "ANTHROPIC_API_KEY" if is_claude else "GEMINI_API_KEY"
+    api_key = os.getenv(key_name)
+    if not api_key:
+        console.print(f"[red]✗[/] {key_name} not found in environment variables!")
+        return 1
+    console.print("[green]✓[/] API Key loaded successfully")
 
     # OCR runs at the model's default temperature: Google recommends sending none
     # for Gemini 3, because a lowered one can make the model loop — on a page scan
@@ -132,14 +136,21 @@ def main() -> int:
     # exist is per-model and changes between releases (Gemini 3.7 Flash dropped
     # MINIMAL; Gemma 4 has only MINIMAL and HIGH). Naming the rung here is how
     # this line used to encode "Flash means MINIMAL", which stopped being true.
-    llm_config = LLMConfig(
-        thinking_level=get_thinking_level(model_option.model, "MINIMAL"),
-    )
+    #
+    # Claude's equivalent is the lowest effort it has, asked for the same way.
+    if is_claude:
+        request_config = claude_request_config(model_option, load_system_instruction(), effort="minimal")
+        depth = ("Effort", request_config["output_config"]["effort"])
+    else:
+        llm_config = LLMConfig(
+            thinking_level=get_thinking_level(model_option.model, "MINIMAL"),
+        )
+        depth = ("Thinking Level", get_thinking_level(model_option.model, llm_config.thinking_level))
 
     console.print(key_value_table([
         ("Model", summary_from_option(model_option)),
-        ("Thinking Level", get_thinking_level(model_option.model, llm_config.thinking_level)),
-        ("Media Resolution", OCR_MEDIA_RESOLUTION),
+        depth,
+        ("Media Resolution", "n/a (Claude)" if is_claude else OCR_MEDIA_RESOLUTION),
         ("Rate Limit", f"{args.rpm} RPM" if args.rpm else "None"),
     ]))
 
@@ -149,25 +160,37 @@ def main() -> int:
     pdf_files = sorted(pdf_dir.glob("*.pdf"))
     if not pdf_files:
         console.print(f"[red]✗[/] No PDF files found in {pdf_dir}!")
-        return
+        return 1
 
     console.print()
     print_file_table(console, pdf_files, title=f"📚 PDF Files to Process ({len(pdf_files)})")
 
-    processor = GeminiPageProcessor(
-        build_gemini_client(api_key),
-        model_option.model,
-        build_generation_config(
-            model_option.model,
-            thinking_level=llm_config.thinking_level,
-            system_instruction=load_system_instruction(),
-        ),
-        PagePolicy(user_prompt=OCR_USER_PROMPT, media_resolution=OCR_MEDIA_RESOLUTION),
+    common_kwargs = dict(
         rate_limiter=RateLimiter(args.rpm, logger=logging.getLogger(__name__)),
         console=console,
         logger=logging.getLogger(__name__),
         model_key=model_option.key,
     )
+    if is_claude:
+        processor = ClaudePageProcessor(
+            build_claude_client(api_key),
+            model_option.model,
+            request_config,
+            PagePolicy(user_prompt=OCR_USER_PROMPT),
+            **common_kwargs,
+        )
+    else:
+        processor = GeminiPageProcessor(
+            build_gemini_client(api_key),
+            model_option.model,
+            build_generation_config(
+                model_option.model,
+                thinking_level=llm_config.thinking_level,
+                system_instruction=load_system_instruction(),
+            ),
+            PagePolicy(user_prompt=OCR_USER_PROMPT, media_resolution=OCR_MEDIA_RESOLUTION),
+            **common_kwargs,
+        )
     console.print("[green]✓[/] Processor initialized")
 
     console.print()

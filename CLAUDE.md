@@ -96,7 +96,7 @@ dependency-free model catalog and config defaults live in
 
 **Pipelines pick a model *tier*, not a list of keys.** `TEXT_ECONOMY_MODELS`,
 `TEXT_EXTENDED_MODELS`, `TEXT_FULL_MODELS`, `TEXT_OPEN_MODELS` and
-`GEMINI_DOCUMENT_MODELS` live in `llm_registry`; a pipeline's `ALLOWED_MODELS`
+`DOCUMENT_MODELS` live in `llm_registry`; a pipeline's `ALLOWED_MODELS`
 should be one of them. Retiring a model is then a one-line change instead of a
 grep across five pipelines.
 
@@ -130,7 +130,7 @@ all hardcoded. Keep asking for `minimal` to mean "as little as this model offers
 never branch on a model name to pick the rung.
 
 **Prefer a pinned model id wherever a run's model gets written down.** The tiers
-and `GEMINI_DOCUMENT_MODELS` offer `gemini-3.7-flash`, not the rolling
+and `DOCUMENT_MODELS` offer `gemini-3.7-flash`, not the rolling
 `gemini-flash`, because whatever a tier picks is what step 03 stamps into an
 `iwac:*Model` annotation — and a rolling alias reports its own version as the
 string "Gemini Flash Latest". `TEXT_FULL_MODELS` still carries rolling entries on
@@ -160,7 +160,8 @@ claims.
 
 **Multimodal pipelines are the exception** and call provider SDKs directly, because
 they need capabilities the shared provider does not expose. They must still use
-`common/gemini_utils.build_gemini_client()` so transport calls have a finite
+`common/gemini_utils.build_gemini_client()` (or, on the OCR/HTR Claude path,
+`common/claude_page_processor.build_claude_client()`) so transport calls have a finite
 deadline, plus `common/rate_limiter.py`: call `wait()` before each request, and translate provider
 errors with `is_quota_exhausted()` so daily-quota exhaustion raises
 `QuotaExhaustedError` (save partial results, stop) instead of being retried like a

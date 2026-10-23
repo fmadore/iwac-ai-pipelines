@@ -1051,12 +1051,12 @@ def test_models_without_authority_items_stay_out_of_stamping_tiers():
     """Neither has an Omeka authority item yet, so neither may sit where a run's
     model is stamped — only in the correction tier, which stamps nothing."""
     from common.iwac_config import AI_MODEL_ITEMS
-    from common.llm_registry import GEMINI_DOCUMENT_MODELS
+    from common.llm_registry import DOCUMENT_MODELS
 
     for key in ("gemini-3.8-flash", "gpt-6-sol"):
         assert key not in AI_MODEL_ITEMS
         assert key in TEXT_FULL_MODELS
-        for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, GEMINI_DOCUMENT_MODELS):
+        for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
             assert key not in tier
     # The bare aliases an operator types still mean the stampable Flash.
     assert normalize_model_key("gemini") == "gemini-3.7-flash"

@@ -45,6 +45,7 @@ DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
 DEFAULT_MISTRAL_SMALL = "mistral-small-2603"
 ANTHROPIC_HAIKU_55_MODEL = "claude-haiku-5-5"
+ANTHROPIC_SONNET_55_MODEL = "claude-sonnet-5-5"
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"
@@ -291,6 +292,19 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_reasoning_effort="medium",
         supported_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
     ),
+    # Claude Sonnet 5.5: same request surface as Haiku 5.5 — adaptive thinking
+    # that cannot be disabled, ``output_config.effort`` low … max with default
+    # high, no sampling parameters — at $2/$10 per 1M. Offered for OCR and HTR
+    # (``DOCUMENT_MODELS``), which send it single-page PDFs through
+    # ``common/claude_page_processor.py``, not through ``AnthropicClient``.
+    # Verified live 2026-10-23: 168 pages of a scanned Arabic book.
+    "claude-sonnet-5-5": ModelOption(
+        "claude-sonnet-5-5", PROVIDER_ANTHROPIC, ANTHROPIC_SONNET_55_MODEL,
+        "Claude Sonnet 5.5",
+        "Anthropic Messages API — $2/$10 per 1M tokens",
+        default_reasoning_effort="high",
+        supported_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
+    ),
     # The same weights as ``gemma-4``, reached through OpenRouter under
     # ``data_collection: deny``. The Gemini route serves Gemma on the free tier,
     # whose content Google states it uses to improve its products — so this is
@@ -472,6 +486,10 @@ MODEL_ALIASES = {
     "claude-haiku": "claude-haiku-5-5",
     "claude-haiku-5.5": "claude-haiku-5-5",
     "haiku-5.5": "claude-haiku-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "claude-sonnet": "claude-sonnet-5-5",
+    "claude-sonnet-5.5": "claude-sonnet-5-5",
+    "sonnet-5.5": "claude-sonnet-5-5",
 }
 
 
@@ -512,6 +530,10 @@ TEXT_FULL_MODELS: List[str] = [
 # an operator who ran OCR with it had no honest answer at the write step, since
 # every Pro authority item names a version the run never confirmed.
 GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.7-flash", "gemini-3.1-pro"]
+# What OCR and HTR offer: the Gemini models plus Claude Sonnet 5.5, which reads
+# the same single-page PDFs through ``common/claude_page_processor.py``. Step 03
+# stamps whichever ran, so every key needs an authority item like the tiers above.
+DOCUMENT_MODELS: List[str] = GEMINI_DOCUMENT_MODELS + ["claude-sonnet-5-5"]
 LEGACY_CLI_MODEL_KEYS: List[str] = ["gpt-5-mini", "gpt-5.1", "gpt-5", "gpt-5-nano"]
 
 

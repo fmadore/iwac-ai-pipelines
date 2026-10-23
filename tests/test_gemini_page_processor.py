@@ -11,10 +11,12 @@ import pytest
 from rich.console import Console
 
 from common.gemini_page_processor import (
+    BLANK_PAGE_MARKER,
     TRUNCATION_MARKER,
     GeminiPageProcessor,
     PagePolicy,
     _join_pages,
+    is_blank_page,
 )
 from common import gemini_utils
 from common.gemini_utils import INLINE_REQUEST_LIMIT_BYTES
@@ -273,3 +275,34 @@ def test_processing_upload_honors_zero_wait_budget():
 
     client.files.get.assert_not_called()
     client.files.delete.assert_called_once_with(name="files/123")
+
+
+# ---------------------------------------------------------------------------
+# Blank pages
+# ---------------------------------------------------------------------------
+
+def test_blank_page_marker_is_recognised_with_or_without_a_header():
+    assert is_blank_page(BLANK_PAGE_MARKER)
+    assert is_blank_page(f"\n {BLANK_PAGE_MARKER} \n")
+    assert is_blank_page(f"[Language: Arabic]\n\n{BLANK_PAGE_MARKER}")
+    assert not is_blank_page(f"Some text\n{BLANK_PAGE_MARKER}")
+    assert not is_blank_page("The page contains no legible text.")
+
+
+def test_blank_page_counts_as_read_and_leaves_no_text(tmp_path):
+    """Both models described blank pages in a sentence that would reach Omeka;
+    the marker turns them into an empty page that keeps the document complete."""
+    processor, _ = make_processor(None)
+    output = tmp_path / "doc.txt"
+    (tmp_path / "doc.pdf").write_bytes(b"synthetic source")
+    answers = {1: "first", 2: BLANK_PAGE_MARKER, 3: "third"}
+
+    with patch("common.gemini_page_processor.PdfPageSource", return_value=fake_page_source(3)), \
+         patch.object(processor, "process_page", side_effect=lambda _b, n: answers[n]):
+        result = processor.process_pdf(tmp_path / "doc.pdf", output)
+
+    assert result.ok
+    assert result.blank_pages == [2]
+    text = output.read_text(encoding="utf-8")
+    assert BLANK_PAGE_MARKER not in text
+    assert text == "first\n\n--- Page 2 ---\n\n\n\n--- Page 3 ---\n\nthird"

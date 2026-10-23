@@ -1,6 +1,6 @@
 # Handwritten Text Recognition (HTR)
 
-Transcribe handwritten manuscripts in French, Arabic, or other languages using Gemini vision models.
+Transcribe handwritten manuscripts in French, Arabic, or other languages using Gemini or Claude.
 
 ## Why This Tool?
 
@@ -59,6 +59,10 @@ Each mode uses a specialized prompt (`htr_system_prompt_*.md`) with language-spe
 |-------|-------|----------|----------|
 | Gemini 3.7 Flash | Faster | Good | Clear handwriting, bulk processing |
 | `gemini-3.1-pro` | Slower | Higher | Difficult scripts, faded ink |
+| `claude-sonnet-5-5` | Medium | Not yet benchmarked on handwriting | A second reading; needs `ANTHROPIC_API_KEY` |
+
+Claude runs on the same page loop at its lowest effort. It has no RECITATION
+fallback: a refused page is skipped and listed as failed.
 
 ## Output
 
@@ -93,6 +97,7 @@ Create `.env` in project root:
 
 ```bash
 GEMINI_API_KEY=your_key
+ANTHROPIC_API_KEY=your_key   # only for claude-sonnet-5-5
 ```
 
 ## Customization
