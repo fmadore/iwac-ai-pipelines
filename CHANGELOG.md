@@ -70,6 +70,20 @@ the changelog tells stories.
   single-file recordings under it and found no item; an identifier ending in a
   short number would have received all seven joined.
 
+### 2026-10-23 — Claude Haiku 5.5 annotates the corpus
+
+- IWAC vocabulary v1.6 declares its six `iwac:claudeHaiku55*` properties
+  (live IDs 399–404). The upload pre-flight found six additions and all 48
+  omitted properties empty.
+- Corpus pass over class 36: 16,617 of 16,618 eligible articles in 4.7 h,
+  zero PATCH failures. Item 113000 is left unannotated: every attempt
+  returned a null subjectivité beside centralité `Marginal`, Qwen3.8's fault.
+- The class has grown to 16,715 items since the August passes, so about
+  4,300 articles carry Haiku's reading alone (`docs/PENDING.md`).
+- An unhandled `requests.ConnectionError` prints the Omeka request URL,
+  credentials included, in its traceback: `configure_logging()` redacts log
+  records, not tracebacks. The run's log was scrubbed by hand.
+
 ### 2026-10-22 — Claude Haiku 5.5 joins the sentiment panel
 
 - `sentiment_core.PANEL` gains `claude_haiku_5_5` (`claude-haiku-5-5`,

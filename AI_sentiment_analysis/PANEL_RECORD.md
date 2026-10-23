@@ -28,6 +28,7 @@ Full-corpus wall clock, timed from the `ts` on the cache records at
 | DeepSeek V4 Flash 0731 | **31.5 h** | 391 |
 | Gemma 4 31B | **18.8 h** | 653 |
 | Qwen3.8 27B | ~7 h per 4,084-article shard on one H100 | 361 on 2× L40S, 540–576 on one H100 |
+| Claude Haiku 5.5 | **4.7 h** | 3,497 |
 
 DeepSeek is ~12× slower than Luna, and nothing like the retired preview's 9.7 s
 median: 0731 has no middle reasoning level, so the panel sends it `high`.
@@ -187,6 +188,31 @@ quantization of the open weights, which qualifies the "re-runnable from
 archived weights" claim exactly as it does for DeepSeek. `quantizations` in
 `OPENROUTER_PROVIDER_PREFS` would pin it, for every OpenRouter model at once.
 
+## Claude Haiku 5.5
+
+Corpus pass 2026-10-23 at `medium`, prompt `#d14ace9ac192`, through the
+Anthropic API at `--concurrency 6`, written live by `01`. A 10-article dry run
+came first (10/10, 18 s). The pass annotated 16,519 articles in 4 h 43 min
+(05:20–10:03 UTC), then stopped on a lost connection while listing the last
+page; re-running the same command finished the remaining 92 items.
+
+| | |
+|---|---|
+| Articles in the class | 16,715 |
+| Eligible (French or English, with text) | 16,618 |
+| Annotated | **16,617** |
+| Never annotated | 1 — item 113000 |
+| PATCH failures | 0 |
+
+Item 113000 failed on every attempt with Qwen3.8's fault: a null
+`subjectivite_score` beside centralité `Marginal`, which the schema's
+cross-field validator rejects. One article in 16,618 is no pattern, and it is
+left unannotated as Qwen's 153 were.
+
+Per-call latency was not measured separately; 3,497 items/hour at concurrency 6
+puts an item's whole cycle (Omeka read, model call, PATCH) near 6 s, Luna's
+range. Cost is not yet read from the Anthropic console.
+
 ## Panel composition
 
 **Size parity.** The open-weights members' active parameter counts are 6.5B
@@ -216,6 +242,7 @@ Measured or projected full-corpus figures (12,305 articles):
 | DeepSeek V4 Flash 0731 | **$10.95** | measured against the OpenRouter credits endpoint |
 | Gemma 4 31B | **~$8–12** projected | 3 calls; 3,940 in / ~1,100 out at $0.09–0.15 / $0.34–0.40. Not yet re-measured against the credits endpoint |
 | Qwen3.8 27B | GPU hours on festus | no token price |
+| Claude Haiku 5.5 | not yet measured | 16,617 articles, 2026-10-23; read the Anthropic console |
 | Gemini 3.5 Flash-Lite | **~$47** projected | retired from the panel 2026-08-14 without annotating |
 
 Three traps, each of which has caught this repo:

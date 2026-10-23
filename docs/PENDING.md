@@ -34,24 +34,20 @@ repointed to 195175 with the curator's approval.
 
 ## Claude Haiku 5.5 in the sentiment panel
 
-In `PANEL` since 2026-10-22, promoted without a pilot; nothing annotated yet.
-In order:
+In `PANEL` since 2026-10-22, promoted without a pilot. Its properties are in
+IWAC vocabulary v1.6 (uploaded) and it annotated 16,617 of 16,618 eligible
+articles on 2026-10-23. Left:
 
-1. **Upload its properties.** Add the output of
-   `AI_sentiment_analysis/00_setup_properties.py --emit-ttl` to
-   `iwac-vocabulary.ttl`, run `--verify`, then Admin → Vocabularies → IWAC
-   Ontology → Update. Until then `01` stops at startup ("Vocabulary not
-   ready") whenever Haiku is in the run, and with `ANTHROPIC_API_KEY` set a
-   run with no `--models` includes it: scope other members' runs with
-   `--models` until this is done.
-2. **Annotate the corpus.** `01_sentiment_analysis.py --resource-class-id 36
-   --models claude_haiku_5_5 --dry-run` on a small `--limit` first. Needs
-   `ANTHROPIC_API_KEY`. Record latency, cost per article (thinking tokens
-   included) and the wall clock in `PANEL_RECORD.md`, and set its coverage in
-   the README's panel table.
-3. **Measure what the pilot would have.** `02_pilot_new_panel.py --repeats 3
+1. **Cost.** Read the 2026-10-23 spend from the Anthropic console and put the
+   full-pass figure, thinking tokens included, in `PANEL_RECORD.md`'s cost
+   table.
+2. **Measure what the pilot would have.** `02_pilot_new_panel.py --repeats 3
    --sample-size 50` and `03_pilot_report.py` for its agreement and
    self-consistency, before a write-up leans on it.
+3. **Bring the other five up to date.** The article class grew from 12,349 to
+   16,715 items since their August passes, so about 4,300 articles carry
+   Haiku's reading alone. Run each member with `--models` over class 36; the
+   already-annotated guard skips what they have.
 
 ## Authority curation: before and after the first live pass
 

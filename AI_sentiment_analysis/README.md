@@ -63,16 +63,18 @@ cache keys and the pilot are all derived from it.
 | Mistral Small 4 | `mistral-small-2603`, Mistral | `iwac:mistralSmall2603*` | 79614 | `mistral_small_2603_` | 12,298 |
 | DeepSeek V4 Flash 0731 | `deepseek/deepseek-v4-flash-0731`, OpenRouter | `iwac:deepseekV4Flash0731*` | 83261 | `deepseek_v4_flash_0731_` | 12,298 |
 | Qwen3.8 27B | `Qwen/Qwen3.8-27B`, self-hosted vLLM | `iwac:qwen3827b*` | 111933 | `qwen3_8_27b_` | 12,098 |
-| Claude Haiku 5.5 | `claude-haiku-5-5`, Anthropic | `iwac:claudeHaiku55*` | 125443 | `claude_haiku_5_5_` | 0 |
+| Claude Haiku 5.5 | `claude-haiku-5-5`, Anthropic | `iwac:claudeHaiku55*` | 125443 | `claude_haiku_5_5_` | 16,617 |
 
 Coverage is the number of articles carrying the member's values on the live
-archive, read on 6 October 2026. The four API members cover every eligible
-article. Qwen3.8 covers 12,098 of the 12,251 articles in its input and stays
+archive, read on 6 October 2026 for the first five. The four API members cover
+every eligible article as of their August passes. Qwen3.8 covers 12,098 of the 12,251 articles in its input and stays
 there by decision: the 153 it never annotated concentrate on articles where
 Islam is marginal, so **its missing subjectivité is not missing at random**
 ([details](PANEL_RECORD.md#corpus-pass)). Claude Haiku 5.5 joined on
-2026-10-22 without a pilot and has not yet run; its properties need the
-vocabulary upload first (see [Adding a model](#adding-a-model-to-the-panel)).
+2026-10-22 without a pilot and ran on 2026-10-23, when the article class had
+grown to 16,715 items (16,618 eligible): it covers all of them but one, so
+about 4,300 articles carry Haiku's reading and no other member's yet
+([details](PANEL_RECORD.md#claude-haiku-55)).
 
 ### Why these six
 
