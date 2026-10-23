@@ -22,6 +22,7 @@ import pytest
 
 from common.iwac_config import AI_MODEL_ITEMS
 from common.llm_provider import MODEL_REGISTRY, PROVIDER_SELFHOSTED
+from common.llm_registry import resolve_reasoning_effort
 from sentiment_cache import CACHE_FORMAT_VERSION, SentimentCache
 from sentiment_core import (
     CENTRALITE_ITEM_IDS,
@@ -33,6 +34,7 @@ from sentiment_core import (
     RESULT_FIELD_SUFFIXES,
     SENTIMENT_MODEL_ANNOTATION_TERM,
     SUBJECTIVITE_ITEM_IDS,
+    panel_reasoning,
     request_timeout_for_budget,
 )
 
@@ -149,6 +151,15 @@ def test_every_member_has_a_declared_effective_reasoning_depth():
     # depth rather than a rounding of it. That is most of the reason it is being
     # piloted at all, and the manifest should not blur the distinction.
     assert PANEL_REASONING_EFFECTIVE["qwen3_8_27b"] == "medium"
+
+
+def test_claude_haiku_is_sent_the_panel_middle_rung():
+    # Haiku 5.5's effort ladder has a real ``medium``, so the panel's request
+    # reaches the API unchanged and the manifest may say so.
+    option = MODEL_REGISTRY[PANEL["claude_haiku_5_5"].registry_key]
+    requested = panel_reasoning("claude_haiku_5_5")["reasoning_effort"]
+    assert resolve_reasoning_effort(option, requested) == "medium"
+    assert PANEL_REASONING_EFFECTIVE["claude_haiku_5_5"] == "medium"
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +472,7 @@ def test_cache_is_granular_to_the_model(tmp_path, good_result):
     reloaded.load()
     assert reloaded.missing_models(1, PANEL) == [
         "mistral_small_2603", "deepseek_v4_flash_0731", "qwen3_8_27b",
+        "claude_haiku_5_5",
     ]
 
 

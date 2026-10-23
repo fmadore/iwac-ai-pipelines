@@ -25,7 +25,7 @@ At this scale, traditional manual processing—metadata tagging, OCR correction,
 | **YouTube Transcription** | Transcribe YouTube-hosted items from their URLs — no download — detecting the spoken languages and correcting the catalogue record from them |
 | **Handwritten Text Recognition** | Read manuscripts in French, Arabic, or mixed languages |
 | **Magazine Article Extraction** | Index individual articles within digitized periodicals |
-| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a five-model panel |
+| **Sentiment Analysis** | Evaluate centrality, subjectivity, and polarity of Islam/Muslim representations with a six-model panel |
 | **Reference Indexing** | Assign controlled subject and spatial keywords to scholarly references, with authority reconciliation and per-link model provenance |
 
 ## Limitations and Caveats

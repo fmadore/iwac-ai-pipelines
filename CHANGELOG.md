@@ -9,6 +9,19 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-22 — Claude Haiku 5.5 joins the sentiment panel
+
+- `sentiment_core.PANEL` gains `claude_haiku_5_5` (`claude-haiku-5-5`,
+  properties `iwac:claudeHaiku55*`, authority item 125443). Anthropic is a lab
+  no member shares and Haiku is its high-volume tier, so it fits the panel's
+  membership rules as a sixth voice. Promoted without a pilot, at the
+  curator's decision: no agreement or self-consistency figure precedes it.
+- It is sent the panel's `medium` unchanged: its `output_config.effort` ladder
+  (low / medium / high / xhigh / max) has a real middle rung, which before it
+  only GPT-5.6 Luna and Qwen3.8 could say. Three of six members now sit at a
+  genuine middle setting.
+- Its six properties are not yet in the vocabulary (`docs/PENDING.md`).
+
 ### 2026-10-22 — Acronyms match only in capitals
 
 - `build_authority_dict(acronyms_need_capitals=)`: a name of 2–6 capitals

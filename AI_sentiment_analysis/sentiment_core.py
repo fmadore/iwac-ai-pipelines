@@ -269,6 +269,8 @@ PANEL: Dict[str, PanelMember] = {
                     "DeepSeek V4 Flash 0731", "deepseekV4Flash0731"),
         PanelMember("qwen3_8_27b", "qwen3.8-27b-selfhosted",
                     "Qwen3.8 27B (self-hosted)", "qwen3827b"),
+        PanelMember("claude_haiku_5_5", "claude-haiku-5-5",
+                    "Claude Haiku 5.5", "claudeHaiku55"),
     )
 }
 
@@ -307,9 +309,9 @@ PILOT_CANDIDATES: Dict[str, PanelMember] = {
 #: because the vendors split on naming (Gemini ``thinking_level``, the rest
 #: ``reasoning_effort``); each client reads only its own.
 #:
-#: Only GPT-5.6 Luna and Qwen3.8 accept a genuine middle; Gemma 4, DeepSeek
-#: 0731 and Mistral Small 4 have no such rung and are rounded up to ``high``
-#: (:data:`PANEL_REASONING_OVERRIDES`). That is a real limit on comparability
+#: Only GPT-5.6 Luna, Qwen3.8 and Claude Haiku 5.5 accept a genuine middle;
+#: Gemma 4, DeepSeek 0731 and Mistral Small 4 have no such rung and are rounded
+#: up to ``high`` (:data:`PANEL_REASONING_OVERRIDES`). That is a real limit on comparability
 #: and belongs in any write-up. Gemma's depth through OpenRouter is on/off
 #: rather than graduated — read it as requested, never as measured. The
 #: levels each API accepts, and when they were verified: CHANGELOG.md.
@@ -338,8 +340,8 @@ _ROUNDED_UP_REASONING: Dict[str, str] = {
     "gemma_4_31b_it": "high (model has only MINIMAL|HIGH; medium rounded up)",
 }
 #: Covers candidates too, so a pilot manifest records the same fact production
-#: does. Qwen3.8 is absent from ``_ROUNDED_UP_REASONING`` on purpose: its ladder
-#: has a real middle rung, which is most of why it is being piloted.
+#: does. Qwen3.8 and Claude Haiku 5.5 are absent from ``_ROUNDED_UP_REASONING``
+#: on purpose: both ladders have a real middle rung.
 PANEL_REASONING_EFFECTIVE: Dict[str, str] = {
     key: _ROUNDED_UP_REASONING.get(key, "medium")
     for key in {**PANEL, **PILOT_CANDIDATES}
