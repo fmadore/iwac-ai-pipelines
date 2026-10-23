@@ -474,3 +474,51 @@ def test_the_cli_defaults_to_verbatim_and_opts_into_smart():
     assert transcribe.parse_args([]).smart is False
     assert transcribe.parse_args(["--smart"]).smart is True
     assert not hasattr(transcribe.parse_args([]), "verbatim")
+
+
+def timed(tokens, start=0.0, step=0.3, speaker="spk:0"):
+    """Words spoken *step* seconds apart."""
+    return [
+        {"text": t, "speaker": speaker, "start": round(start + n * step, 3), "end": round(start + n * step + step, 3)}
+        for n, t in enumerate(tokens)
+    ]
+
+
+def test_a_loop_timed_faster_than_speech_is_collapsed_to_one_copy():
+    """Item 15852: one ten-word phrase 651 times at ~39 words a second."""
+    phrase = "da su dai dai wallahi gwamnati tana ta mata kiyayya".split()
+    words = timed(["malam"]) + timed(phrase * 40, start=0.3, step=0.025) + timed(["amin"], start=11.0)
+    kept, loops = transcribe.collapse_loops(words)
+    assert [w["text"] for w in kept] == ["malam", *phrase, transcribe.LOOP_MARKER, "amin"]
+    assert loops[0]["repeats"] == 40
+    assert loops[0]["words_per_second"] > transcribe.LOOP_WORDS_PER_SECOND
+
+
+def test_repetition_at_a_speaking_rate_is_kept():
+    """Dhikr and chanted responses repeat for real; only the rate can tell them
+    from a loop, so a repeat count alone never triggers a collapse.
+    """
+    words = timed("la ilaha illallah".split() * 33, step=0.4)
+    kept, loops = transcribe.collapse_loops(words)
+    assert kept == words
+    assert loops == []
+
+
+def test_a_collapsed_loop_leaves_a_marker_in_the_body():
+    phrase = "sai ya zo".split()
+    words = timed(phrase * 20, step=0.02)
+    kept, _ = transcribe.collapse_loops(words)
+    text = bare()._format_text(interaction_with([]), kept)
+    assert text == f"[Speaker spk:0]\nsai ya zo {transcribe.LOOP_MARKER}"
+
+
+def test_untimed_repeats_are_left_alone():
+    words = [{"text": "wallahi", "speaker": "spk:0", "start": None, "end": None}] * 10
+    kept, loops = transcribe.collapse_loops(words)
+    assert kept == words and loops == []
+
+
+def test_a_short_fast_run_is_left_alone():
+    """"ku tsaya" ×3 in 0.6 s (item 15852) may be a crowd, not a stutter."""
+    words = timed("ku tsaya".split() * 3, step=0.1)
+    assert transcribe.collapse_loops(words) == (words, [])

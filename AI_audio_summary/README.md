@@ -134,6 +134,21 @@ punctuation is missing — this is a transcript, not an edition — but a reader
 a search index gets less from it than the word count suggests. Known limitation,
 not diagnosed.
 
+**On noise it loops, and `02c_` collapses the loop.** Where a recording has no
+voice or barely audible audio, the model can repeat one phrase hundreds of
+times: item 15852 has one ten-word phrase 651 times over three minutes, 5,900 of
+its 10,400 words. The word timings give it away — 38.8 words a second, where
+nothing a person said in that item ran above 9. A run of at least 20 words
+repeated at more than 10 words a second (`LOOP_WORDS_PER_SECOND`) is cut to its
+first copy followed by `[…]`; the raw words stay in the JSON sidecar, each
+collapse is listed there under `collapsed_loops`, and the header counts them.
+The rate is the test, never the repeat count: dhikr, takbir and chanted
+responses repeat for real in this archive and run at a speaking rate. The
+marker is a gap, not a repair — what was said under the loop was never
+transcribed. Without diarization the body is the model's own text and is not
+collapsed. A near-empty stretch, on the other hand, is usually right: the
+model writes little where there is nothing to hear.
+
 ## Transcription Modes (Gemini only)
 
 | Mode | Output | Best For |

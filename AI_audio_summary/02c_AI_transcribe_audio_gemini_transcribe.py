@@ -181,6 +181,72 @@ def format_clock(seconds: Optional[float]) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+#: Faster than any voice, so a repeat run spoken at this rate is the decoder
+#: looping, not the recording. Measured on item 15852: its loop ran at 38.8
+#: words a second, while every repetition a person could have said — refrains,
+#: a crowd, a dramatised exchange — stayed under 9. Real repetition is common
+#: in this archive (dhikr, takbir, chanted responses), which is why the test is
+#: the rate the words were timed at and never the repeat count alone. A short
+#: run is left alone at any rate: "ku tsaya" ×3 in 0.6 s, in the same item, is
+#: a crowd shouting over itself as plausibly as a decoder stutter.
+LOOP_WORDS_PER_SECOND = 10.0
+LOOP_MIN_REPEATS = 3
+LOOP_MIN_WORDS = 20
+LOOP_MAX_PHRASE_WORDS = 15
+LOOP_MARKER = "[…]"
+
+
+def _norm_token(text: Optional[str]) -> str:
+    return re.sub(r"[^\w']", "", (text or "").lower())
+
+
+def collapse_loops(words: List[dict]) -> Tuple[List[dict], List[dict]]:
+    """Drop the repeats of a phrase looped faster than speech, keeping one copy.
+
+    Returns ``(kept, loops)``. *kept* holds the first occurrence of each looped
+    phrase followed by a ``LOOP_MARKER`` pseudo-word, and is what the text body
+    is built from; the raw *words* stay in the JSON sidecar. *loops* records
+    each collapse. The marker is a gap, not a cut: whatever was said under the
+    loop was never transcribed.
+    """
+    norm = [_norm_token(w.get("text")) for w in words]
+    kept: List[dict] = []
+    loops: List[dict] = []
+    i = 0
+    while i < len(words):
+        best = None
+        for length in range(1, LOOP_MAX_PHRASE_WORDS + 1):
+            phrase = norm[i:i + length]
+            if len(phrase) < length or not all(phrase):
+                break
+            repeats = 1
+            while norm[i + repeats * length:i + (repeats + 1) * length] == phrase:
+                repeats += 1
+            if repeats >= LOOP_MIN_REPEATS and (best is None or repeats * length > best[0] * best[1]):
+                best = (length, repeats)
+        if best:
+            length, repeats = best
+            last = words[i + length * repeats - 1]
+            start, end = words[i].get("start"), last.get("end") or last.get("start")
+            if length * repeats >= LOOP_MIN_WORDS and start is not None and end is not None and end > start:
+                rate = length * repeats / (end - start)
+                if rate > LOOP_WORDS_PER_SECOND:
+                    kept.extend(words[i:i + length])
+                    kept.append({**words[i + length - 1], "text": LOOP_MARKER})
+                    loops.append({
+                        "start": start,
+                        "end": end,
+                        "phrase": " ".join(w.get("text") or "" for w in words[i:i + length]),
+                        "repeats": repeats,
+                        "words_per_second": round(rate, 1),
+                    })
+                    i += length * repeats
+                    continue
+        kept.append(words[i])
+        i += 1
+    return kept, loops
+
+
 def validate_locales(codes: Sequence[str]) -> List[str]:
     """Return *codes* unchanged, or raise ``ValueError`` naming the unsupported ones.
 
@@ -409,6 +475,7 @@ class GeminiTranscribeTranscriber(TranscriberBase):
         try:
             blocks: List[str] = []
             words: List[dict] = []
+            loops: List[dict] = []
 
             for idx, segment_path in enumerate(segment_paths, start=1):
                 if total > 1:
@@ -430,7 +497,17 @@ class GeminiTranscribeTranscriber(TranscriberBase):
                 segment_words = self._collect_words(interaction, offset, idx if total > 1 else None)
                 words.extend(segment_words)
 
-                body = self._format_text(interaction, segment_words)
+                # Only a body built from the words can be repaired; without
+                # diarization it is output_text, and a loop there stays.
+                kept, segment_loops = collapse_loops(segment_words)
+                for loop in segment_loops:
+                    console.print(
+                        f"[yellow]⚠[/] Collapsed a loop at {format_clock(loop['start'])}: "
+                        f"«{loop['phrase']}» ×{loop['repeats']} ({loop['words_per_second']} words/s)"
+                    )
+                loops.extend(segment_loops)
+
+                body = self._format_text(interaction, kept)
                 if total > 1:
                     blocks.append(f"{segment_header(idx, total, self.segment_minutes)}\n{body}")
                 else:
@@ -441,7 +518,10 @@ class GeminiTranscribeTranscriber(TranscriberBase):
                 console.print(f"[yellow]⚠[/] Empty transcription for [cyan]{audio_path.name}[/]")
                 return None
 
-            return text, self._build_payload(audio_path, text, words, duration, total)
+            payload = self._build_payload(audio_path, text, words, duration, total)
+            if loops:
+                payload["collapsed_loops"] = loops
+            return text, payload
 
         finally:
             cleanup_temp_segments(audio_path, segment_paths)
@@ -552,6 +632,8 @@ class GeminiTranscribeTranscriber(TranscriberBase):
             ("Timestamps", "ON" if self.timestamps else "OFF"),
             ("Diarization", "ON" if self.diarize else "OFF"),
         ]
+        if payload.get("collapsed_loops"):
+            extra_fields.append(("Loops collapsed", str(len(payload["collapsed_loops"]))))
         txt_file = self.save_transcription(
             text,
             audio_path,
