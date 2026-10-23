@@ -43,6 +43,7 @@ of ``02_AI_transcribe_audio.py``:
 """
 
 import argparse
+import bisect
 import logging
 import json
 import os
@@ -188,11 +189,13 @@ def format_clock(seconds: Optional[float]) -> str:
 #: in this archive (dhikr, takbir, chanted responses), which is why the test is
 #: the rate the words were timed at and never the repeat count alone. A short
 #: run is left alone at any rate: "ku tsaya" ×3 in 0.6 s, in the same item, is
-#: a crowd shouting over itself as plausibly as a decoder stutter.
+#: a crowd shouting over itself as plausibly as a decoder stutter. The looped
+#: unit can be a whole paragraph: item 15887 repeated 390 words nine times, all
+#: stamped at one instant.
 LOOP_WORDS_PER_SECOND = 10.0
 LOOP_MIN_REPEATS = 3
 LOOP_MIN_WORDS = 20
-LOOP_MAX_PHRASE_WORDS = 15
+LOOP_MAX_PHRASE_WORDS = 600
 LOOP_MARKER = "[…]"
 
 
@@ -210,15 +213,25 @@ def collapse_loops(words: List[dict]) -> Tuple[List[dict], List[dict]]:
     loop was never transcribed.
     """
     norm = [_norm_token(w.get("text")) for w in words]
+    positions: Dict[str, List[int]] = {}
+    for index, token in enumerate(norm):
+        positions.setdefault(token, []).append(index)
     kept: List[dict] = []
     loops: List[dict] = []
     i = 0
     while i < len(words):
         best = None
-        for length in range(1, LOOP_MAX_PHRASE_WORDS + 1):
-            phrase = norm[i:i + length]
-            if len(phrase) < length or not all(phrase):
+        # A phrase repeats only where its first word recurs, so those are the
+        # only lengths worth trying.
+        later = positions.get(norm[i], [])
+        start_at = bisect.bisect_right(later, i)
+        for j in later[start_at:]:
+            length = j - i
+            if length > LOOP_MAX_PHRASE_WORDS:
                 break
+            phrase = norm[i:i + length]
+            if not all(phrase):
+                continue
             repeats = 1
             while norm[i + repeats * length:i + (repeats + 1) * length] == phrase:
                 repeats += 1
@@ -228,8 +241,9 @@ def collapse_loops(words: List[dict]) -> Tuple[List[dict], List[dict]]:
             length, repeats = best
             last = words[i + length * repeats - 1]
             start, end = words[i].get("start"), last.get("end") or last.get("start")
-            if length * repeats >= LOOP_MIN_WORDS and start is not None and end is not None and end > start:
-                rate = length * repeats / (end - start)
+            if length * repeats >= LOOP_MIN_WORDS and start is not None and end is not None:
+                # Copies stamped at one instant are as fast as a loop gets.
+                rate = length * repeats / (end - start) if end > start else float("inf")
                 if rate > LOOP_WORDS_PER_SECOND:
                     kept.extend(words[i:i + length])
                     kept.append({**words[i + length - 1], "text": LOOP_MARKER})
@@ -238,7 +252,8 @@ def collapse_loops(words: List[dict]) -> Tuple[List[dict], List[dict]]:
                         "end": end,
                         "phrase": " ".join(w.get("text") or "" for w in words[i:i + length]),
                         "repeats": repeats,
-                        "words_per_second": round(rate, 1),
+                        # None: every copy stamped at one instant (JSON has no Infinity).
+                        "words_per_second": round(rate, 1) if rate != float("inf") else None,
                     })
                     i += length * repeats
                     continue
@@ -503,7 +518,8 @@ class GeminiTranscribeTranscriber(TranscriberBase):
                 for loop in segment_loops:
                     console.print(
                         f"[yellow]⚠[/] Collapsed a loop at {format_clock(loop['start'])}: "
-                        f"«{loop['phrase']}» ×{loop['repeats']} ({loop['words_per_second']} words/s)"
+                        f"«{loop['phrase'][:80]}» ×{loop['repeats']} "
+                        f"({loop['words_per_second'] or 'all at one instant'} words/s)"
                     )
                 loops.extend(segment_loops)
 

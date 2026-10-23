@@ -128,6 +128,11 @@ the changelog tells stories.
   15852's third segment repeated one phrase 651 times at 38.8 words a second,
   over noise and near-silent audio, and step 03 would have uploaded it as
   `bibo:content`. Every genuine repetition in the same item ran under 9.
+- The looped unit may be up to 600 words, and copies stamped at one instant
+  count as the fastest loop there is: item 15887 repeated a 390-word paragraph
+  nine times at a single timestamp. The model also re-emits whole blocks timed
+  over or before their original, which no rate test sees; on set 2184 those
+  were cut by hand and logged under `manual_cuts` in each sidecar.
 
 ### 2026-10-21 — NER links checked against their article
 

@@ -522,3 +522,13 @@ def test_a_short_fast_run_is_left_alone():
     """"ku tsaya" ×3 in 0.6 s (item 15852) may be a crowd, not a stutter."""
     words = timed("ku tsaya".split() * 3, step=0.1)
     assert transcribe.collapse_loops(words) == (words, [])
+
+
+def test_a_looped_paragraph_is_collapsed_too():
+    """Item 15887: 390 words repeated nine times, every copy at one instant."""
+    paragraph = [f"w{n}" for n in range(390)]
+    words = timed(paragraph * 5, start=1489.4, step=0.0)
+    kept, loops = transcribe.collapse_loops(words)
+    assert [w["text"] for w in kept] == [*paragraph, transcribe.LOOP_MARKER]
+    assert loops[0]["repeats"] == 5
+    assert loops[0]["words_per_second"] is None
