@@ -125,6 +125,21 @@ the changelog tells stories.
   nine articles. The FOI link on 77180 stays: it names the front among the
   country's Islamic organisations. Backups in
   `AI_authority_curation/output/open_items_backup/`.
+- 2026-10-23, Danemark (428): 93 of its 124 place links were Togolese agency
+  reports (2020–2024) that never name Denmark — Danyi and Dankpen, Togolese
+  prefectures, taken for the country by a pass older than the `iwac:nerModel`
+  annotation. Haiku 5.5 read all 124; its verdicts matched a word count of
+  Danemark/danois/Copenhague/Jyllands exactly. The 93 were removed; the 31
+  kept include the 2006 cartoon protests and Danish embassy and DANIDA
+  projects. Review and backups in `AI_authority_curation/output/denmark_review/`.
+- 2026-10-23, Mamadou Bamba (1314) stays the researcher (author of a 2002
+  work at the Université Félix Houphouët-Boigny on Ivorian Sufi orders) and is
+  described; his press links named three other men, now 188930 (Ivorian
+  politician, National Assembly vice-president 1989, foreign minister 2003),
+  188934 (Burkinabè lieutenant-colonel, spokesman of the September 2015 coup)
+  and 188954 (deputy imam of Yamoussoukro, 1986). A 1979 "El Hadji Mamadou
+  Bamba" who cannot be placed was unlinked. Backups in
+  `AI_authority_curation/output/bamba_backup/`.
 
 ### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
 
