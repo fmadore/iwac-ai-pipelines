@@ -67,10 +67,10 @@ OCR_USER_PROMPT = (
     "Extract all visible text maintaining original formatting and structure."
 )
 
-# Archival newspaper scans are dense and often degraded. ULTRA_HIGH is only
-# accepted per-Part (GenerateContentConfig caps at HIGH), which is why the
-# resolution is set on the policy rather than in the generation config.
-OCR_MEDIA_RESOLUTION = "ULTRA_HIGH"
+# Archival newspaper scans are dense and often degraded: always the highest
+# resolution a PDF page accepts. That is HIGH — ULTRA_HIGH is image-only and a
+# 400 on a PDF part. Set on the policy, so the inline and Files API paths agree.
+OCR_MEDIA_RESOLUTION = "HIGH"
 
 
 def load_system_instruction() -> str:

@@ -47,7 +47,7 @@ names something no annotation can cite.
 
 Usage:
     python 03_omeka_transcription_updater.py --dry-run
-    python 03_omeka_transcription_updater.py --model gemini-3.7-flash
+    python 03_omeka_transcription_updater.py --model gemini-3.8-flash
     python 03_omeka_transcription_updater.py --no-model-annotation --yes
     python 03_omeka_transcription_updater.py --include-incomplete --dry-run
 
@@ -124,7 +124,7 @@ def annotation_key_for(generator: str) -> Optional[str]:
     """The ``AI_MODEL_ITEMS`` key a ``Generated using:`` header names, if any.
 
     Headers are written as ``"<vendor> <model id>"`` — ``"Google
-    gemini-3.7-flash"``, ``"Mistral voxtral-mini-2602"`` — and for every model
+    gemini-3.8-flash"``, ``"Mistral voxtral-mini-2602"`` — and for every model
     that has an authority item the id *is* the annotation key. Returns ``None``
     for the ones that do not, which is most of what this pipeline can produce.
     """

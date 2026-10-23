@@ -57,6 +57,17 @@ class QuotaExhaustedError(Exception):
     """
 
 
+class ServedModelMismatchError(QuotaExhaustedError):
+    """The provider answered with another model than the pinned one requested.
+
+    Every write step stamps the model a run *asked for*, so a silent reroute
+    makes every annotation of that run false. Subclassing QuotaExhaustedError
+    is deliberate: every pipeline already stops on it and keeps what it saved,
+    which is the right response here too. Raised by
+    :func:`common.llm_registry.check_served_model`.
+    """
+
+
 def is_quota_exhausted(error: Exception) -> bool:
     """Detect whether an API error indicates quota exhaustion (not a transient rate limit).
 

@@ -34,7 +34,7 @@ from rich.console import Console
 console = Console()
 
 # Header field naming what produced the transcription, e.g.
-# "Generated using: Google gemini-3.7-flash". ``03`` reads it back so the
+# "Generated using: Google gemini-3.8-flash". ``03`` reads it back so the
 # iwac:transcriptionModel annotation it writes can be checked against what
 # actually ran, rather than resting on the operator's memory of which script
 # filled this folder.
@@ -191,7 +191,7 @@ def read_header(path: Path) -> Dict[str, str]:
     """Parse the metadata header of a transcription file.
 
     Returns the ``Name: value`` lines written above the separator, e.g.
-    ``{"Transcription of": "khutba.mp3", "Generated using": "Google gemini-3.7-flash"}``.
+    ``{"Transcription of": "khutba.mp3", "Generated using": "Google gemini-3.8-flash"}``.
 
     A file with no separator has no header and yields ``{}``: never guess which
     leading lines were metadata, because a wrong guess here would let transcript
@@ -211,7 +211,7 @@ def read_body(path: Path) -> str:
 
     This is what ``03`` uploads. ``bibo:content`` is the archive's full-text
     field, exported to Hugging Face as ``OCR`` and indexed for search, so a
-    header left inside it puts "Generated using: Google gemini-3.7-flash" in the
+    header left inside it puts "Generated using: Google gemini-3.8-flash" in the
     index as though a speaker had said it. The header stays on disk, where it is
     auditable, and reaches Omeka as an ``iwac:transcriptionModel`` annotation
     instead. ``AI_youtube_transcription`` splits its own files for the same

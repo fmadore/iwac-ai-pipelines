@@ -171,6 +171,9 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     "claude-haiku-5-5": {"item_id": 125443, "display_title": "Claude Haiku 5.5"},
     "claude-sonnet-5-5": {"item_id": 188959, "display_title": "Claude Sonnet 5.5"},
     "gemini-3.1-pro": {"item_id": 78536, "display_title": "Gemini 3.1 Pro"},
+    "gemini-3.8-flash": {"item_id": 195175, "display_title": "Gemini 3.8 Flash"},
+    # Answered by 3.8 since Google deprecated it (found 2026-10-23); kept for
+    # the annotations written before. ``check_served_model`` refuses new runs.
     "gemini-3.7-flash": {"item_id": 111774, "display_title": "Gemini 3.7 Flash"},
     "gemini-3.6-flash": {"item_id": 79611, "display_title": "Gemini 3.6 Flash"},
     "gemini-3.5-flash-lite": {"item_id": 79617, "display_title": "Gemini 3.5 Flash-Lite"},

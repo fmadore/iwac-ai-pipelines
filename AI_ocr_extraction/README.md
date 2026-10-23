@@ -30,12 +30,13 @@ models. `--model` only cross-checks it. Preview first with `--dry-run`; skip the
 confirmation with `--yes`:
 
 ```bash
-python 03_omeka_content_updater.py --model gemini-3.7-flash --dry-run
+python 03_omeka_content_updater.py --model gemini-3.8-flash --dry-run
 ```
 
-Pages are sent at `ULTRA_HIGH` media resolution, which is only available per-Part
-— `GenerateContentConfig` caps at `HIGH`. Archival newspaper scans are dense
-enough for the difference to show.
+Pages are always sent at `HIGH` media resolution, the most a PDF page accepts
+(`ULTRA_HIGH` is image-only and a 400 on a PDF part), on the inline request and
+the Files API fallback alike: 1,096 tokens a page against 536 at the default.
+Archival newspaper scans are dense enough for the difference to show.
 
 ## Provider Comparison
 
@@ -58,10 +59,10 @@ python 02_mistral_ocr_processor.py --rpm 30 # space requests to 30/minute
 
 | Model | Speed | Quality | Cost | Notes |
 |-------|-------|---------|------|-------|
-| Gemini 3.7 Flash (`gemini-3.7-flash`) | Fast | Good | Low | Recommended for most documents |
+| Gemini 3.8 Flash (`gemini-3.8-flash`) | Fast | Good | Low | Recommended for most documents |
 | Gemini 3.1 Pro (`gemini-3.1-pro`) | Slower | Higher | Higher | Complex layouts, poor scans |
 
-**Recommendation**: Start with Gemini 3.7 Flash. Switch to Pro for challenging documents or frequent copyright blocks.
+**Recommendation**: Start with Gemini 3.8 Flash. Switch to Pro for challenging documents or frequent copyright blocks.
 
 ### Claude Sonnet 5.5
 

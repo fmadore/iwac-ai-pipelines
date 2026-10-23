@@ -27,9 +27,10 @@ The script extracts individual pages from each PDF and sends them directly to Ge
 4. Select model (Flash or Pro)
 5. Find transcriptions in `OCR_Results/`
 
-Pages are sent at `ULTRA_HIGH` media resolution — available per-Part only, since
-`GenerateContentConfig` caps at `HIGH` — because stroke detail is what
-distinguishes letters in handwriting.
+Pages are always sent at `HIGH` media resolution, the most a PDF page accepts
+(`ULTRA_HIGH` is image-only and a 400 on a PDF part), because stroke detail is
+what distinguishes letters in handwriting. The inline request and the Files API
+fallback carry the same resolution.
 
 A page that fails is reported in the run summary and left out of the transcript.
 It is never represented by an `[ERROR: ...]` placeholder in the text: that string
@@ -57,7 +58,7 @@ Each mode uses a specialized prompt (`htr_system_prompt_*.md`) with language-spe
 
 | Model | Speed | Accuracy | Best For |
 |-------|-------|----------|----------|
-| Gemini 3.7 Flash | Faster | Good | Clear handwriting, bulk processing |
+| Gemini 3.8 Flash | Faster | Good | Clear handwriting, bulk processing |
 | `gemini-3.1-pro` | Slower | Higher | Difficult scripts, faded ink |
 | `claude-sonnet-5-5` | Medium | Not yet benchmarked on handwriting | A second reading; needs `ANTHROPIC_API_KEY` |
 

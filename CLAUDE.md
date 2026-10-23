@@ -130,11 +130,19 @@ all hardcoded. Keep asking for `minimal` to mean "as little as this model offers
 never branch on a model name to pick the rung.
 
 **Prefer a pinned model id wherever a run's model gets written down.** The tiers
-and `DOCUMENT_MODELS` offer `gemini-3.7-flash`, not the rolling
+and `DOCUMENT_MODELS` offer `gemini-3.8-flash`, not the rolling
 `gemini-flash`, because whatever a tier picks is what step 03 stamps into an
 `iwac:*Model` annotation — and a rolling alias reports its own version as the
 string "Gemini Flash Latest". `TEXT_FULL_MODELS` still carries rolling entries on
 purpose: OCR correction writes no annotation of its own.
+
+**A pinned id is a request, not a guarantee.** Google retired
+`gemini-3.7-flash` by answering it with Gemini 3.8 Flash: no error, only
+`response.model_version` to tell, while every write step went on stamping 3.7.
+`llm_registry.check_served_model()` compares the two on every Gemini response —
+`build_gemini_client()` wraps `generate_content` with it and the text adapter
+calls it — and raises `ServedModelMismatchError`, a `QuotaExhaustedError`, so
+the run stops and keeps what it saved. Never catch it to carry on.
 
 **OpenRouter models carry a routing policy, not just a key.** Every request is
 pinned to `data_collection: "deny"` and `require_parameters` via

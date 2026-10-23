@@ -61,11 +61,10 @@ DEFAULT_PROMPT = """
 RETRYABLE_API_CODES = (429, 500, 503)
 
 #: The models on offer, in menu order, with the note shown beside each. This
-#: pipeline writes nothing to Omeka, so a model with no authority item — Gemini
-#: 3.8 Flash today — can be offered here before anywhere that stamps one.
+#: pipeline writes nothing to Omeka, so a model with no authority item can be
+#: offered here before anywhere that stamps one.
 ALLOWED_MODELS = {
     "gemini-pro-latest": "Higher quality, best for detailed transcription",
-    "gemini-3.7-flash": "Faster, good for summaries",
     "gemini-3.8-flash": "Newest Flash; spends more tokens by design on hard material",
 }
 DEFAULT_MODEL = "gemini-pro-latest"
@@ -379,7 +378,7 @@ def parse_args():
         epilog="""
 Examples:
   python AI_video_summary.py
-  python AI_video_summary.py --model gemini-3.7-flash
+  python AI_video_summary.py --model gemini-3.8-flash
   python AI_video_summary.py --video-folder my_videos --output-folder results
   python AI_video_summary.py --rpm 5
         """

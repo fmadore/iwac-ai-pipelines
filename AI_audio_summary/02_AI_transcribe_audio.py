@@ -60,12 +60,12 @@ load_dotenv()
 #: will refuse the folder it fills — ``tests/test_audio_pipeline.py`` guards that.
 ALLOWED_MODELS = {
     "gemini-pro-latest": "Higher quality, slower",
-    "gemini-3.7-flash": "Faster, good quality",
+    "gemini-3.8-flash": "Faster, good quality",
     "gemini-flash-lite-latest": "Fastest, cheapest, lowest latency",
 }
 # Pinned, so the default is a model step 03 can annotate; the rolling aliases
 # stay on offer for a run that does not go to Omeka.
-DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 # Default transcription prompt (fallback when no prompt file is selected)
 DEFAULT_PROMPT = """
@@ -104,8 +104,8 @@ class AudioTranscriber(TranscriberBase):
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use — 'gemini-pro-latest', 'gemini-3.7-flash', or
-                'gemini-flash-lite-latest'. Default is 'gemini-3.7-flash'.
+            model (str, optional): Model to use — 'gemini-pro-latest', 'gemini-3.8-flash', or
+                'gemini-flash-lite-latest'. Default is 'gemini-3.8-flash'.
                 The Flash slot names a pinned release where the other two roll,
                 because each transcript records ``Generated using: Google
                 <model>`` in its header — and "gemini-flash-latest" names no

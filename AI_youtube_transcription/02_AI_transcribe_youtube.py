@@ -119,7 +119,7 @@ LANGUAGE_REPORT_NAME = "_language_report.json"
 #: confirm which model produced the text — and an annotation that names a model
 #: the run cannot confirm is provenance in name only. See the retired-key notes
 #: in ``common/iwac_config.py``.
-ALLOWED_MODELS = ("gemini-3.5-flash-lite", "gemini-3.7-flash")
+ALLOWED_MODELS = ("gemini-3.5-flash-lite", "gemini-3.8-flash")
 
 #: Flash-Lite by default: cost scales with runtime here, the corpus is 9.3 h of
 #: video today with more channels to come, and it is catalogued as overwhelmingly
@@ -132,7 +132,7 @@ ALLOWED_MODELS = ("gemini-3.5-flash-lite", "gemini-3.7-flash")
 #: language in the prompt is what makes Flash-Lite attempt Mooré at all — without
 #: it, it renders the speech as French — but attempting is not managing. Re-run
 #: whatever the language report flags as non-French with
-#: ``--model gemini-3.7-flash``.
+#: ``--model gemini-3.8-flash``.
 #:
 #: That second slot moved from 3.6 to 3.7 Flash on 2026-08-14. The Mooré
 #: comparison above was measured on 3.6 and has not been repeated on 3.7, so
@@ -630,13 +630,13 @@ def select_model_interactive() -> str:
     table.add_column("Model", style="green")
     table.add_column("Notes", style="dim")
     table.add_row("1", "gemini-3.5-flash-lite", "Default. Cheapest and fastest")
-    table.add_row("2", "gemini-3.7-flash", "Better on non-French speech")
+    table.add_row("2", "gemini-3.8-flash", "Better on non-French speech")
     console.print(table)
     choice = ask(
         f"\n[bold]Select a model (1-2) or press Enter for {DEFAULT_MODEL}:[/] ",
         fallback_note=f"using {DEFAULT_MODEL}",
     )
-    return "gemini-3.7-flash" if choice == "2" else DEFAULT_MODEL
+    return "gemini-3.8-flash" if choice == "2" else DEFAULT_MODEL
 
 
 def select_prompt(number: Optional[int]) -> Tuple[str, str]:

@@ -14,7 +14,7 @@ The approach:
 
 Supports multiple models via --model flag:
 - deepseek-v4-flash-0731 (default): DeepSeek official Flash release via OpenRouter
-- gemini-3.7-flash / gemini-3.8-flash: Gemini Flash, version-pinned
+- gemini-3.8-flash: Gemini Flash, version-pinned
 - gemini-pro: Gemini Pro - highest quality
 - gpt-6-luna: OpenAI GPT-6 Luna - cost-optimized tier
 - gpt-6-sol: OpenAI GPT-6 Sol - large tier
@@ -629,7 +629,7 @@ Examples:
   python 02_correct_alto_xml.py
 
   # Use Gemini 3.7 Flash
-  python 02_correct_alto_xml.py --model gemini-3.7-flash
+  python 02_correct_alto_xml.py --model gemini-3.8-flash
 
   # Custom directories and max lines per request
   python 02_correct_alto_xml.py --input-dir ./ALTO --output-dir ./ALTO_Corrected --max-lines 40

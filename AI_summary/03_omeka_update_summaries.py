@@ -40,7 +40,7 @@ Requirements:
 Usage:
     python 03_omeka_update_summaries.py                        # model from the sidecars
     python 03_omeka_update_summaries.py --model gpt-6-luna
-    python 03_omeka_update_summaries.py --model gemini-3.7-flash --dry-run
+    python 03_omeka_update_summaries.py --model gemini-3.8-flash --dry-run
     python 03_omeka_update_summaries.py --replace-existing     # also overwrite values it did not write
 """
 

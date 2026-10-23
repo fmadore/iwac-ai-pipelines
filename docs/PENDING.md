@@ -6,37 +6,31 @@ whenever a change stops short of where it should end.
 
 Last reviewed 2026-09-27.
 
-## New models: verify, register, then promote
+## GPT-6 Sol: verify, register, then promote
 
-Gemini 3.8 Flash and GPT-6 Sol are in `MODEL_REGISTRY` but offered only where
-no model is stamped into Omeka (`TEXT_FULL_MODELS`, used by OCR correction, and
-the video summary). The steps below are in order: each depends on the one before.
+In `MODEL_REGISTRY` but offered only in `TEXT_FULL_MODELS` (OCR correction,
+which stamps nothing). In order:
 
-1. **Probe Gemini 3.8 Flash live.** Its `supported_thinking_levels`
-   (`low`/`medium`/`high`) come from Google's documentation, not from the API,
-   which the registry rule requires. Needs `GEMINI_API_KEY`: one
-   `generate_content` call per level, including `minimal` (expect a 400), plus
-   one OCR page with `media_resolution` and one `response_schema` call. Then
-   change the registry comment to "verified live" with the date. Check at the
-   same time which release `gemini-flash-latest` now serves.
-2. **Call GPT-6 Sol live.** Confirm the Responses API accepts
-   `text.verbosity`, the `reasoning.effort` values the pipelines send
-   (`low`, `medium`) and `responses.parse` structured output, and that the
-   registry's $2/$0.20/$10 rate matches the invoice. Needs `OPENAI_API_KEY`.
-3. **Create the Omeka authority items.** One each for Gemini 3.8 Flash and
-   GPT-6 Sol: class 244, template 3, item set 267, `dcterms:type` →
-   "Notice d'autorité". Add both to `AI_MODEL_ITEMS` in `common/iwac_config.py`.
-   Needs Omeka admin access.
-4. **Benchmark before promoting.** Run Gemini 3.8 Flash beside 3.7 on the same
-   OCR, HTR and summary samples. Google says 3.8 spends more tokens by design on
-   complex tasks, so compare cost per item as well as quality.
-5. **Promote.** Only after 3 and 4: add `gemini-3.8-flash` to
-   `GEMINI_DOCUMENT_MODELS`, `TEXT_ECONOMY_MODELS` and `TEXT_EXTENDED_MODELS`,
-   point the `gemini`/`flash` aliases at it, and decide whether
-   `AI_audio_summary/02` and `AI_youtube_transcription/02` offer it (both of their
-   write steps stamp a model). Decide which tiers GPT-6 Sol joins.
-   `tests/test_summary_annotation.py` fails if a stamping tier gets a model
-   with no authority item.
+1. **Call it live.** Confirm the Responses API accepts `text.verbosity`, the
+   `reasoning.effort` values the pipelines send (`low`, `medium`) and
+   `responses.parse` structured output, and that the registry's $2/$0.20/$10
+   rate matches the invoice. Needs `OPENAI_API_KEY`.
+2. **Create its Omeka authority item** (class 244, template 3, item set 267,
+   `dcterms:type` → "Notice d'autorité", listed under 78030) and add it to
+   `AI_MODEL_ITEMS`. Needs Omeka admin access.
+3. **Decide which tiers it joins.** `tests/test_summary_annotation.py` fails if
+   a stamping tier gets a model with no authority item.
+
+## Annotations that name Gemini 3.7 Flash but were written by 3.8
+
+Google answers `gemini-3.7-flash` with Gemini 3.8 Flash; found 2026-10-23,
+start date unknown. No local output stamped with 3.7 was made after 3.8 shipped
+(2026-09-02) except an OCR run that was never uploaded, but outputs made on
+another machine or since deleted cannot be ruled out, and Omeka does not index
+value annotations, so the affected items cannot be queried. Closes when Google's
+deprecation date is known and every `iwac:*Model` → 111774 written after it has
+been listed (from the HF mirror's provenance columns or a full scan) and
+repointed to 195175 with the curator's approval.
 
 ## Claude Haiku 5.5 in the sentiment panel
 

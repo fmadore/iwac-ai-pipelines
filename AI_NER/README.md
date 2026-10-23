@@ -64,7 +64,7 @@ different provenance; use `--force` to replace it deliberately.
 
 | Model | Provider | Speed | Cost |
 |-------|----------|-------|------|
-| `gemini-3.7-flash` | Google | Fast | Low |
+| `gemini-3.8-flash` | Google | Fast | Low |
 | `gemma-4-openrouter` | Google (Gemma 4 31B, open weights via OpenRouter) | Slow | Low |
 | `gpt-6-luna` | OpenAI | Fast | Low |
 | `mistral-small` | Mistral (hybrid reasoning) | Fast | Low |

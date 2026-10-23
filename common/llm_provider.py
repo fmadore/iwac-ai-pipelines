@@ -72,6 +72,7 @@ LOGGER = logging.getLogger(__name__)
 
 from common.retry import PermanentError
 from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
+    check_served_model,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_TEXT_MODEL_KEY,
     DOCUMENT_MODELS,
@@ -507,6 +508,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
             contents=user_prompt,
             config=gen_config,
         )
+        check_served_model(self.option.model, getattr(response, "model_version", None))
         self._record_usage(response)
         self._check_complete(response)
         text = getattr(response, "text", None)
@@ -568,6 +570,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
             contents=user_prompt,
             config=gen_config,
         )
+        check_served_model(self.option.model, getattr(response, "model_version", None))
         self._record_usage(response)
         self._check_complete(response)
 

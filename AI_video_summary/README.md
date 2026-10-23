@@ -26,8 +26,8 @@ The script sends video directly to Gemini, which analyzes both audio and visual 
 
 Or specify options directly:
 ```bash
-python AI_video_summary.py --model gemini-3.7-flash
-python AI_video_summary.py --model gemini-3.7-flash --prompt 1   # no menu: prompt 1 (0 = built-in)
+python AI_video_summary.py --model gemini-3.8-flash
+python AI_video_summary.py --model gemini-3.8-flash --prompt 1   # no menu: prompt 1 (0 = built-in)
 ```
 
 ## Processing Modes
@@ -45,7 +45,7 @@ MP4, MPEG, MOV, AVI, FLV, MPG, WebM, WMV, 3GPP
 
 | Model | Speed | Quality | Best For |
 |-------|-------|---------|----------|
-| `gemini-3.7-flash` | Faster | Good | Summaries, shorter videos |
+| `gemini-3.8-flash` | Faster | Good | Summaries, shorter videos |
 | `gemini-3.8-flash` | Faster | Newer Flash | Spends more tokens by design; introductory price until 2026-12-31 |
 | `gemini-pro-latest` | Slower | Higher | Detailed transcription, complex scenes |
 

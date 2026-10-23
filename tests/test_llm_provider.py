@@ -31,10 +31,10 @@ def test_alias_normalization():
     # The bare vendor name resolves to the *pinned* current Flash, not to the
     # rolling ``gemini-flash``: whatever a bare alias resolves to can end up
     # stamped in an iwac:*Model annotation, and a rolling id cannot be cited.
-    assert normalize_model_key("gemini") == "gemini-3.7-flash"
+    assert normalize_model_key("gemini") == "gemini-3.8-flash"
     assert normalize_model_key("openai") == "gpt-6-luna"
     assert normalize_model_key("mistral") == "mistral-large"
-    assert normalize_model_key("GEMINI") == "gemini-3.7-flash"
+    assert normalize_model_key("GEMINI") == "gemini-3.8-flash"
     assert normalize_model_key(None) is None
 
 
@@ -61,7 +61,7 @@ def test_get_model_option_by_key():
 
 def test_get_model_option_via_alias():
     option = get_model_option("gemini")
-    assert option.key == "gemini-3.7-flash"
+    assert option.key == "gemini-3.8-flash"
 
 
 def test_luna_upgrade_preserves_explicit_historical_model():
@@ -74,8 +74,8 @@ def test_luna_upgrade_preserves_explicit_historical_model():
 def test_allowed_keys_accept_aliases():
     # allowed_keys entries are normalized too: 'gemini' used to be rejected
     # even when the resolved key was allowed.
-    option = get_model_option("gemini", allowed_keys=["gemini-3.7-flash", "gpt-6-luna"])
-    assert option.key == "gemini-3.7-flash"
+    option = get_model_option("gemini", allowed_keys=["gemini-3.8-flash", "gpt-6-luna"])
+    assert option.key == "gemini-3.8-flash"
 
 
 def test_disallowed_model_rejected():
@@ -1048,19 +1048,52 @@ def test_gpt_6_sol_takes_the_sol_slot_and_keeps_5_6_reachable():
 
 
 def test_models_without_authority_items_stay_out_of_stamping_tiers():
-    """Neither has an Omeka authority item yet, so neither may sit where a run's
-    model is stamped — only in the correction tier, which stamps nothing."""
+    """No Omeka authority item yet, so it may not sit where a run's model is
+    stamped — only in the correction tier, which stamps nothing."""
     from common.iwac_config import AI_MODEL_ITEMS
     from common.llm_registry import DOCUMENT_MODELS
 
-    for key in ("gemini-3.8-flash", "gpt-6-sol"):
-        assert key not in AI_MODEL_ITEMS
-        assert key in TEXT_FULL_MODELS
-        for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
-            assert key not in tier
-    # The bare aliases an operator types still mean the stampable Flash.
-    assert normalize_model_key("gemini") == "gemini-3.7-flash"
+    assert "gpt-6-sol" not in AI_MODEL_ITEMS
+    assert "gpt-6-sol" in TEXT_FULL_MODELS
+    for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
+        assert "gpt-6-sol" not in tier
     assert normalize_model_key("gemini-3.8") == "gemini-3.8-flash"
+
+
+def test_rerouted_gemini_3_7_is_offered_nowhere():
+    """Google answers gemini-3.7-flash with 3.8 (model_version, 2026-10-23)."""
+    from common.iwac_config import AI_MODEL_ITEMS
+    from common.llm_registry import DOCUMENT_MODELS, TEXT_OPEN_MODELS
+
+    for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, TEXT_FULL_MODELS,
+                 TEXT_OPEN_MODELS, DOCUMENT_MODELS):
+        assert "gemini-3.7-flash" not in tier
+    assert normalize_model_key("gemini") == "gemini-3.8-flash"
+    assert normalize_model_key("flash") == "gemini-3.8-flash"
+    assert AI_MODEL_ITEMS["gemini-3.8-flash"]["item_id"] == 195175
+
+
+@pytest.mark.parametrize("requested, served", [
+    ("gemini-3.8-flash", "gemini-3.8-flash"),
+    ("gemini-3.8-flash", "gemini-3.8-flash-001"),
+    ("gemini-flash-latest", "gemini-3.8-flash"),   # rolling alias names no version
+    ("gemini-3.8-flash", None),                    # nothing reported
+])
+def test_served_model_accepted(requested, served):
+    from common.llm_registry import check_served_model
+    check_served_model(requested, served)
+
+
+def test_served_model_mismatch_stops_the_run():
+    from common.llm_registry import check_served_model
+    from common.rate_limiter import QuotaExhaustedError, ServedModelMismatchError
+
+    with pytest.raises(ServedModelMismatchError) as caught:
+        check_served_model("gemini-3.7-flash", "gemini-3.8-flash")
+    # Every pipeline already stops on QuotaExhaustedError and keeps its output.
+    assert isinstance(caught.value, QuotaExhaustedError)
+    with pytest.raises(ServedModelMismatchError):
+        check_served_model("gemini-3.8-flash", "gemini-3.8-flash-lite")
 
 
 # --- A cut-off answer is an error, never a result ---------------------------

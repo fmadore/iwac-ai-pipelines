@@ -220,7 +220,7 @@ still stops the run and saves what completed.
 | Model | Speed | Quality | Cost |
 |-------|-------|---------|------|
 | `gemini-flash-lite-latest` | Fastest | Good | ~$0.20-1/hour |
-| `gemini-3.7-flash` | Faster | Good | ~$0.50-2/hour |
+| `gemini-3.8-flash` | Faster | Good | ~$0.50-2/hour |
 | `gemini-pro-latest` | Slower | Higher | ~$5-15/hour |
 
 Use Flash-Lite for clean, single-speaker recordings on a budget, Flash for general use, Pro for noisy audio or multiple speakers.
@@ -294,14 +294,15 @@ points at an Omeka authority item, and three of the five models here have none:
 | Header | Annotated as | Why |
 |---|---|---|
 | `Google gemini-3.5-transcribe` | Gemini 3.5 Transcribe | Pinned release, item 113077 |
-| `Google gemini-3.7-flash` | Gemini 3.7 Flash | Pinned release, item 111774 |
+| `Google gemini-3.8-flash` | Gemini 3.8 Flash | Pinned release, item 195175 |
+| `Google gemini-3.7-flash` | Gemini 3.7 Flash | Item 111774, for transcripts made before Google began answering 3.7 with 3.8 |
 | `Google gemini-pro-latest` | — | Rolling alias: reports its version as "Gemini Pro Latest", so a run through it cannot say which release answered |
 | `Google gemini-flash-lite-latest` | — | Same |
 | `Mistral voxtral-mini-2602` | — | No authority item yet |
 
 So the default transcriber (`02c_`) needs no flag: its header names a pinned id
 with an authority item, and the annotation is written without being asked for.
-The Gemini transcriber (`02_`) defaults to the pinned `gemini-3.7-flash` for the
+The Gemini transcriber (`02_`) defaults to the pinned `gemini-3.8-flash` for the
 same reason; its rolling aliases stay on offer for a run that does not go to Omeka.
 
 For the three that cannot be cited, pass `--no-model-annotation` to upload the
@@ -459,7 +460,7 @@ Thank you for having me. I'm happy to be here...
 
 **Local languages on `02c_`**: Mooré, Dioula, Ewé, Kabyè and Dendi have no locale, and the API will not say so — see *Language coverage* above.
 
-**Provenance**: step 03 annotates only what it can name. `02c_` and `gemini-3.7-flash` output carries `iwac:transcriptionModel`; Voxtral output and anything produced through a rolling alias must be uploaded with `--no-model-annotation`, and its model then survives only in the on-disk transcript header. See *Provenance* above.
+**Provenance**: step 03 annotates only what it can name. `02c_` and `gemini-3.8-flash` output carries `iwac:transcriptionModel`; Voxtral output and anything produced through a rolling alias must be uploaded with `--no-model-annotation`, and its model then survives only in the on-disk transcript header. See *Provenance* above.
 
 ## Requirements
 

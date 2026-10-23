@@ -14,7 +14,7 @@ across all four.
 Usage:
     python 03_omeka_content_updater.py            # asks for confirmation, then updates live
     python 03_omeka_content_updater.py --dry-run  # fetch + report only, writes nothing
-    python 03_omeka_content_updater.py --model gemini-3.7-flash --yes
+    python 03_omeka_content_updater.py --model gemini-3.8-flash --yes
 
 Requirements:
     - Environment variables: OMEKA_BASE_URL, OMEKA_KEY_IDENTITY, OMEKA_KEY_CREDENTIAL

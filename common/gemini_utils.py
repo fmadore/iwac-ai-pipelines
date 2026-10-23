@@ -29,7 +29,7 @@ from typing import Optional, Union
 from google import genai
 from google.genai import types
 
-from common.llm_registry import clamp_thinking_level
+from common.llm_registry import check_served_model, clamp_thinking_level
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,13 +59,27 @@ def build_gemini_client(
     *,
     timeout_seconds: float = DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS,
 ) -> genai.Client:
-    """Create a direct multimodal client with a finite HTTP deadline."""
+    """Create a direct multimodal client with a finite HTTP deadline.
+
+    ``models.generate_content`` is wrapped so every response is checked against
+    the model it was asked for (:func:`check_served_model`): the pipelines that
+    use this client stamp that model into Omeka.
+    """
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
-    return genai.Client(
+    client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(timeout=max(1, int(timeout_seconds * 1000))),
     )
+    generate = client.models.generate_content
+
+    def checked_generate_content(*, model, **kwargs):
+        response = generate(model=model, **kwargs)
+        check_served_model(model, getattr(response, "model_version", None))
+        return response
+
+    client.models.generate_content = checked_generate_content
+    return client
 
 # ---------------------------------------------------------------------------
 # Reusable safety settings — disable all content filters for document

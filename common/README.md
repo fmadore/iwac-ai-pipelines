@@ -293,6 +293,11 @@ batch = process_pdf_batch(processor, pdf_files, output_dir, progress=progress)
 
 Behaviour worth knowing:
 
+- `PagePolicy.media_resolution` is set on the inline part and on the uploaded
+  file alike. A PDF part accepts at most `HIGH`; `ULTRA_HIGH` is image-only, a
+  400 on every Gemini model, and `PagePolicy` refuses it. Until 2026-10-23 OCR
+  and HTR asked for it, so every inline request failed and every page fell back
+  to an upload that carried no resolution at all — read at the default MEDIUM.
 - Inline requests are gated on `INLINE_REQUEST_LIMIT_BYTES`, not a hand-picked
   megabyte figure. Larger pages go straight to the Files API.
 - The inline attempt is made once. Any failure there, transient or not, falls

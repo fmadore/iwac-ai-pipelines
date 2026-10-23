@@ -9,6 +9,32 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-23 — Gemini 3.7 Flash is answered by 3.8; pages read at HIGH
+
+- Google now answers every request for `gemini-3.7-flash` with Gemini 3.8
+  Flash, with no error: only `response.model_version` says so, while every
+  write step went on stamping "Gemini 3.7 Flash" (item 111774). Found while
+  costing an OCR run; the other pinned Gemini ids answer as themselves.
+- `llm_registry.check_served_model()` now compares the served model with the
+  pinned one on every Gemini response (`build_gemini_client()` wraps
+  `generate_content`; the text adapter calls it) and raises
+  `ServedModelMismatchError`, a `QuotaExhaustedError`, so a run stops and
+  keeps what it saved. Rolling `-latest` aliases are exempt.
+- Gemini 3.8 Flash verified live (thinking `low`/`medium`/`high`, `minimal` a
+  400, PDF `media_resolution` up to `HIGH`, structured output), given
+  authority item 195175, and moved into every tier in place of 3.7; the bare
+  `gemini`/`flash` aliases follow. Audio, YouTube, video and the issue
+  summaries default to it. `gemini-3.7-flash` stays as a key for the
+  annotations already written; which of them 3.8 actually wrote is open
+  (`docs/PENDING.md`).
+- OCR and HTR asked for `ULTRA_HIGH`, which a PDF part rejects on every Gemini
+  model (image-only). Every inline page therefore failed with a 400 and fell
+  back to an upload that carried no resolution, so pages were read at the
+  default MEDIUM (536 tokens a page) and each cost two requests. Both now send
+  `HIGH` (1,096 tokens) on the inline and the upload path; `PagePolicy`
+  refuses `ULTRA_HIGH`. The OCR log shows no Gemini run between the
+  `ULTRA_HIGH` change (2026-07-27) and 2026-10-23.
+
 ### 2026-10-23 — Claude Sonnet 5.5 for OCR and HTR
 
 - `AI_ocr_extraction/02_gemini_ocr_processor.py` and
@@ -716,6 +742,9 @@ What the constants used to explain in place. Dates are when the archive changed.
   78030) for `AI_NER` and `AI_reference_indexing`. Unlike Opus 5.5 this key is
   a registry key, and it is also the item's `dcterms:alternative`, because the
   registry key was chosen to match the API model id.
+- **2026-10-23** — `gemini-3.8-flash` (item 195175, listed under category
+  78030), since Google answers `gemini-3.7-flash` with it. 111774 stays for the
+  annotations written before; `check_served_model` refuses new 3.7 runs.
 - **2026-10-23** — `claude-sonnet-5-5` (item 188959, listed under category
   78030) for OCR and HTR, which stamp it as `iwac:ocrModel`. Registry key and
   `dcterms:alternative` are both the API model id, as for Haiku 5.5.

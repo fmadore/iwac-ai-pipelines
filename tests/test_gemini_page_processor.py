@@ -136,13 +136,67 @@ def test_failed_inline_falls_back_to_upload():
 
 
 def test_media_resolution_is_set_on_the_part():
-    """ULTRA_HIGH is only accepted per-Part, not in GenerateContentConfig."""
-    policy = PagePolicy(user_prompt="Transcribe.", media_resolution="ULTRA_HIGH")
+    policy = PagePolicy(user_prompt="Transcribe.", media_resolution="HIGH")
     processor, _ = make_processor(make_response("text"), policy=policy)
 
     part = processor._build_part(b"%PDF")
 
-    assert part.media_resolution.level.value == "MEDIA_RESOLUTION_ULTRA_HIGH"
+    assert part.media_resolution.level.value == "MEDIA_RESOLUTION_HIGH"
+
+
+def test_uploaded_page_keeps_the_resolution():
+    """Sending the File object itself carried no resolution: every page that
+    fell back to the Files API was read at the default MEDIUM, silently."""
+    policy = PagePolicy(user_prompt="Transcribe.", media_resolution="HIGH")
+    processor, client = make_processor(make_response("text"), policy=policy)
+    uploaded = MagicMock(uri="https://generativelanguage.googleapis.com/v1beta/files/abc")
+
+    with patch("common.gemini_page_processor.upload_and_wait_active", return_value=uploaded), \
+         patch("common.gemini_page_processor.delete_uploaded_file"):
+        assert processor.process_page_upload(b"%PDF", 1) == "text"
+
+    part = client.models.generate_content.call_args.kwargs["contents"][0]
+    assert part.file_data.file_uri == uploaded.uri
+    assert part.media_resolution.level.value == "MEDIA_RESOLUTION_HIGH"
+
+
+def test_ultra_high_is_refused_for_pdf_pages():
+    """A 400 on every Gemini model for a PDF part (2026-10-23); image-only."""
+    with pytest.raises(ValueError, match="image-only"):
+        PagePolicy(user_prompt="Transcribe.", media_resolution="ULTRA_HIGH")
+
+
+def test_ocr_and_htr_send_high():
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for script, name in (("AI_ocr_extraction/02_gemini_ocr_processor.py", "OCR_MEDIA_RESOLUTION"),
+                         ("AI_htr_extraction/gemini_htr_processor.py", "HTR_MEDIA_RESOLUTION")):
+        spec = importlib.util.spec_from_file_location(f"_probe_{name}", root / script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert getattr(module, name) == "HIGH"
+
+
+def test_served_model_mismatch_stops_the_pdf(tmp_path):
+    """A reroute must stop the batch like an exhausted quota, keeping what was saved."""
+    from common.rate_limiter import ServedModelMismatchError
+
+    processor, _ = make_processor(None)
+    (tmp_path / "doc.pdf").write_bytes(b"synthetic source")
+
+    def pages(page_bytes, page_num):
+        if page_num == 1:
+            return "first page"
+        raise ServedModelMismatchError("asked for 3.7, answered by 3.8")
+
+    with patch("common.gemini_page_processor.PdfPageSource", return_value=fake_page_source(3)), \
+         patch.object(processor, "process_page", side_effect=pages):
+        with pytest.raises(QuotaExhaustedError):
+            processor.process_pdf(tmp_path / "doc.pdf", tmp_path / "doc.txt")
+
+    assert (tmp_path / "partial" / "doc.txt").read_text(encoding="utf-8") == "first page"
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +274,20 @@ def test_direct_multimodal_client_has_finite_timeout(monkeypatch):
     kwargs = constructor.call_args.kwargs
     assert kwargs["api_key"] == "test-key"
     assert kwargs["http_options"].timeout == 45_000
+
+
+def test_direct_multimodal_client_checks_the_served_model(monkeypatch):
+    """Every direct Gemini call is compared with the model it asked for."""
+    from common.rate_limiter import ServedModelMismatchError
+
+    sdk_client = MagicMock()
+    sdk_client.models.generate_content.return_value = MagicMock(model_version="gemini-3.8-flash")
+    monkeypatch.setattr(gemini_utils.genai, "Client", MagicMock(return_value=sdk_client))
+    client = gemini_utils.build_gemini_client("test-key")
+
+    assert client.models.generate_content(model="gemini-3.8-flash", contents="x").model_version
+    with pytest.raises(ServedModelMismatchError, match="gemini-3.8-flash"):
+        client.models.generate_content(model="gemini-3.7-flash", contents="x")
 
 
 def test_direct_multimodal_client_rejects_nonpositive_timeout():

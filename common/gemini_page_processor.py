@@ -77,9 +77,10 @@ class PagePolicy:
     Attributes:
         user_prompt: Sent after the document part, per Google's guidance that
             the document should come first.
-        media_resolution: Optional per-Part resolution. ``ULTRA_HIGH`` is only
-            accepted here, not in ``GenerateContentConfig`` — which is what
-            archival scans and handwriting want.
+        media_resolution: Optional per-Part resolution, set on the inline part
+            and on the uploaded file alike. A PDF part accepts at most ``HIGH``;
+            ``ULTRA_HIGH`` is for image parts and a 400 on a PDF (verified on
+            every Gemini model, 2026-10-23), so it is refused here.
         on_blocked: Called when the model returns RECITATION. Receives the page
             content (Part or uploaded File) and page number, and returns
             recovered text or None. Defaults to skipping the page.
@@ -92,6 +93,10 @@ class PagePolicy:
     on_blocked: Optional[Callable[[object, int], Optional[str]]] = None
     max_retries: int = 3
     base_delay: float = 5.0
+
+    def __post_init__(self):
+        if self.media_resolution and self.media_resolution.upper() == "ULTRA_HIGH":
+            raise ValueError("A PDF page accepts media_resolution up to HIGH; ULTRA_HIGH is image-only")
 
 
 @dataclass
@@ -148,15 +153,24 @@ class GeminiPageProcessor:
 
     # ---- Request helpers ---------------------------------------------------
 
+    def _resolution(self) -> dict:
+        if not self.policy.media_resolution:
+            return {}
+        return {"media_resolution": f"MEDIA_RESOLUTION_{self.policy.media_resolution.upper()}"}
+
     def _build_part(self, page_bytes: bytes):
         """Wrap page bytes as a PDF Part, with optional per-Part resolution."""
-        if self.policy.media_resolution:
-            return types.Part.from_bytes(
-                data=page_bytes,
-                mime_type="application/pdf",
-                media_resolution=f"MEDIA_RESOLUTION_{self.policy.media_resolution.upper()}",
-            )
-        return types.Part.from_bytes(data=page_bytes, mime_type="application/pdf")
+        return types.Part.from_bytes(data=page_bytes, mime_type="application/pdf", **self._resolution())
+
+    def _uploaded_part(self, uploaded):
+        """Refer to an uploaded page at the same resolution as the inline path.
+
+        Passing the File object itself sends no resolution, so a page that fell
+        back to the Files API was read at the default (MEDIUM) without a word.
+        """
+        return types.Part.from_uri(
+            file_uri=uploaded.uri, mime_type="application/pdf", **self._resolution()
+        )
 
     def _generate(self, page_content):
         self.rate_limiter.wait()
@@ -295,7 +309,8 @@ class GeminiPageProcessor:
                 max_wait=60,
                 poll_interval=1.0,
             )
-            return self._extract(self._generate(uploaded), uploaded, page_num)
+            part = self._uploaded_part(uploaded)
+            return self._extract(self._generate(part), part, page_num)
         finally:
             if uploaded is not None:
                 delete_uploaded_file(self.client, uploaded)
@@ -353,10 +368,10 @@ class GeminiPageProcessor:
                 else:
                     result.failed_pages.append(page_num)
 
-            except QuotaExhaustedError:
+            except QuotaExhaustedError as exc:
                 remaining = total_pages - page_idx
                 self.console.print(
-                    f"  [red]✗ Quota exhausted![/] Completed {result.successful_pages}/{total_pages} "
+                    f"  [red]✗ {exc}[/]\n  Completed {result.successful_pages}/{total_pages} "
                     f"pages, {remaining} remaining — stopping early"
                 )
                 self.logger.error(

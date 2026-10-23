@@ -7,8 +7,11 @@ catalog/provenance changes separate from transport implementation changes.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, fields
 from typing import Any, Dict, List, Optional
+
+from common.rate_limiter import ServedModelMismatchError
 
 
 PROVIDER_OPENAI = "openai"
@@ -195,13 +198,11 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     # the floor for both. See ``supported_thinking_levels`` and
     # ``clamp_thinking_level`` — pipelines still ask for MINIMAL meaning "as
     # little as this model allows", and the clamp is what makes that true.
-    # Gemini 3.8 Flash (GA 2026-09-02). LOW/MEDIUM/HIGH, no MINIMAL, per Google's
-    # model page and the ``thinking_level`` reference — documented, but not yet
-    # probed live as ``supported_thinking_levels`` requires (docs/PENDING.md).
-    # The clamp makes a request for "minimal" safe either way. Google warns it spends
-    # more tokens by design on complex tasks, and its introductory $0.75/$3.75
-    # becomes $1.50/$7.50 per 1M on 2027-01-01. No Omeka authority item yet, so
-    # it stays out of the tiers a write step stamps from.
+    # Gemini 3.8 Flash (GA 2026-09-02). Verified live 2026-10-23: LOW, MEDIUM
+    # and HIGH accepted, MINIMAL a 400; a PDF part takes ``media_resolution`` up
+    # to HIGH. Google warns it spends more tokens by design on complex tasks, and
+    # its introductory $0.75/$3.75 becomes $1.50/$7.50 per 1M on 2027-01-01.
+    # Authority item 195175; the Flash entry of every tier.
     "gemini-3.8-flash": ModelOption(
         "gemini-3.8-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_38_FLASH,
         "Gemini 3.8 Flash",
@@ -209,9 +210,13 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
     ),
+    # Deprecated: Google answers every request for this id with Gemini 3.8
+    # Flash (``model_version`` says so; verified 2026-10-23), so a run on it is
+    # refused by ``check_served_model``. The key stays for the annotations
+    # already written with item 111774; no tier offers it.
     "gemini-3.7-flash": ModelOption(
         "gemini-3.7-flash", PROVIDER_GEMINI, DEFAULT_GEMINI_37_FLASH,
-        "Gemini 3.7 Flash", "Google Gemini 3.7 Flash — version-pinned Flash",
+        "Gemini 3.7 Flash", "Google Gemini 3.7 Flash — deprecated, served by 3.8",
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
     ),
@@ -403,11 +408,11 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
 
 
 MODEL_ALIASES = {
-    "gemini": "gemini-3.7-flash",
-    "flash": "gemini-3.7-flash",
+    # A bare alias is what an operator types, and its output gets stamped, so it
+    # points at the pinned Flash Google actually serves.
+    "gemini": "gemini-3.8-flash",
+    "flash": "gemini-3.8-flash",
     "gemini-3.7": "gemini-3.7-flash",
-    # The bare "gemini"/"flash" stay on 3.7 until 3.8 has an authority item: a
-    # bare alias is what an operator types, and its output gets stamped.
     "gemini-3.8": "gemini-3.8-flash",
     "flash-lite": "gemini-flash-lite",
     "gemini-flash-lite-latest": "gemini-flash-lite",
@@ -493,7 +498,7 @@ MODEL_ALIASES = {
 }
 
 
-# Every tier offers the *pinned* ``gemini-3.7-flash`` rather than the rolling
+# Every tier offers the *pinned* ``gemini-3.8-flash`` rather than the rolling
 # ``gemini-flash``. A tier is what a pipeline picks when it does not name a
 # model, so it is also what gets stamped into an ``iwac:*Model`` annotation —
 # and a rolling alias reports its own version as the string "Gemini Flash
@@ -506,7 +511,7 @@ MODEL_ALIASES = {
 # Gemini route is a free tier whose content Google uses, so ``gemma-4`` is in
 # no tier at all.
 TEXT_ECONOMY_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.8-flash",
 ]
 TEXT_OPEN_MODELS: List[str] = [
     "qwen3.5-moe", "qwen3.5-moe-small", "qwen3.5-dense",
@@ -514,13 +519,13 @@ TEXT_OPEN_MODELS: List[str] = [
     "deepseek-v4-flash-0731", "deepseek-v4-pro",
 ]
 TEXT_EXTENDED_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.7-flash", "gemma-4-openrouter",
+    DEFAULT_TEXT_MODEL_KEY, "gpt-6-luna", "gemini-3.8-flash", "gemma-4-openrouter",
     "mistral-small", "qwen3.5-moe", "claude-haiku-5-5",
 ]
 # The one tier with room for models that have no authority item yet: OCR
 # correction, its only user, writes no model annotation of its own.
 TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-3.7-flash", "gemini-3.8-flash", "gemini-pro",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-3.8-flash", "gemini-pro",
     "gpt-6-luna", "gpt-6-sol", "mistral-large", "ministral-14b", "mistral-small",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]
@@ -529,7 +534,7 @@ TEXT_FULL_MODELS: List[str] = [
 # ``iwac:ocrModel``. ``gemini-pro`` was the rolling alias here until 2026-08-14 —
 # an operator who ran OCR with it had no honest answer at the write step, since
 # every Pro authority item names a version the run never confirmed.
-GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.7-flash", "gemini-3.1-pro"]
+GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.8-flash", "gemini-3.1-pro"]
 # What OCR and HTR offer: the Gemini models plus Claude Sonnet 5.5, which reads
 # the same single-page PDFs through ``common/claude_page_processor.py``. Step 03
 # stamps whichever ran, so every key needs an authority item like the tiers above.
@@ -646,6 +651,28 @@ def normalize_model_key(model_key: Optional[str]) -> Optional[str]:
         return None
     key = model_key.strip().lower()
     return MODEL_ALIASES.get(key, key)
+
+
+def check_served_model(requested: str, served: Optional[str]) -> None:
+    """Refuse a response that a different model wrote than the pinned one asked for.
+
+    Google retired ``gemini-3.7-flash`` by answering it with Gemini 3.8 Flash,
+    with no error and only ``model_version`` to tell — while every write step
+    went on stamping "Gemini 3.7 Flash". A rolling ``-latest`` alias is exempt
+    (it names no version to begin with), as is a response that reports none.
+    A numeric revision suffix (``…-001``) is the same model; ``…-lite`` is not.
+
+    Raises:
+        ServedModelMismatchError: which every pipeline treats as "stop the run".
+    """
+    if not served or requested.endswith("-latest"):
+        return
+    if served == requested or re.fullmatch(re.escape(requested) + r"-\d+", served):
+        return
+    raise ServedModelMismatchError(
+        f"Requested {requested!r} but the provider answered with {served!r}. "
+        f"Its output would be stamped with the wrong model: switch to the served model's key."
+    )
 
 
 def get_model_option(

@@ -160,7 +160,7 @@ place and flagging the item for review.
 | Model | Notes |
 |---|---|
 | `gemini-3.5-flash-lite` | **Default.** Cheapest and fastest. |
-| `gemini-3.7-flash` | Better on non-French speech in testing. |
+| `gemini-3.8-flash` | Better on non-French speech in testing. |
 
 Flash-Lite is the default because cost here scales with runtime, the corpus is
 9.3 h of video today with more channels to come, and it is catalogued as
@@ -189,12 +189,12 @@ Naming the language is what makes Flash-Lite attempt Mooré at all — without
 detection it renders the speech as French — but attempting is not managing.
 **The recommended run is therefore hybrid:** Flash-Lite over the corpus, then
 re-run whatever `_language_report.json` flags as non-French with
-`--model gemini-3.7-flash` into its own output directory, and upload the two
+`--model gemini-3.8-flash` into its own output directory, and upload the two
 folders separately so each carries the right `iwac:transcriptionModel`. Read even
 the Flash output as a lead rather than a quotation.
 
 ```bash
-python 02_AI_transcribe_youtube.py --model gemini-3.7-flash \
+python 02_AI_transcribe_youtube.py --model gemini-3.8-flash \
     --work-list work/retry.json --output-dir Transcriptions_flash
 ```
 
@@ -250,7 +250,7 @@ and raising `media_resolution` would only cost more.
 |---|---|
 | Measured input rate | ~93–103 tok/s at 1 fps (32 audio + ~61–71 frames) |
 | Measured output rate | 3.77 tok/s (Flash-Lite), 4.90 tok/s (3.6 Flash), no thinking tokens at `minimal` |
-| Thinking floor | `minimal` on Flash-Lite; 3.7 Flash has no `minimal` rung, so it runs at `low` |
+| Thinking floor | `minimal` on Flash-Lite; 3.8 Flash has no `minimal` rung, so it runs at `low` |
 | A 1M context window | ≈ 2.7 hours of video |
 | Default window (`--chunk-minutes`) | 45 min, ≈ 280k tokens — a margin, not the limit |
 | Longest video in the collection today | 33.6 min |
@@ -262,10 +262,10 @@ current on 2026-08-12 — check them rather than trusting this table:
 | model | input | output | corpus |
 |---|---|---|---|
 | `gemini-3.5-flash-lite` | $0.30/M | $2.50/M | **≈ $1.45** |
-| `gemini-3.7-flash` (to 2026-12-31) | $0.75/M | $3.75/M | **≈ $3.40** |
-| `gemini-3.7-flash` (from 2027-01-01) | $1.50/M | $7.50/M | **≈ $6.80** |
+| `gemini-3.8-flash` (to 2026-12-31) | $0.75/M | $3.75/M | **≈ $3.40** |
+| `gemini-3.8-flash` (from 2027-01-01) | $1.50/M | $7.50/M | **≈ $6.80** |
 
-3.7 Flash is on an introductory price that halves on 2027-01-01, to exactly what
+3.8 Flash is on an introductory price that doubles on 2027-01-01, to exactly what
 3.6 Flash cost; the corpus figures above are the same tokens at both rates. Its
 output rate has not been measured here, so the token counts are the 3.6 ones.
 
@@ -338,7 +338,7 @@ Two deliberate differences from `AI_audio_summary/03`:
 
 - **The file's header is stripped, not uploaded.** `bibo:content` is the archive's
   full-text field, exported to Hugging Face as `OCR` and indexed for search;
-  "Generated using: Google gemini-3.7-flash" inside it would be indexed as though
+  "Generated using: Google gemini-3.8-flash" inside it would be indexed as though
   a speaker had said it. The header stays on disk, where it is auditable.
 - **Transcripts are named `<item_id>.txt`**, so no `dcterms:identifier` lookup is
   needed — one fewer request per file, and no chance of matching the wrong item.

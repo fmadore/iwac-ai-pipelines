@@ -31,7 +31,7 @@ which **model profile** to run (or pass `--profile` / `--light` to skip the prom
 | Choice | Profile | Step 1 — per page | Step 2 — consolidation | Best for |
 |--------|---------|-------------------|------------------------|----------|
 | `1` / `a` | standard | Gemini Pro | DeepSeek V4 Flash 0731 | Best extraction quality |
-| `2` / `b` | light | Gemini 3.7 Flash | DeepSeek V4 Flash 0731 | Cheaper extraction |
+| `2` / `b` | light | Gemini 3.8 Flash | DeepSeek V4 Flash 0731 | Cheaper extraction |
 
 The profile controls only the quality-critical visual extraction. Both variants
 send the resulting typed page JSON to the shared default text model,
@@ -64,14 +64,15 @@ Older indexes read by a Claude model keep their `claude-opus-*` keys in
 | Provider | Model | Best For |
 |----------|-------|----------|
 | **Gemini** (standard profile) | Gemini Pro → DeepSeek V4 Flash 0731 | Best extraction quality, accurate article detection |
-| **Gemini** (light profile) | Gemini 3.7 Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
+| **Gemini** (light profile) | Gemini 3.8 Flash → DeepSeek V4 Flash 0731 | Cheaper visual extraction |
 | Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |
 
 Gemini model IDs come from the shared registry (`common/llm_registry.py`). The
 standard profile takes the rolling `gemini-pro-latest`, which always tracks the
-newest stable Pro; the light profile is pinned to `gemini-3.7-flash`, because
+newest stable Pro; the light profile is pinned to `gemini-3.8-flash`, because
 `gemini-flash-latest` rolled onto 3.7 on 2026-08-14 and 3.7 had dropped the
 `MINIMAL` thinking level, changing the model under a run that named no version.
+It moved from 3.7 to 3.8 when Google began answering 3.7 with 3.8 (2026-10-23).
 The Gemini version produces significantly better results than Mistral; use
 Mistral only for experimentation.
 

@@ -57,9 +57,9 @@ script_dir = Path(__file__).resolve().parent
 LOG_FILE = script_dir / 'log' / 'htr_gemini.log'
 LOGGER = logging.getLogger(__name__)
 
-# Handwriting needs the finest stroke detail available. ULTRA_HIGH is only
-# accepted per-Part — GenerateContentConfig caps at HIGH.
-HTR_MEDIA_RESOLUTION = "ULTRA_HIGH"
+# Handwriting needs the finest stroke detail available: HIGH, the most a PDF
+# page accepts (ULTRA_HIGH is image-only and a 400 on a PDF part).
+HTR_MEDIA_RESOLUTION = "HIGH"
 
 LANGUAGES = {
     "french": ("French", "htr_system_prompt_french.md"),
