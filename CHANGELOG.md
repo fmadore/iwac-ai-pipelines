@@ -105,8 +105,9 @@ the changelog tells stories.
   "Nations-Unies" for the UN, two Tidjania for the AIT, one bishops'
   conference for the CET). 108 links were removed on the curator's request,
   99 of them "aide" on the Turkish NGO AIDE (23467); none carried
-  `iwac:nerModel`, so all predate the annotation. Seven AIT/UL links are
-  left for the curator. Review and backups in
+  `iwac:nerModel`, so all predate the annotation. Of seven AIT/UL links
+  left for the curator, one more was removed (8374, the Ramatoulaye cheick
+  quoted in passing). Review and backups in
   `AI_authority_curation/output/acronym_review/`.
 
 ### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
