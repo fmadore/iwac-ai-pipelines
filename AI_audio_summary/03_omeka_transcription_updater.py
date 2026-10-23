@@ -300,8 +300,10 @@ class TranscriptionProcessor:
         """
         self.transcriptions_folder = transcriptions_folder
 
-        # Regex patterns for filename parsing
-        self.segment_pattern = re.compile(r'^(.+?)-(\d+)_transcription\.txt$')
+        # Regex patterns for filename parsing. A part number is short and an
+        # IWAC identifier ends in seven digits, so ``iwac-video-0000003`` is one
+        # whole recording, not part 3 of an identifier "iwac-video".
+        self.segment_pattern = re.compile(r'^(.+?)-(\d{1,3})_transcription\.txt$')
         self.single_pattern = re.compile(r'^(.+?)_transcription\.txt$')
 
     def parse_filename(self, filename: str) -> Tuple[Optional[str], Optional[int]]:

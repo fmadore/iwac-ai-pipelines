@@ -654,3 +654,13 @@ def test_include_incomplete_uploads_the_parts_that_exist(tmp_path):
     client = MediaClient(["iwac-video-0000023-1.mp4", "iwac-video-0000023-2.mp4"])
     updates, held = resolved(tmp_path, client, include_incomplete=True)
     assert [u.item_id for u in updates] == [15872] and held == []
+
+
+def test_a_single_file_recording_is_not_read_as_a_part(tmp_path):
+    """``iwac-video-0000003`` is item 15852 whole, not part 3 of "iwac-video"."""
+    make_transcript(tmp_path, "iwac-video-0000003", "Google gemini-3.5-transcribe")
+    make_transcript(tmp_path, "iwac-video-0000007", "Google gemini-3.5-transcribe")
+    make_transcript(tmp_path, "iwac-video-0000023-12", "Google gemini-3.5-transcribe")
+    groups = groups_for(tmp_path)
+    assert set(groups) == {"iwac-video-0000003", "iwac-video-0000007", "iwac-video-0000023"}
+    assert [segment for _, segment in groups["iwac-video-0000023"]] == [12]

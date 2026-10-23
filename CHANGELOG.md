@@ -18,6 +18,10 @@ the changelog tells stories.
 - Item set 2184's run stopped on depleted prepaid credits with item 15872 at
   four of its eight files: step 03 would have joined those four into one
   `bibo:content` with nothing to show the other half was missing.
+- A part suffix is now one to three digits. `iwac-video-0000003_transcription.txt`
+  parsed as part 3 of an identifier "iwac-video", so the dry run grouped seven
+  single-file recordings under it and found no item; an identifier ending in a
+  short number would have received all seven joined.
 
 ### 2026-10-22 — Claude Haiku 5.5 joins the sentiment panel
 
