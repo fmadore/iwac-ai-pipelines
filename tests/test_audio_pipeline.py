@@ -600,3 +600,57 @@ def test_include_incomplete_uploads_it_anyway(tmp_path):
     kept, held_back = updater.hold_back_incomplete(groups_for(tmp_path), include_incomplete=True)
 
     assert list(kept) == ["iwac-audio-0001"] and held_back == []
+
+
+# --- A recording in several media files is uploaded only when all are done ----
+
+class MediaClient:
+    """Answers 03's two lookups: the item by identifier, then each media record."""
+
+    def __init__(self, sources, unreadable=()):
+        self.media = {f"media/{n}": {"o:source": s} for n, s in enumerate(sources)}
+        self.unreadable = set(unreadable)
+
+    def search_items_by_property(self, *_args, **_kwargs):
+        return [{"o:id": 15872, "o:media": [{"@id": url} for url in self.media]}]
+
+    def get_resource(self, url):
+        return None if url in self.unreadable else self.media[url]
+
+
+def resolved(folder, client, **kwargs):
+    processor = updater.TranscriptionProcessor(folder)
+    return updater.resolve_updates(client, processor, processor.get_transcription_groups(), **kwargs)
+
+
+def test_an_item_with_an_untranscribed_part_is_held_back(tmp_path):
+    """Item 15872: a run stopped by quota after four of its eight files."""
+    for n in (1, 2):
+        make_transcript(tmp_path, f"iwac-video-0000023-{n}", "Google gemini-3.5-transcribe")
+    client = MediaClient(["Cover.JPG", "Notice.pdf", *(f"iwac-video-0000023-{n}.mp4" for n in (1, 2, 3))])
+    updates, held = resolved(tmp_path, client)
+    assert updates == []
+    assert held == [("iwac-video-0000023", "incomplete (1 media file(s) not transcribed: iwac-video-0000023-3.mp4)")]
+
+
+def test_an_item_with_every_part_transcribed_goes_through(tmp_path):
+    for n in (1, 2):
+        make_transcript(tmp_path, f"iwac-video-0000023-{n}", "Google gemini-3.5-transcribe")
+    client = MediaClient(["Cover.JPG", "iwac-video-0000023-1.mp4", "iwac-video-0000023-2.mp4"])
+    updates, held = resolved(tmp_path, client)
+    assert [u.item_id for u in updates] == [15872]
+    assert held == []
+
+
+def test_an_item_whose_media_cannot_be_read_is_not_assumed_complete(tmp_path):
+    make_transcript(tmp_path, "iwac-video-0000023-1", "Google gemini-3.5-transcribe")
+    client = MediaClient(["iwac-video-0000023-1.mp4"], unreadable={"media/0"})
+    updates, held = resolved(tmp_path, client)
+    assert updates == [] and held[0][1].startswith("unverified")
+
+
+def test_include_incomplete_uploads_the_parts_that_exist(tmp_path):
+    make_transcript(tmp_path, "iwac-video-0000023-1", "Google gemini-3.5-transcribe")
+    client = MediaClient(["iwac-video-0000023-1.mp4", "iwac-video-0000023-2.mp4"])
+    updates, held = resolved(tmp_path, client, include_incomplete=True)
+    assert [u.item_id for u in updates] == [15872] and held == []

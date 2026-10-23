@@ -9,6 +9,16 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-23 — Audio write step waits for every media file of an item
+
+- `AI_audio_summary/03` reads each item's `o:media` back and holds an item
+  back while one of its audio or video files has no transcription, as it
+  already did for a failed segment; a media record it cannot read holds the
+  item back too. `--include-incomplete` overrides both.
+- Item set 2184's run stopped on depleted prepaid credits with item 15872 at
+  four of its eight files: step 03 would have joined those four into one
+  `bibo:content` with nothing to show the other half was missing.
+
 ### 2026-10-22 — Claude Haiku 5.5 joins the sentiment panel
 
 - `sentiment_core.PANEL` gains `claude_haiku_5_5` (`claude-haiku-5-5`,

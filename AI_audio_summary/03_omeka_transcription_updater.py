@@ -29,6 +29,9 @@ A recording with a segment still marked ``TRANSCRIPTION FAILED`` is held back
 unless ``--include-incomplete`` is passed: once joined into one ``bibo:content``
 value, a missing twenty minutes is invisible, and the marker itself would be
 indexed as speech. ``02 --resume`` retries the failed segments in place.
+The same holds for a media file of the item that has no transcription yet:
+each item's ``o:media`` is read back, and an item whose audio or video files
+are not all in the folder waits for them.
 
 Each value written carries an ``iwac:transcriptionModel`` annotation naming the
 model that produced it, so a transcript's provenance survives outside the file
@@ -77,6 +80,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # importing it any other way — a test — would fail on `segments`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.ffmpeg_utils import AUDIO_FORMATS, VIDEO_FORMATS, sanitize_stem
 from common.gemini_utils import has_truncation_marker
 from common.iwac_config import (
     AI_MODEL_ITEMS,
@@ -96,6 +100,9 @@ from segments import GENERATOR_FIELD, failed_segments_in, read_body, read_header
 
 CONTENT_TERM = 'bibo:content'
 TRANSCRIPTION_MODEL_TERM = 'iwac:transcriptionModel'
+
+#: The media 01 downloads, and so the media an item's transcript should cover.
+MEDIA_EXTENSIONS = set(AUDIO_FORMATS) | set(VIDEO_FORMATS)
 
 #: Stands in for a transcription file whose header records no generator — one
 #: written before the field existed, or hand-edited.
@@ -380,19 +387,49 @@ class TranscriptionProcessor:
         return '\n'.join(contents).strip()
 
 
+def untranscribed_media(
+    client: OmekaClient, item: Dict, files: List[Tuple[Path, Optional[int]]]
+) -> Optional[List[str]]:
+    """The item's audio/video files that have no transcription among *files*.
+
+    A recording deposited as several media files is uploaded as one value, so a
+    part still missing — a run stopped by quota, say — would be invisible once
+    joined. Returns ``None`` when a media record could not be read: an item that
+    cannot be checked is not assumed complete.
+    """
+    transcribed = {path.name[:-len('_transcription.txt')] for path, _ in files}
+    missing: List[str] = []
+    for reference in item.get('o:media', []):
+        media = client.get_resource(reference['@id'])
+        if media is None:
+            return None
+        source = media.get('o:source') or ''
+        if Path(source).suffix.lower() not in MEDIA_EXTENSIONS:
+            continue
+        # The name 01 saved it under, and so the stem 02 named the transcript after.
+        local_name = sanitize_stem(re.sub(r'[<>:"/\\|?*]', '_', source)).strip(' .')
+        if Path(local_name).stem not in transcribed:
+            missing.append(source)
+    return missing
+
+
 def resolve_updates(
     client: OmekaClient,
     processor: "TranscriptionProcessor",
     groups: Dict[str, List[Tuple[Path, Optional[int]]]],
-) -> List[TextUpdate]:
+    *,
+    include_incomplete: bool = False,
+) -> Tuple[List[TextUpdate], List[Tuple[str, str]]]:
     """Resolve each identifier to an item and join its transcription segments.
 
     Unlike the other text updaters, files here are named after a
     dcterms:identifier rather than an item ID, so the lookup happens up front.
     Unresolved identifiers keep ``item_id=None`` and are reported as
-    ``not_found`` by the shared runner.
+    ``not_found`` by the shared runner. Items with a media file still
+    untranscribed are returned as ``(identifier, reason)`` instead.
     """
     updates: List[TextUpdate] = []
+    held_back: List[Tuple[str, str]] = []
     with console.status("[cyan]Matching identifiers to Omeka items...[/]"):
         for identifier, files in groups.items():
             item = search_item_by_identifier(client, identifier)
@@ -403,12 +440,32 @@ def resolve_updates(
 
             item_id = item.get('o:id')
             logging.info(f"Found item {item_id} for identifier {identifier}")
+            missing = untranscribed_media(client, item, files)
+            if missing is None and not include_incomplete:
+                held_back.append((identifier, "unverified (a media record could not be read)"))
+                continue
+            if missing and not include_incomplete:
+                held_back.append((
+                    identifier,
+                    f"incomplete ({len(missing)} media file(s) not transcribed: {', '.join(missing[:3])}"
+                    + (", …)" if len(missing) > 3 else ")"),
+                ))
+                continue
             updates.append(TextUpdate(
                 label=identifier,
                 item_id=int(item_id),
                 text=processor.read_and_join_transcriptions(files),
             ))
-    return updates
+    return updates, held_back
+
+
+def report_held_back(held_back: List[Tuple[str, str]], advice: str) -> None:
+    console.print(f"[yellow]⚠[/] {len(held_back)} recording(s) held back:")
+    for identifier, reason in held_back[:10]:
+        console.print(f"    [dim]{identifier}: {reason}[/]")
+    if len(held_back) > 10:
+        console.print(f"    [dim]… and {len(held_back) - 10} more[/]")
+    console.print(f"[dim]  {advice}[/]")
 
 
 def main() -> int:
@@ -430,7 +487,8 @@ def main() -> int:
     parser.add_argument(
         "--include-incomplete", action="store_true",
         help="Also upload recordings with a segment still marked TRANSCRIPTION "
-             "FAILED. A gap is invisible once the text is a single Omeka value.",
+             "FAILED, or with a media file not yet transcribed. A gap is "
+             "invisible once the text is a single Omeka value.",
     )
     add_write_guard_args(parser, default_backup_dir=SCRIPT_DIR / 'backups')
     args = parser.parse_args()
@@ -461,14 +519,10 @@ def main() -> int:
 
         groups, held_back = hold_back_incomplete(groups, include_incomplete=args.include_incomplete)
         if held_back:
-            console.print(f"[yellow]⚠[/] {len(held_back)} recording(s) held back:")
-            for identifier, reason in held_back[:10]:
-                console.print(f"    [dim]{identifier}: {reason}[/]")
-            if len(held_back) > 10:
-                console.print(f"    [dim]… and {len(held_back) - 10} more[/]")
-            console.print(
-                "[dim]  Retry them with 02_AI_transcribe_audio.py --resume, or pass "
-                "--include-incomplete to upload them as they are.[/]"
+            report_held_back(
+                held_back,
+                "Retry them with 02_AI_transcribe_audio.py --resume, or pass "
+                "--include-incomplete to upload them as they are.",
             )
         if not groups:
             console.print("\n[yellow]No complete transcriptions to upload.[/]")
@@ -509,7 +563,16 @@ def main() -> int:
                 TRANSCRIPTION_MODEL_TERM, model['display_title'], model['item_id'],
             )
 
-        updates = resolve_updates(client, processor, groups)
+        updates, missing_parts = resolve_updates(
+            client, processor, groups, include_incomplete=args.include_incomplete
+        )
+        if missing_parts:
+            report_held_back(
+                missing_parts,
+                "Transcribe the missing media files with step 02, or pass "
+                "--include-incomplete to upload what is there.",
+            )
+            held_back += missing_parts
         unresolved = sum(1 for u in updates if u.item_id is None)
         if unresolved:
             console.print(f"[yellow]⚠[/] {unresolved} identifier(s) had no matching Omeka item")

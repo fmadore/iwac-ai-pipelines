@@ -26,7 +26,8 @@ Omeka S or local files → Download media → AI transcription → Update databa
    transcript is uploaded — each file's metadata header stays on disk, because
    `bibo:content` is the archive's indexed full text. A recording with a segment
    still marked `TRANSCRIPTION FAILED` is held back until `02 --resume` fills it
-   (or `--include-incomplete` is passed)
+   (or `--include-incomplete` is passed), and so is an item with an audio or
+   video file that has no transcription yet
 
 ## Quick Start
 
