@@ -113,6 +113,18 @@ the changelog tells stories.
   left for the curator, one more was removed (8374, the Ramatoulaye cheick
   quoted in passing). Review and backups in
   `AI_authority_curation/output/acronym_review/`.
+- 2026-10-23, the remaining curator items. 654 ("CNOPM", Burkina) is the
+  Comité national d'organisation du pèlerinage re-created in December 2025:
+  retitled with its country, described, and left with its twelve 2025–2026
+  articles; its ten 1996–2004 articles moved to 579, nine generic, Ivorian or
+  Beninese links removed. Stub 14597 (CONACO "convoyeurs") is a journalist's
+  name for 781, which takes it as an alternative; its one link removed, the
+  stub left empty for the curator. Mahamadi Ouédraogo (1099) lost 17
+  homonym links (chauffeurs, inspectors, a journalist, a deputy) and the
+  STMB Tours administrator became 188677 Mahamadi Bangrin Ouédraogo with his
+  nine articles. The FOI link on 77180 stays: it names the front among the
+  country's Islamic organisations. Backups in
+  `AI_authority_curation/output/open_items_backup/`.
 
 ### 2026-10-21 — Titles qualified by a country reconcile bare in that country's run
 
