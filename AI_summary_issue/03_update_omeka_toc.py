@@ -55,6 +55,11 @@ from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 console = Console()
 BACKUP_DIR = Path(SCRIPT_DIR) / "backups"
 
+#: Written when consolidation finds no article — a special issue that is only a
+#: list of pilgrims, say. Skipping it left the item without a table of contents,
+#: so every later "issues without a ToC" query sent it back to be paid for again.
+NO_ARTICLES_TOC = "Aucun article rédactionnel identifié dans ce numéro."
+
 
 def format_article_toc(article: dict) -> str:
     """Format a single article from a final_index.json into a TOC line."""
@@ -88,9 +93,9 @@ def load_from_extractions(extractions_dir: Path) -> list:
         if data.get("extraction_errors"):
             raise ValueError(f"Incomplete table of contents: {index_files[0]}; retry extraction first")
         articles = data.get("articles", [])
-        if not articles:
-            continue
-        toc_text = "\n\n".join(format_article_toc(a) for a in articles)
+        toc_text = (
+            "\n\n".join(format_article_toc(a) for a in articles) if articles else NO_ARTICLES_TOC
+        )
         toc_entries.append({"item_id": item_id, "table_of_contents": toc_text, "path": index_files[0]})
     return toc_entries
 

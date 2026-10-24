@@ -157,3 +157,28 @@ def test_claude_empty_credit_stops_the_batch():
     with pytest.raises(QuotaExhaustedError):
         _claude_call(client)
     assert client.messages.create.call_count == 1
+
+
+# --- Step 03: an issue with no article still gets a table of contents -------
+
+TOC_SCRIPT = SCRIPT.with_name("03_update_omeka_toc.py")
+_TSPEC = importlib.util.spec_from_file_location("toc_updater", TOC_SCRIPT)
+toc_updater = importlib.util.module_from_spec(_TSPEC)
+sys.modules[_TSPEC.name] = toc_updater
+_TSPEC.loader.exec_module(toc_updater)
+
+
+def test_issue_without_articles_gets_a_note(tmp_path):
+    """Skipping it left the item looking unprocessed, so it was sent back to be paid for."""
+    import json
+
+    for item_id, articles in ((101, []), (102, [{"titre": "Le Hajj", "pages": "3", "resume": "Récit."}])):
+        folder = tmp_path / str(item_id)
+        folder.mkdir()
+        (folder / f"{item_id}_final_index.json").write_text(
+            json.dumps({"articles": articles}), encoding="utf-8"
+        )
+
+    entries = {e["item_id"]: e["table_of_contents"] for e in toc_updater.load_from_extractions(tmp_path)}
+    assert entries[101] == toc_updater.NO_ARTICLES_TOC
+    assert entries[102] == "p. 3 : Le Hajj\nRécit."

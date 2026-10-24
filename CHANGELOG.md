@@ -19,6 +19,11 @@ the changelog tells stories.
 - The `sonnet` profile reads the same single-page PDF into the same
   `PageExtraction` schema through structured output at `low` effort. Step 03
   stamps the consolidator: Gemini 3.8 Flash (195175) or Sonnet 5.5 (188959).
+- First run: 168 issues without a ToC read by Sonnet (*An-Nasr Vendredi* left
+  out, 412 more held back for budget), 167 written. The 168th, *Islam Info*
+  #411 (23757), is only the 2013 Hajj pilgrim list; step 03 skipped issues
+  with no article, which left them looking unprocessed. It now writes "Aucun
+  article rédactionnel identifié dans ce numéro." instead (`NO_ARTICLES_TOC`).
 
 ### 2026-10-23 — Gemini 3.7 Flash is answered by 3.8; pages read at HIGH
 
