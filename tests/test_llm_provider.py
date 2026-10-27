@@ -701,7 +701,10 @@ def test_anthropic_structured_sends_the_sdk_schema_and_validates_itself(monkeypa
     stub.messages.parse.assert_not_called()
     kwargs = stub.messages.create.call_args.kwargs
     assert kwargs["model"] == "claude-haiku-5-5"
-    assert kwargs["system"] == "system"
+    assert kwargs["system"] == [
+        {"type": "text", "text": "system", "cache_control": {"type": "ephemeral"}},
+    ]
+    assert "cache_control" not in kwargs  # top-level would cache the varying item too
     assert kwargs["messages"] == [{"role": "user", "content": "user"}]
     assert kwargs["output_config"]["effort"] == "medium"
     assert kwargs["output_config"]["format"] == {

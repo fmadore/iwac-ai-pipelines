@@ -64,8 +64,16 @@ def api_error(cls, status, message):
 def test_minimal_effort_is_the_lowest_level_and_no_sampling_is_sent():
     config = claude_request_config(SONNET, "System prompt.", effort="minimal")
     assert config["output_config"] == {"effort": "low"}
-    assert config["system"] == "System prompt."
     assert not {"temperature", "top_p", "top_k", "thinking"} & set(config)
+
+
+def test_cache_breakpoint_closes_the_system_prompt_not_the_request():
+    """The page varies on every call; a top-level breakpoint would land after it."""
+    config = claude_request_config(SONNET, "System prompt.", effort="minimal")
+    assert config["system"] == [{
+        "type": "text", "text": "System prompt.", "cache_control": {"type": "ephemeral"},
+    }]
+    assert "cache_control" not in config
 
 
 def test_page_is_sent_as_a_pdf_document_before_the_prompt():

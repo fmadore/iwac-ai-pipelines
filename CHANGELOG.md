@@ -9,6 +9,21 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-10-27 — Claude requests cache their system prompt
+
+- No Claude request had ever used prompt caching, so every call paid full
+  price for the system prompt. `llm_provider.anthropic_cached_system()` now
+  sends the system prompt as one text block with an `ephemeral` breakpoint at
+  its end. Both `AnthropicClient` (text tiers, sentiment, issue consolidation)
+  and `claude_request_config()` (OCR, HTR, issue page reading) use it.
+- The marker goes on the system prompt on purpose. Top-level automatic
+  caching would put it after the item or page, which differs on every
+  request: each call would pay the 1.25× write and nothing would be read
+  back. The 1,000–2,500-token prompts are above the 512-token minimum for
+  Haiku 5.5 and Sonnet 5.5. Cache reads cost 0.1× and show as `cached` in
+  the usage summary. Calls run one after another, so the 5-minute cache stays
+  warm.
+
 ### 2026-10-23 — Magazine indexes: one provider per profile, Sonnet 5.5 added
 
 - `AI_summary_issue/02_AI_generate_summaries_issue.py` profiles no longer mix

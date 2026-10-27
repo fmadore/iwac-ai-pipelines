@@ -40,7 +40,7 @@ import anthropic
 
 from common.gemini_page_processor import GeminiPageProcessor
 from common.gemini_utils import DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS, TRUNCATION_MARKER
-from common.llm_provider import ANTHROPIC_MAX_TOKENS
+from common.llm_provider import ANTHROPIC_MAX_TOKENS, anthropic_cached_system
 from common.llm_registry import ModelOption, resolve_reasoning_effort
 from common.rate_limiter import QuotaExhaustedError, is_quota_exhausted
 
@@ -70,7 +70,9 @@ def claude_request_config(
     *effort* is a depth request like ``thinking_level`` on the Gemini path:
     ``minimal`` becomes the lowest level the model has, ``None`` its default.
     """
-    config: Dict[str, Any] = {"max_tokens": ANTHROPIC_MAX_TOKENS, "system": system_prompt}
+    config: Dict[str, Any] = {
+        "max_tokens": ANTHROPIC_MAX_TOKENS, "system": anthropic_cached_system(system_prompt),
+    }
     resolved = resolve_reasoning_effort(option, effort)
     if resolved:
         config["output_config"] = {"effort": resolved}

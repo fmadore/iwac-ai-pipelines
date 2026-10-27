@@ -12,7 +12,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, Type, TypeVar
 
 from dotenv import load_dotenv
 
@@ -761,6 +761,17 @@ class MistralClient(BaseLLMClient):
 ANTHROPIC_MAX_TOKENS = 16000
 
 
+def anthropic_cached_system(system_prompt: str) -> List[Dict[str, Any]]:
+    """The system prompt as one text block with a cache breakpoint at its end.
+
+    Every pipeline sends one fixed system prompt and then a different item or
+    page, so the breakpoint goes on the shared part. Top-level automatic caching
+    would place it after the unique tail: a write premium on every request and
+    no read ever. Below the model's minimum prefix the marker is ignored.
+    """
+    return [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+
+
 class AnthropicClient(BaseLLMClient):
     """Anthropic's Messages API through the official ``anthropic`` SDK.
 
@@ -821,7 +832,7 @@ class AnthropicClient(BaseLLMClient):
         response = self._client.messages.create(
             model=self.option.model,
             max_tokens=ANTHROPIC_MAX_TOKENS,
-            system=system_prompt,
+            system=anthropic_cached_system(system_prompt),
             messages=[{"role": "user", "content": user_prompt}],
             **({"output_config": output_config} if output_config else {}),
         )
