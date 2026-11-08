@@ -503,8 +503,10 @@ The provider supports these models via the `MODEL_REGISTRY`:
 |-----|----------|----------|-------|-------------|
 | `gpt-6-luna` | OpenAI | `gpt-6-luna` | ChatGPT (GPT-6 Luna) | Cost-optimized tier, $0.10/$0.01/$0.50 per 1M |
 | `gpt-5.6-luna` | OpenAI | `gpt-5.6-luna` | ChatGPT (GPT-5.6 Luna) | Kept for the sentiment panel and historical provenance; no alias resolves to it |
-| `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Balanced tier, $2/$0.20/$12 per 1M |
-| `gpt-6-sol` | OpenAI | `gpt-6-sol` | ChatGPT (GPT-6 Sol) | Large tier, $2/$0.20/$10 per 1M (input 2x, output 1.5x above 272K input tokens); in the correction tier only until it has an authority item |
+| `gpt-6.1-terra` | OpenAI | `gpt-6.1-terra` | ChatGPT (GPT-6.1 Terra) | Mid tier, $1/$0.05/$5 per 1M; effort `none`…`max`; in the correction tier only until it has an authority item |
+| `gpt-5.6-terra` | OpenAI | `gpt-5.6-terra` | ChatGPT (GPT-5.6 Terra) | Previous balanced tier, $2/$0.20/$12 per 1M |
+| `gpt-6.1-sol` | OpenAI | `gpt-6.1-sol` | ChatGPT (GPT-6.1 Sol) | Large tier, $2/$0.10/$10 per 1M; effort `low`…`max`; in the correction tier only until it has an authority item |
+| `gpt-6-sol` | OpenAI | `gpt-6-sol` | ChatGPT (GPT-6 Sol) | Superseded by GPT-6.1 Sol; $2/$0.20/$10 per 1M (input 2x, output 1.5x above 272K input tokens) |
 | `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Previous flagship, $5/$0.50/$30 per 1M; reachable by its own key and `gpt-5.6` |
 | `gemini-3.8-flash` | Gemini | `gemini-3.8-flash` | Gemini 3.8 Flash | Version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only; $0.75/$3.75 per 1M until 2026-12-31, then $1.50/$7.50. In the correction tier and video summary only until it has an authority item |
 | `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | **The Flash every stamping tier offers**; version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only |
@@ -515,6 +517,7 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gemini-3.5-flash-lite` | Gemini | `gemini-3.5-flash-lite` | Gemini 3.5 Flash-Lite | Version-pinned; the generation-2 sentiment panel's Gemini seat |
 | `gemini-3.1-flash-lite` | Gemini | `gemini-3.1-flash-lite` | Gemini 3.1 Flash-Lite | Version-pinned |
 | `gemini-3.1-pro` | Gemini | `gemini-3.1-pro-preview` | Gemini 3.1 Pro | Version-pinned quality tier |
+| `gemini-4-argon` | Gemini | `gemini-4-argon` | Gemini 4 Argon | Google's flagship since October 2026; `LOW`/`MEDIUM`/`HIGH` thinking only; $2/$10 per 1M until 2026-11-30, then $4/$20; no free tier. In the correction tier only until it has an authority item |
 | `gemma-4` | Gemini | `gemma-4-31b-it` | Gemma 4 31B | Dense open-weights flagship, served on `GEMINI_API_KEY`; text + image only, `MINIMAL`/`HIGH` thinking only |
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |
@@ -537,12 +540,13 @@ For convenience, these aliases are also supported:
 |-------|-------------|
 | `openai` | `gpt-6-luna` |
 | `luna` | `gpt-6-luna` |
-| `terra` | `gpt-5.6-terra` |
-| `sol` | `gpt-6-sol` |
+| `terra` | `gpt-6.1-terra` |
+| `sol` | `gpt-6.1-sol` |
 | `gpt-5.6` | `gpt-5.6-sol` |
-| `gemini` | `gemini-3.7-flash` |
-| `flash` | `gemini-3.7-flash` |
+| `gemini` | `gemini-3.8-flash` |
+| `flash` | `gemini-3.8-flash` |
 | `gemini-3.8` | `gemini-3.8-flash` |
+| `argon`, `gemini-4` | `gemini-4-argon` |
 | `mistral` | `mistral-large` |
 | `ministral` | `ministral-14b` |
 | `qwen` | `qwen3.5-moe` |
@@ -698,6 +702,18 @@ The Responses client never sends `temperature`: the GPT-5.6 and GPT-6 reasoning
 models do not take one. Use `reasoning_effort` and `text_verbosity`. `service_tier`
 is sent only when set — `"flex"` runs at roughly batch price with slower,
 occasionally refused completions (`AI_summary/02 --service-tier flex`).
+
+The system prompt goes in a `developer` message whose text part carries the
+request's only `prompt_cache_breakpoint`, with `prompt_cache_options.mode =
+"explicit"`. OpenAI's implicit caching puts the breakpoint at the end of the
+request, so every article would be written to the cache at 1.25× the input
+price and never read back. A refusal (`refusal` part, HTTP 200) raises
+`BlockedOutputError` from `generate()` as well as `generate_structured()`.
+
+The Gemini text client sends the four adjustable harm categories at
+`BLOCK_NONE`, as the multimodal scripts already did, and raises
+`BlockedOutputError` on a blocked prompt or a `SAFETY` / `RECITATION` /
+`PROHIBITED_CONTENT` / `OTHER` finish instead of returning an empty string.
 
 ### Temperature: don't set it
 

@@ -55,11 +55,12 @@ python 02_correct_alto_xml.py --model gemini-3.8-flash
 
 | Model | Speed | Best For |
 |-------|-------|----------|
-| `gemini-3.8-flash` | Fast | Bulk processing |
-| `gemini-3.8-flash` | Fast | Newer Flash; spends more tokens by design |
+| `gemini-3.8-flash` | Fast | Bulk processing; spends more tokens by design |
+| `gemini-4-argon` | Slowest | Google's flagship, for the most degraded text; $2/$10 per 1M until 2026-11-30, then $4/$20 |
 | `gemini-pro` | Slower | Complex documents |
 | `gpt-6-luna` | Fast | General use |
-| `gpt-6-sol` | Slower | Higher quality |
+| `gpt-6.1-terra` | Medium | Half GPT-6.1 Sol's price |
+| `gpt-6.1-sol` | Slower | Higher quality |
 | `mistral-large` | Medium | European languages |
 | `ministral-14b` | Fast | Budget option |
 | `mistral-small` | Fast | Hybrid reasoning, between the two above |

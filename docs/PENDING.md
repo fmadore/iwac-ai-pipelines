@@ -4,22 +4,26 @@ What is known to be unfinished, and what closes each item. Remove an entry when
 it is done and record what happened in [CHANGELOG.md](../CHANGELOG.md); add one
 whenever a change stops short of where it should end.
 
-Last reviewed 2026-09-27.
+Last reviewed 2026-11-08.
 
-## GPT-6 Sol: verify, register, then promote
+## Gemini 4 Argon, GPT-6.1 Sol and Terra: verify, register, then promote
 
-In `MODEL_REGISTRY` but offered only in `TEXT_FULL_MODELS` (OCR correction,
-which stamps nothing). In order:
+In `MODEL_REGISTRY` since 2026-11-08 but offered only in `TEXT_FULL_MODELS`
+(OCR correction, which stamps nothing). Argon is meant for OCR and HTR; the
+steps are in [issue #20](https://github.com/fmadore/iwac-ai-pipelines/issues/20):
 
-1. **Call it live.** Confirm the Responses API accepts `text.verbosity`, the
-   `reasoning.effort` values the pipelines send (`low`, `medium`) and
-   `responses.parse` structured output, and that the registry's $2/$0.20/$10
-   rate matches the invoice. Needs `OPENAI_API_KEY`.
-2. **Create its Omeka authority item** (class 244, template 3, item set 267,
-   `dcterms:type` → "Notice d'autorité", listed under 78030) and add it to
+1. **Call each live.** For Argon, confirm the thinking ladder
+   (`low`/`medium`/`high`, MINIMAL a 400), PDF `media_resolution` HIGH, and
+   that `generate_content` and `model_version` behave like 3.8 Flash. For the
+   OpenAI pair, confirm `text.verbosity`, the efforts sent and
+   `responses.parse`, and that explicit prompt caching writes only the system
+   prompt (`cache_write_tokens` in the usage summary).
+2. **Create their Omeka authority items** (class 244, template 3, item set 267,
+   `dcterms:type` → "Notice d'autorité", listed under 78030) and add them to
    `AI_MODEL_ITEMS`. Needs Omeka admin access.
-3. **Decide which tiers it joins.** `tests/test_summary_annotation.py` fails if
-   a stamping tier gets a model with no authority item.
+3. **Decide which tiers they join.** Argon → `GEMINI_DOCUMENT_MODELS`, with the
+   multimodal deadline raised to its 900 s. `tests/test_summary_annotation.py`
+   fails if a stamping tier gets a model with no authority item.
 
 ## Annotations that name Gemini 3.7 Flash but were written by 3.8
 
@@ -81,6 +85,8 @@ articles on 2026-10-23. Left:
 - **2026-10-23** — GPT-5 and GPT-5.1 snapshots shut down. Their keys already
   resolve to `gpt-6-luna` / `gpt-6-sol`. After that date, check whether any
   script or saved command still names them, then drop `LEGACY_CLI_MODEL_KEYS`.
+- **2026-11-30** — Gemini 4 Argon's introductory $2/$10 per 1M ends; $4/$20
+  from 2026-12-01. Update the registry description.
 - **2027-01-01** — Gemini 3.8 Flash goes from $0.75/$3.75 to $1.50/$7.50 per
   1M tokens. Re-estimate the cost of any bulk run that would cross that date,
   and update the registry description.
