@@ -123,14 +123,14 @@ model-annotating legacy imports also require `--model`. See the
 Most scripts support both interactive mode and command-line flags:
 
 ```bash
-python 01_NER_AI.py --item-set-id 123 --model gemini-3.7-flash
+python 01_NER_AI.py --item-set-id 123 --model gemini-3.8-flash
 ```
 
 ### Supported Models
 
 | Provider | Key | Notes |
 |----------|-----|-------|
-| OpenAI | `gpt-6-luna`, `gpt-6.1-terra`, `gpt-6.1-sol` | Text pipelines only. GPT-6 Luna (default for summaries and citation extraction); GPT-6.1 Terra and Sol in OCR correction only, until they have authority items. The GPT-5.6 entries stay in the registry for the sentiment panel, which runs `gpt-5.6-luna`, and for older annotations; no pipeline offers them through `--model`. Legacy `gpt-5-mini` / `gpt-5.1` keys resolve to Luna / Sol. |
+| OpenAI | `gpt-6-luna`, `gpt-6.1-terra`, `gpt-6.1-sol` | Text pipelines only. GPT-6 Luna (default for summaries and citation extraction); GPT-6.1 Terra and Sol in OCR correction only, until they have authority items. The GPT-5.6 entries stay in the registry for the sentiment panel, which runs `gpt-5.6-luna`, and for older annotations; no pipeline offers them through `--model`. Legacy `gpt-5-mini` / `gpt-5.1` keys resolve to GPT-6 Luna / GPT-6 Sol. |
 | Gemini | `gemini-3.8-flash`, `gemini-3.1-pro`, `gemini-4-argon` | Text and multimodal. 3.8 Flash and 3.1 Pro are the pinned keys that write steps can annotate (3.7 Flash is now answered by 3.8 and offered nowhere); Gemini 4 Argon is offered only in OCR correction, which stamps nothing, until it has an authority item. YouTube transcription also offers `gemini-3.5-flash-lite`; the audio and video scripts also offer the rolling `-latest` aliases for runs that do not go to Omeka. |
 | Gemini (speech) | `gemini-3.5-transcribe` | Dedicated speech-to-text via the Interactions API, not the model registry: word-level timestamps and speaker diarization, 82 locales including Hausa but none of Mooré, Dioula, Ewé, Kabyè or Dendi. Takes no prompt. Used by `AI_audio_summary/02c`. |
 | Gemma | `gemma-4-openrouter` | Google Gemma 4 31B open weights, reached through OpenRouter. Offered by NER and reference indexing, and a sentiment panel member. Two reasoning levels, `minimal` and `high`. The registry's Gemini-API route (`gemma-4`) is in no pipeline menu: Google serves Gemma there only on a free tier whose content it uses. |
