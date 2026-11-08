@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from common.llm_provider import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_TEXT_MODEL_KEY,
+    BlockedOutputError,
     GeminiGenerateContentClient,
     LLMConfig,
     MODEL_REGISTRY,
@@ -40,8 +41,8 @@ def test_alias_normalization():
 
 def test_gpt_56_tier_aliases():
     assert normalize_model_key("luna") == "gpt-6-luna"
-    assert normalize_model_key("terra") == "gpt-5.6-terra"
-    assert normalize_model_key("sol") == "gpt-6-sol"
+    assert normalize_model_key("terra") == "gpt-6.1-terra"
+    assert normalize_model_key("sol") == "gpt-6.1-sol"
     # The bare id routes to Sol, matching OpenAI's own routing.
     assert normalize_model_key("gpt-5.6") == "gpt-5.6-sol"
 
@@ -208,7 +209,7 @@ def test_structured_output_surfaces_refusal(monkeypatch):
     refusal_item = MagicMock(content=[MagicMock(refusal="cannot comply")])
     client, _ = _openai_client_with_stub(monkeypatch, parsed=None, output=[refusal_item])
 
-    with pytest.raises(ValueError, match="refused"):
+    with pytest.raises(BlockedOutputError, match="cannot comply"):
         client.generate_structured("system", "user", _Sample)
 
 
@@ -1043,8 +1044,10 @@ def test_gemini_38_flash_has_no_minimal_rung():
     assert clamp_thinking_level("gemini-3.8-flash", "minimal") == "low"
 
 
-def test_gpt_6_sol_takes_the_sol_slot_and_keeps_5_6_reachable():
-    assert get_model_option("sol").model == "gpt-6-sol"
+def test_gpt_61_sol_takes_the_sol_slot_and_keeps_older_sols_reachable():
+    assert get_model_option("sol").model == "gpt-6.1-sol"
+    assert get_model_option("terra").model == "gpt-6.1-terra"
+    assert get_model_option("gpt-6-sol").model == "gpt-6-sol"
     assert get_model_option("openai:gpt-6-sol").model == "gpt-6-sol"
     assert get_model_option("gpt-5.6-sol").model == "gpt-5.6-sol"
     assert get_model_option("gpt-5.6").model == "gpt-5.6-sol"
@@ -1056,10 +1059,11 @@ def test_models_without_authority_items_stay_out_of_stamping_tiers():
     from common.iwac_config import AI_MODEL_ITEMS
     from common.llm_registry import DOCUMENT_MODELS
 
-    assert "gpt-6-sol" not in AI_MODEL_ITEMS
-    assert "gpt-6-sol" in TEXT_FULL_MODELS
-    for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
-        assert "gpt-6-sol" not in tier
+    for key in ("gpt-6.1-sol", "gpt-6.1-terra", "gemini-4-argon"):
+        assert key not in AI_MODEL_ITEMS
+        assert key in TEXT_FULL_MODELS
+        for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
+            assert key not in tier
     assert normalize_model_key("gemini-3.8") == "gemini-3.8-flash"
 
 
@@ -1191,3 +1195,142 @@ def test_a_truncated_answer_is_never_retried():
     with pytest.raises(TruncatedOutputError):
         call()
     assert len(calls) == 1
+
+
+# --- Gemini 4 Argon -------------------------------------------------------
+
+
+def test_gemini_4_argon_has_no_minimal_rung():
+    """Google's model page: low/medium/high, default medium, no MINIMAL."""
+    option = get_model_option("argon")
+    assert option.model == "gemini-4-argon"
+    assert option.supported_thinking_levels == ("low", "medium", "high")
+    assert option.default_temperature is None
+    assert clamp_thinking_level("gemini-4-argon", "minimal") == "low"
+
+
+# --- Request shape ported from Kalamu ---------------------------------------
+
+
+def test_gemini_text_requests_turn_the_adjustable_filters_off(monkeypatch):
+    client = _gemini_client(monkeypatch, key="gemini-3.8-flash")
+
+    kwargs = client._build_generation_config(client.config)
+
+    thresholds = {s["category"]: s["threshold"] for s in kwargs["safety_settings"]}
+    assert set(thresholds) == {
+        "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT",
+    }
+    assert set(thresholds.values()) == {"BLOCK_NONE"}
+
+
+def _gemini_response(*, finish_reason="STOP", text="ok", block_reason=None):
+    return MagicMock(
+        text=text,
+        model_version="gemini-3.8-flash",
+        prompt_feedback=MagicMock(block_reason=block_reason),
+        candidates=[MagicMock(finish_reason=finish_reason)],
+    )
+
+
+@pytest.mark.parametrize("response", [
+    _gemini_response(text=None, block_reason="PROHIBITED_CONTENT"),
+    _gemini_response(text=None, finish_reason="SAFETY"),
+    _gemini_response(text="La partie lue avant", finish_reason="RECITATION"),
+    _gemini_response(text=None, finish_reason="OTHER"),
+])
+def test_gemini_text_block_is_an_error_not_an_empty_answer(monkeypatch, response):
+    """Before, generate() returned "" and the pipeline saved it as the summary."""
+    client = _gemini_client(monkeypatch, key="gemini-3.8-flash")
+    client._client = MagicMock()
+    client._client.models.generate_content.return_value = response
+
+    with pytest.raises(BlockedOutputError):
+        client.generate("system", "user")
+
+
+def test_gemini_text_answer_passes(monkeypatch):
+    client = _gemini_client(monkeypatch, key="gemini-3.8-flash")
+    client._client = MagicMock()
+    client._client.models.generate_content.return_value = _gemini_response(text=" Résumé ")
+
+    assert client.generate("system", "user") == "Résumé"
+
+
+def test_openai_caches_only_the_instructions(monkeypatch):
+    """Implicit caching writes every article to the cache at 1.25x the input price."""
+    client, stub = _openai_client_with_stub(monkeypatch, parsed=_Sample(required_field="ok"))
+    stub.responses.create.return_value = MagicMock(output_text="texte", output=[])
+
+    client.generate("instructions", "article")
+    client.generate_structured("instructions", "article", _Sample)
+
+    for call in (stub.responses.create.call_args, stub.responses.parse.call_args):
+        kwargs = call.kwargs
+        assert kwargs["prompt_cache_options"] == {"mode": "explicit"}
+        developer, user = kwargs["input"]
+        assert developer["role"] == "developer"
+        assert developer["content"] == [{
+            "type": "input_text", "text": "instructions",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        }]
+        assert user == {"role": "user", "content": "article"}
+
+
+def test_openai_plain_refusal_is_an_error_not_an_empty_answer(monkeypatch):
+    client, stub = _openai_client_with_stub(monkeypatch)
+    refusal_item = MagicMock(content=[MagicMock(refusal="I can't help with that.")])
+    stub.responses.create.return_value = MagicMock(
+        output_text="", output=[refusal_item], status="completed"
+    )
+
+    with pytest.raises(BlockedOutputError, match="can't help"):
+        client.generate("system", "user")
+
+
+def test_openai_records_cache_writes(monkeypatch):
+    client, stub = _openai_client_with_stub(monkeypatch)
+    usage = MagicMock(
+        input_tokens=2_000, output_tokens=100,
+        input_tokens_details=MagicMock(cached_tokens=0, cache_write_tokens=1_500),
+        output_tokens_details=MagicMock(reasoning_tokens=0),
+    )
+    stub.responses.create.return_value = MagicMock(output_text="ok", output=[], usage=usage)
+
+    client.generate("system", "user")
+
+    assert client.usage.cache_write_tokens == 1_500
+    assert "1,500 written to cache" in client.usage.summary()
+
+
+def test_gemini_reads_the_sdk_enums_it_is_really_given(monkeypatch):
+    from google.genai import types as genai_types
+
+    client = _gemini_client(monkeypatch, key="gemini-3.8-flash")
+    client._client = MagicMock()
+    client._client.models.generate_content.return_value = _gemini_response(
+        block_reason=genai_types.BlockedReason.BLOCKED_REASON_UNSPECIFIED,
+        finish_reason=genai_types.FinishReason.STOP,
+    )
+    assert client.generate("system", "user") == "ok"
+
+    client._client.models.generate_content.return_value = _gemini_response(
+        text=None, block_reason=genai_types.BlockedReason.PROHIBITED_CONTENT,
+    )
+    with pytest.raises(BlockedOutputError, match="prohibited_content"):
+        client.generate("system", "user")
+
+
+def test_argon_gets_the_deadline_google_advises(monkeypatch):
+    """Google: HTTP timeouts of at least 15 minutes for hard Argon prompts."""
+    from common.llm_registry import DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+    assert _gemini_client(monkeypatch, key="gemini-4-argon").config.request_timeout_seconds == 900.0
+    assert (_gemini_client(monkeypatch, key="gemini-3.8-flash").config.request_timeout_seconds
+            == DEFAULT_REQUEST_TIMEOUT_SECONDS)
+    monkeypatch.setattr("common.llm_provider.genai", MagicMock())
+    tight = GeminiGenerateContentClient(
+        MODEL_REGISTRY["gemini-4-argon"], LLMConfig(request_timeout_seconds=60.0)
+    )
+    assert tight.config.request_timeout_seconds == 60.0

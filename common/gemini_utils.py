@@ -29,7 +29,7 @@ from typing import Optional, Union
 from google import genai
 from google.genai import types
 
-from common.llm_registry import check_served_model, clamp_thinking_level
+from common.llm_registry import GEMINI_SAFETY_CATEGORIES, check_served_model, clamp_thinking_level
 
 LOGGER = logging.getLogger(__name__)
 
@@ -87,22 +87,8 @@ def build_gemini_client(
 # ---------------------------------------------------------------------------
 
 SAFETY_SETTINGS_NONE = [
-    types.SafetySetting(
-        category="HARM_CATEGORY_HARASSMENT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_HATE_SPEECH",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_DANGEROUS_CONTENT",
-        threshold="BLOCK_NONE",
-    ),
+    types.SafetySetting(category=category, threshold="BLOCK_NONE")
+    for category in GEMINI_SAFETY_CATEGORIES
 ]
 
 

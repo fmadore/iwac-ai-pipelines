@@ -9,6 +9,36 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-08 — Gemini 4 Argon and GPT-6.1; text calls stop failing silently
+
+Compared with Kalamu's providers (`crates/providers`), which had been checked
+against the live APIs on 2026-11-03.
+
+- **Gemini text requests now switch the adjustable harm filters off**
+  (`BLOCK_NONE`), as the multimodal scripts always did. The four categories are
+  defined once, `llm_registry.GEMINI_SAFETY_CATEGORIES`.
+- **A blocked or refused answer is an error, not an empty string.** Gemini's
+  text client returned `""` when the prompt was blocked or the answer ended on
+  `SAFETY`, `RECITATION`, `PROHIBITED_CONTENT` or `OTHER`, and OpenAI's
+  `generate()` did the same on a refusal; OCR correction would have saved the
+  empty text. Both now raise `BlockedOutputError` (a `PermanentError`, never
+  retried), as Claude's refusals already did.
+- **OpenAI caches the system prompt only.** From GPT-5.6 on, implicit caching
+  puts its breakpoint at the end of the request, so every article was written
+  to the cache at 1.25x the input price and never read back; Kalamu measured
+  9,420 of 9,423 input tokens billed as writes. Requests now send the system
+  prompt as a `developer` message carrying the only `prompt_cache_breakpoint`,
+  with `prompt_cache_options.mode = "explicit"`. Needs `openai>=3.46`. Cache
+  writes are counted in the usage summary for OpenAI and Claude.
+- **Gemini 4 Argon** (`gemini-4-argon`, aliases `argon`, `gemini-4`): Google's
+  flagship, LOW/MEDIUM/HIGH thinking, $2/$10 per 1M until 2026-11-30 then
+  $4/$20, not on the free tier. `ModelOption.request_timeout_seconds` gives it
+  the 15-minute deadline Google advises. Offered in OCR correction only until
+  it has an authority item (issue #20).
+- **GPT-6.1 Sol and GPT-6.1 Terra** join the registry; `sol` and `terra` now
+  resolve to them and they replace GPT-6 Sol in the correction tier. GPT-6 Sol
+  and GPT-5.6 Terra stay reachable by their keys.
+
 ### 2026-10-27 — Claude requests cache their system prompt
 
 - No Claude request had ever used prompt caching, so every call paid full

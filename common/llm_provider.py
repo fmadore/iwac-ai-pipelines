@@ -77,6 +77,7 @@ from common.llm_registry import (  # noqa: F401  (compatibility re-exports)
     DEFAULT_TEXT_MODEL_KEY,
     DOCUMENT_MODELS,
     GEMINI_DOCUMENT_MODELS,
+    GEMINI_SAFETY_CATEGORIES,
     LEGACY_CLI_MODEL_KEYS,
     LLMConfig,
     MODEL_ALIASES,
@@ -121,6 +122,9 @@ class UsageTotals:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_input_tokens: int = 0
+    #: Input written to the provider's prompt cache, billed above the input
+    #: price (OpenAI, Anthropic). Part of ``input_tokens``, like cached input.
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     cost_usd: Optional[float] = None
     # Pipelines share one client across worker threads, and ``+=`` on an
@@ -133,6 +137,7 @@ class UsageTotals:
         input_tokens: Any = None,
         output_tokens: Any = None,
         cached_input_tokens: Any = None,
+        cache_write_tokens: Any = None,
         reasoning_tokens: Any = None,
         cost_usd: Any = None,
     ) -> None:
@@ -141,6 +146,7 @@ class UsageTotals:
             self.input_tokens += _as_int(input_tokens)
             self.output_tokens += _as_int(output_tokens)
             self.cached_input_tokens += _as_int(cached_input_tokens)
+            self.cache_write_tokens += _as_int(cache_write_tokens)
             self.reasoning_tokens += _as_int(reasoning_tokens)
             if isinstance(cost_usd, (int, float)) and not isinstance(cost_usd, bool):
                 self.cost_usd = (self.cost_usd or 0.0) + float(cost_usd)
@@ -150,6 +156,8 @@ class UsageTotals:
         parts = [f"{self.requests:,} calls", f"{self.input_tokens:,} in / {self.output_tokens:,} out tokens"]
         if self.cached_input_tokens:
             parts.append(f"{self.cached_input_tokens:,} cached")
+        if self.cache_write_tokens:
+            parts.append(f"{self.cache_write_tokens:,} written to cache")
         if self.reasoning_tokens:
             parts.append(f"{self.reasoning_tokens:,} reasoning")
         if self.cost_usd is not None:
@@ -207,6 +215,30 @@ _TRUNCATED_FINISH_REASONS = frozenset(
 )
 
 
+class BlockedOutputError(PermanentError, ValueError):
+    """The provider declined to answer, or a filter stopped the answer.
+
+    Raised instead of returning an empty or partial string, which a pipeline
+    would save as the item's summary or entity list. The same request would be
+    declined again, so it is never retried; another model may answer it.
+    """
+
+    def __init__(self, route: str, model: str, reason: str) -> None:
+        super().__init__(
+            f"{route} ({model}) declined to answer ({reason}). Try another model."
+        )
+        self.reason = reason
+
+
+#: Gemini finish reasons that mean a filter, not the model, ended the answer.
+#: The adjustable harm filters are off (``GEMINI_SAFETY_CATEGORIES``), so these
+#: come from checks no request setting reaches.
+_GEMINI_BLOCKED_FINISH_REASONS = frozenset(
+    {"safety", "recitation", "prohibited_content", "blocklist", "spii",
+     "image_safety", "language", "other"}
+)
+
+
 def _finish_reason(value: Any) -> str:
     """A finish reason as a bare lowercase name, whatever the SDK wrapped it in."""
     if value is None:
@@ -229,7 +261,9 @@ class BaseLLMClient:
         #: What this client has consumed so far — see :class:`UsageTotals`.
         self.usage = UsageTotals()
         defaults = LLMConfig(
-            request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            request_timeout_seconds=(
+                option.request_timeout_seconds or DEFAULT_REQUEST_TIMEOUT_SECONDS
+            ),
         ).merged_over(model_defaults(option))
         self.config = (config or LLMConfig()).merged_over(defaults)
 
@@ -318,6 +352,7 @@ class OpenAIResponsesClient(BaseLLMClient):
             input_tokens=_attr(response, "usage", "input_tokens"),
             output_tokens=_attr(response, "usage", "output_tokens"),
             cached_input_tokens=_attr(response, "usage", "input_tokens_details", "cached_tokens"),
+            cache_write_tokens=_attr(response, "usage", "input_tokens_details", "cache_write_tokens"),
             reasoning_tokens=_attr(response, "usage", "output_tokens_details", "reasoning_tokens"),
         )
 
@@ -325,6 +360,38 @@ class OpenAIResponsesClient(BaseLLMClient):
         if getattr(response, "status", None) == "incomplete":
             reason = _attr(response, "incomplete_details", "reason") or "incomplete"
             _raise_if_truncated("OpenAI", self.option.model, reason)
+
+    def _raise_if_refused(self, response: Any) -> None:
+        """A refusal comes back as HTTP 200 with a ``refusal`` part and no text."""
+        for item in getattr(response, "output", None) or []:
+            for content in getattr(item, "content", None) or []:
+                refusal = getattr(content, "refusal", None)
+                if isinstance(refusal, str) and refusal:
+                    raise BlockedOutputError("OpenAI", self.option.model, refusal)
+
+    @staticmethod
+    def _cached_input(system_prompt: str, user_prompt: str) -> List[Dict[str, Any]]:
+        """The instructions as a developer message holding the only cache breakpoint.
+
+        From GPT-5.6 on, OpenAI's implicit caching puts its breakpoint at the
+        end of the request, so every article — read once — is written to the
+        cache at 1.25x the input price. Kalamu measured it live on 2026-11-03:
+        9,420 of a page's 9,423 input tokens billed as cache writes. With
+        ``prompt_cache_options.mode = "explicit"`` only the shared system
+        prompt is cached, and only when it reaches OpenAI's 1,024-token
+        minimum; the item itself is billed at the plain input price.
+        """
+        return [
+            {
+                "role": "developer",
+                "content": [{
+                    "type": "input_text",
+                    "text": system_prompt,
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                }],
+            },
+            {"role": "user", "content": user_prompt},
+        ]
 
     def generate(self, system_prompt: str, user_prompt: str, *, config: Optional[LLMConfig] = None) -> str:
         effective_config = self._get_effective_config(config)
@@ -339,10 +406,8 @@ class OpenAIResponsesClient(BaseLLMClient):
 
         response = self._client.responses.create(
             model=self.option.model,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            input=self._cached_input(system_prompt, user_prompt),
+            prompt_cache_options={"mode": "explicit"},
             text={"verbosity": text_verbosity},
             reasoning={"effort": reasoning_effort},
             store=bool(effective_config.store),
@@ -352,7 +417,10 @@ class OpenAIResponsesClient(BaseLLMClient):
         self._check_complete(response)
         # ``output_text`` is the SDK's join of every text part of the response;
         # reasoning items carry none, so nothing else needs walking.
-        return (getattr(response, "output_text", None) or "").strip()
+        text = (getattr(response, "output_text", None) or "").strip()
+        if not text:
+            self._raise_if_refused(response)
+        return text
 
     def generate_structured(
         self,
@@ -387,10 +455,8 @@ class OpenAIResponsesClient(BaseLLMClient):
 
         response = self._client.responses.parse(
             model=self.option.model,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            input=self._cached_input(system_prompt, user_prompt),
+            prompt_cache_options={"mode": "explicit"},
             text_format=response_schema,
             text={"verbosity": text_verbosity},
             reasoning={"effort": reasoning_effort},
@@ -406,11 +472,7 @@ class OpenAIResponsesClient(BaseLLMClient):
 
         # A structured request can come back refused rather than parsed; surface
         # the reason instead of a bare "no output".
-        for item in getattr(response, "output", []) or []:
-            for content in getattr(item, "content", []) or []:
-                refusal = getattr(content, "refusal", None)
-                if refusal:
-                    raise ValueError(f"OpenAI refused the structured request: {refusal}")
+        self._raise_if_refused(response)
 
         raise ValueError("No output received from OpenAI structured response")
 
@@ -452,7 +514,12 @@ class GeminiGenerateContentClient(BaseLLMClient):
         # temperature for Gemini 3 (see MODEL_REGISTRY), and there is a real
         # difference between not sending the parameter and sending its nominal
         # default, so the key has to be absent rather than set to 1.0.
-        gen_config_kwargs: Dict[str, Any] = {}
+        gen_config_kwargs: Dict[str, Any] = {
+            "safety_settings": [
+                {"category": category, "threshold": "BLOCK_NONE"}
+                for category in GEMINI_SAFETY_CATEGORIES
+            ],
+        }
         if temp is not None:
             gen_config_kwargs["temperature"] = temp
 
@@ -515,11 +582,16 @@ class GeminiGenerateContentClient(BaseLLMClient):
         return text.strip() if isinstance(text, str) else ""
 
     def _check_complete(self, response: Any) -> None:
+        # Refused before the model wrote: no candidate, only the prompt's verdict.
+        block_reason = _finish_reason(_attr(response, "prompt_feedback", "block_reason"))
+        if block_reason and block_reason != "blocked_reason_unspecified":
+            raise BlockedOutputError("Gemini", self.option.model, block_reason)
         candidates = getattr(response, "candidates", None) or []
         if candidates:
-            _raise_if_truncated(
-                "Gemini", self.option.model, getattr(candidates[0], "finish_reason", None)
-            )
+            reason = getattr(candidates[0], "finish_reason", None)
+            if _finish_reason(reason) in _GEMINI_BLOCKED_FINISH_REASONS:
+                raise BlockedOutputError("Gemini", self.option.model, _finish_reason(reason))
+            _raise_if_truncated("Gemini", self.option.model, reason)
 
     def _record_usage(self, response: Any) -> None:
         self.usage.add(
@@ -852,6 +924,7 @@ class AnthropicClient(BaseLLMClient):
             ),
             output_tokens=_attr(response, "usage", "output_tokens"),
             cached_input_tokens=cached,
+            cache_write_tokens=_attr(response, "usage", "cache_creation_input_tokens"),
             reasoning_tokens=_attr(response, "usage", "output_tokens_details", "thinking_tokens"),
         )
 

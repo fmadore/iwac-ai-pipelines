@@ -29,8 +29,8 @@ PROVIDER_SELFHOSTED = "selfhosted"
 #: Anthropic's Messages API, through the official ``anthropic`` SDK.
 PROVIDER_ANTHROPIC = "anthropic"
 
-OPENAI_SOL_MODEL = "gpt-6-sol"
-OPENAI_TERRA_MODEL = "gpt-5.6-terra"
+OPENAI_SOL_MODEL = "gpt-6.1-sol"
+OPENAI_TERRA_MODEL = "gpt-6.1-terra"
 OPENAI_LUNA_MODEL = "gpt-6-luna"
 DEFAULT_OPENAI_MODEL = OPENAI_LUNA_MODEL
 OPENAI_FULL_MODEL = OPENAI_SOL_MODEL
@@ -43,6 +43,7 @@ DEFAULT_GEMINI_35_FLASH_LITE = "gemini-3.5-flash-lite"
 DEFAULT_GEMINI_31_FLASH_LITE = "gemini-3.1-flash-lite"
 DEFAULT_GEMINI_31_PRO = "gemini-3.1-pro-preview"
 DEFAULT_GEMINI_PRO = "gemini-pro-latest"
+DEFAULT_GEMINI_4_ARGON = "gemini-4-argon"
 DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
@@ -96,6 +97,18 @@ OPENROUTER_HEADERS: Dict[str, str] = {
 }
 
 
+#: Google's adjustable harm categories, all sent at ``BLOCK_NONE`` by every
+#: Gemini call here: archival newspapers report violence, religious conflict and
+#: hate speech as their subject matter, and a filter tripping on that drops an
+#: item. What no setting reaches (``PROHIBITED_CONTENT``, ``RECITATION``…) is
+#: reported as a :class:`common.llm_provider.BlockedOutputError` instead.
+GEMINI_SAFETY_CATEGORIES = (
+    "HARM_CATEGORY_HARASSMENT",
+    "HARM_CATEGORY_HATE_SPEECH",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+    "HARM_CATEGORY_DANGEROUS_CONTENT",
+)
+
 #: Google's thinking levels, weakest first. The order is what
 #: :func:`clamp_thinking_level` measures distance along, so it is API contract,
 #: not decoration.
@@ -121,6 +134,10 @@ class ModelOption:
     #: a pipeline that cannot make a single call. Verified against the live API,
     #: 2026-08-14.
     supported_thinking_levels: tuple = ()
+    #: Transport deadline for one attempt, where the vendor advises more than
+    #: :data:`DEFAULT_REQUEST_TIMEOUT_SECONDS`. A pipeline's own
+    #: ``LLMConfig(request_timeout_seconds=...)`` still wins.
+    request_timeout_seconds: Optional[float] = None
 
 
 @dataclass
@@ -172,20 +189,36 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "OpenAI Responses API — cost-optimized tier ($0.20/$0.02/$1.20 per 1M)",
     ),
     "gpt-5.6-terra": ModelOption(
-        "gpt-5.6-terra", PROVIDER_OPENAI, OPENAI_TERRA_MODEL,
+        "gpt-5.6-terra", PROVIDER_OPENAI, "gpt-5.6-terra",
         "ChatGPT (GPT-5.6 Terra)",
         "OpenAI Responses API — balanced tier ($2/$0.20/$12 per 1M)",
     ),
-    # GPT-6 Sol takes the Sol slot as GPT-6 Luna took Luna's: the generic
-    # aliases and the full tier move to it, and the explicit 5.6 key stays.
-    # Rates from OpenAI's model page via its launch coverage (2026-09-22): input
-    # doubles and output rises 1.5x on a request above 272K input tokens. Not
-    # yet called live from this repo, and it has no Omeka authority item, so it
-    # sits only where nothing is stamped — see docs/PENDING.md.
+    # Superseded by GPT-6.1 Sol, which took the generic aliases and the full
+    # tier on 2026-11-08; the key stays reachable. Rates from OpenAI's model
+    # page via its launch coverage (2026-09-22): input doubles and output rises
+    # 1.5x on a request above 272K input tokens.
     "gpt-6-sol": ModelOption(
-        "gpt-6-sol", PROVIDER_OPENAI, OPENAI_SOL_MODEL,
+        "gpt-6-sol", PROVIDER_OPENAI, "gpt-6-sol",
         "ChatGPT (GPT-6 Sol)",
         "OpenAI Responses API — large tier ($2/$0.20/$10 per 1M; 2026-09-22 pricing)",
+    ),
+    # GPT-6.1 Sol supersedes GPT-6 Sol at the same rate, and GPT-6.1 Terra is
+    # the new mid tier at half that. Efforts low … max (Terra also ``none``).
+    # Rates and ladders from OpenAI's model pages as read by Kalamu
+    # (``crates/catalog/catalog.json``, 2026-11-07); Kalamu's live run of
+    # 2026-11-03 answered cleanly on Terra. Not yet called from this repo and no
+    # Omeka authority item for either, so both sit only where nothing is stamped.
+    "gpt-6.1-sol": ModelOption(
+        "gpt-6.1-sol", PROVIDER_OPENAI, OPENAI_SOL_MODEL,
+        "ChatGPT (GPT-6.1 Sol)",
+        "OpenAI Responses API — large tier ($2/$0.10/$10 per 1M; 2026-11-07 pricing)",
+        supported_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
+    ),
+    "gpt-6.1-terra": ModelOption(
+        "gpt-6.1-terra", PROVIDER_OPENAI, OPENAI_TERRA_MODEL,
+        "ChatGPT (GPT-6.1 Terra)",
+        "OpenAI Responses API — mid tier ($1/$0.05/$5 per 1M; 2026-11-07 pricing)",
+        supported_reasoning_efforts=("none", "low", "medium", "high", "xhigh", "max"),
     ),
     "gpt-5.6-sol": ModelOption(
         "gpt-5.6-sol", PROVIDER_OPENAI, "gpt-5.6-sol",
@@ -251,6 +284,22 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "Gemini 3.1 Pro", "Google Gemini 3.1 Pro — version-pinned quality tier",
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
+    ),
+    # Gemini 4 Argon, Google's flagship since October 2026. Google's model page
+    # (read 2026-11-08): thinking levels low/medium/high (default medium, no
+    # MINIMAL), 65,536-token default output, temperature/top_p/top_k ignored,
+    # explicit ``cachedContents`` refused (implicit caching from 4,096 tokens),
+    # not on the free tier, and HTTP deadlines of at least 15 minutes advised
+    # for hard prompts. $2/$10 per 1M until 2026-11-30, then $4/$20. Not yet
+    # called live from this repo, and it has no Omeka authority item, so it
+    # sits only in TEXT_FULL_MODELS — see docs/PENDING.md.
+    "gemini-4-argon": ModelOption(
+        "gemini-4-argon", PROVIDER_GEMINI, DEFAULT_GEMINI_4_ARGON,
+        "Gemini 4 Argon",
+        "Google Gemini 4 Argon — flagship, version-pinned; $2/$10 per 1M until 2026-11-30, then $4/$20",
+        default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high"),
+        request_timeout_seconds=900.0,
     ),
     "gemini-pro": ModelOption(
         "gemini-pro", PROVIDER_GEMINI, DEFAULT_GEMINI_PRO,
@@ -414,14 +463,20 @@ MODEL_ALIASES = {
     "flash": "gemini-3.8-flash",
     "gemini-3.7": "gemini-3.7-flash",
     "gemini-3.8": "gemini-3.8-flash",
+    "argon": "gemini-4-argon",
+    "gemini-4": "gemini-4-argon",
+    "gemini-argon": "gemini-4-argon",
     "flash-lite": "gemini-flash-lite",
     "gemini-flash-lite-latest": "gemini-flash-lite",
     "gemini-flash-lite-3.1": "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
     "openai": "gpt-6-luna",
     "gpt-5.6": "gpt-5.6-sol",
-    "sol": "gpt-6-sol",
-    "terra": "gpt-5.6-terra",
+    "sol": "gpt-6.1-sol",
+    "terra": "gpt-6.1-terra",
+    "gpt-6.1": "gpt-6.1-sol",
+    "openai:gpt-6.1-sol": "gpt-6.1-sol",
+    "openai:gpt-6.1-terra": "gpt-6.1-terra",
     "luna": "gpt-6-luna",
     "openai:gpt-5.6": "gpt-5.6-sol",
     "openai:gpt-5.6-sol": "gpt-5.6-sol",
@@ -525,8 +580,8 @@ TEXT_EXTENDED_MODELS: List[str] = [
 # The one tier with room for models that have no authority item yet: OCR
 # correction, its only user, writes no model annotation of its own.
 TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-3.8-flash", "gemini-pro",
-    "gpt-6-luna", "gpt-6-sol", "mistral-large", "ministral-14b", "mistral-small",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-3.8-flash", "gemini-4-argon", "gemini-pro",
+    "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "mistral-large", "ministral-14b", "mistral-small",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]
 # Both Gemini entries are pinned, unlike the text tiers above, because this is
