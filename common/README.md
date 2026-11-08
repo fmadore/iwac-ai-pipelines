@@ -450,7 +450,7 @@ with standard_progress(console) as progress:
     ...
     progress.update(task, advance=1)
 
-console.print(key_value_table([("Model", "gemini-3.7-flash"), ("Items", "42")]))
+console.print(key_value_table([("Model", "gemini-3.8-flash"), ("Items", "42")]))
 ```
 
 Rows whose value is `None` are skipped, so optional settings can be expressed
@@ -487,8 +487,9 @@ The `LLMConfig` class allows individual scripts to customize AI behavior without
   (`low` … `max`; `minimal` becomes `low`)
 - **OpenRouter / self-hosted**: `reasoning_effort` on the models that accept one
 
-Every client also takes `request_timeout_seconds` (default 300 s) and
-`sdk_max_retries`. Which effort a model actually receives is decided once, by
+Every client also takes `request_timeout_seconds` (default 300 s, or the
+model's own `ModelOption.request_timeout_seconds` where the vendor advises
+more: 900 s for Gemini 4 Argon) and `sdk_max_retries`. Which effort a model actually receives is decided once, by
 `llm_registry.resolve_reasoning_effort()`, for the clients and for the run
 record alike.
 
@@ -508,8 +509,8 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gpt-6.1-sol` | OpenAI | `gpt-6.1-sol` | ChatGPT (GPT-6.1 Sol) | Large tier, $2/$0.10/$10 per 1M; effort `low`…`max`; in the correction tier only until it has an authority item |
 | `gpt-6-sol` | OpenAI | `gpt-6-sol` | ChatGPT (GPT-6 Sol) | Superseded by GPT-6.1 Sol; $2/$0.20/$10 per 1M (input 2x, output 1.5x above 272K input tokens) |
 | `gpt-5.6-sol` | OpenAI | `gpt-5.6-sol` | ChatGPT (GPT-5.6 Sol) | Previous flagship, $5/$0.50/$30 per 1M; reachable by its own key and `gpt-5.6` |
-| `gemini-3.8-flash` | Gemini | `gemini-3.8-flash` | Gemini 3.8 Flash | Version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only; $0.75/$3.75 per 1M until 2026-12-31, then $1.50/$7.50. In the correction tier and video summary only until it has an authority item |
-| `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | **The Flash every stamping tier offers**; version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only |
+| `gemini-3.8-flash` | Gemini | `gemini-3.8-flash` | Gemini 3.8 Flash | Version-pinned, `LOW`/`MEDIUM`/`HIGH` thinking only; $0.75/$3.75 per 1M until 2026-12-31, then $1.50/$7.50. **The Flash every tier offers** (authority item 195175) |
+| `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | Deprecated: Google answers it with 3.8, so `check_served_model` refuses a run on it. Kept for the annotations written with item 111774; in no tier |
 | `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Rolling alias that moves with each Flash release; in no tier — use a pinned key unless the run stamps nothing |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
 | `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality; rolling, so absent from the OCR document tier |
@@ -682,10 +683,20 @@ chat-completions `finish_reason: "length"` that Mistral, OpenRouter and vLLM
 report. Claude's thinking counts toward its 16K `max_tokens`. It is a `retry.PermanentError`, so
 `retry_with_backoff` does not send the same request again; send less input.
 
+### Blocked answers
+
+A provider can decline with HTTP 200: Claude's `stop_reason: "refusal"`,
+OpenAI's `refusal` content part, Gemini's `prompt_feedback.block_reason` or a
+`SAFETY` / `RECITATION` / `PROHIBITED_CONTENT` / `OTHER` finish. Each raises
+`BlockedOutputError` (a `PermanentError`, never retried) instead of returning an
+empty or partial string that a pipeline would save as the item's result. The
+same request is declined again on the same model; another model may answer it.
+
 ### Usage totals
 
 Every client keeps `client.usage` (`UsageTotals`): requests, input/output
-tokens, cached and reasoning tokens where the provider reports them, and cost
+tokens, cached input, input written to the prompt cache (OpenAI and Claude bill
+it at 1.25x) and reasoning tokens where the provider reports them, and cost
 where the provider states it (OpenRouter's `usage.cost`; elsewhere `None`
 rather than a guess from a rate card). `usage.summary()` is one line for a run
 summary, which NER, summarization and reference enrichment print.
@@ -707,13 +718,12 @@ The system prompt goes in a `developer` message whose text part carries the
 request's only `prompt_cache_breakpoint`, with `prompt_cache_options.mode =
 "explicit"`. OpenAI's implicit caching puts the breakpoint at the end of the
 request, so every article would be written to the cache at 1.25× the input
-price and never read back. A refusal (`refusal` part, HTTP 200) raises
-`BlockedOutputError` from `generate()` as well as `generate_structured()`.
+price and never read back.
 
-The Gemini text client sends the four adjustable harm categories at
-`BLOCK_NONE`, as the multimodal scripts already did, and raises
-`BlockedOutputError` on a blocked prompt or a `SAFETY` / `RECITATION` /
-`PROHIBITED_CONTENT` / `OTHER` finish instead of returning an empty string.
+The Gemini text client sends the four adjustable harm categories
+(`llm_registry.GEMINI_SAFETY_CATEGORIES`) at `BLOCK_NONE`, as the multimodal
+scripts do. What no setting reaches is reported as a
+[blocked answer](#blocked-answers).
 
 ### Temperature: don't set it
 
@@ -769,8 +779,8 @@ would otherwise have broken OCR, HTR, audio, video and every text tier at once.
 
 | Model | Thinking Levels | Default | Best For |
 |-------|----------------|---------|----------|
-| Gemini 3.8 Flash | `"low"`, `"medium"`, `"high"` | `"low"` | From Google's documentation; not yet probed live |
-| Gemini 3.7 Flash | `"low"`, `"medium"`, `"high"` | `"low"` | Fast processing, bulk tasks |
+| Gemini 3.8 Flash | `"low"`, `"medium"`, `"high"` | `"low"` | Fast processing, bulk tasks (verified live 2026-10-23) |
+| Gemini 4 Argon | `"low"`, `"medium"`, `"high"` | `"low"` | Hardest scans and handwriting; from Google's documentation, not yet probed live |
 | Gemini 3.6 Flash / Flash-Lite | `"minimal"`, `"low"`, `"medium"`, `"high"` | `"minimal"` | Cheapest bulk work |
 | Gemini Pro | `"low"`, `"medium"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
 | Gemma 4 31B | `"minimal"`, `"high"` | `"high"` | Open-weights alternative |
@@ -913,7 +923,7 @@ tier, so each one states every provider's knob and lets the clamps map it.
 | `AI_sentiment_analysis/01` | per panel member (`panel_reasoning()`) | | | `sdk_max_retries=0`; the pipeline owns retries |
 
 `"minimal"` is safe to write for models that dropped that rung: the clamp turns it
-into their shallowest (`"low"` on Gemini 3.7 Flash and every Pro). A request can
+into their shallowest (`"low"` on Gemini 3.8 Flash, Gemini 4 Argon and every Pro). A request can
 also be overridden for one call — `client.generate(system, user, config=LLMConfig(...))`
 merges field by field over the client's own configuration.
 
@@ -951,7 +961,7 @@ A: The Responses client never sends one — the GPT-5.6 and GPT-6 reasoning mode
 A: The checkpoint or `.artifact.json` beside the output records them, after clamping (`run_context.model_context`). For a live view, `logging.basicConfig(level=logging.DEBUG)` logs each request's parameters and every substitution a clamp makes.
 
 **Q: What model keys can I use with `--model`?**  
-A: Use registry keys like `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-terra`, `gemini-3.7-flash`, `gemini-3.8-flash`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
+A: Use registry keys like `gpt-6-luna`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gemini-3.8-flash`, `gemini-4-argon`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `argon`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
 
 **Q: How do I restrict which models a pipeline can use?**  
 A: Pass a tier as `allowed_keys`, so retiring a model stays a one-line change in `llm_registry`:
