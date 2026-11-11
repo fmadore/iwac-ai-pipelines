@@ -133,17 +133,6 @@ After reconciliation:
 After the Omeka update:
 - `_pre_write_ner_links_*.json` — Pre-write payload dump, the only route back
 
-## Validating Extracted Entities
-
-Before reconciliation, you may want to manually review the AI-extracted entities for accuracy. Use the [AI-NER-Validator](https://github.com/fmadore/AI-NER-Validator) web application to:
-
-- Review articles with highlighted entities side by side
-- Validate or reject each entity with a single click
-- Add missing entities manually
-- Export a clean CSV with only validated entities
-
-This step is optional but recommended for quality control, especially when working with new document types or testing different AI models.
-
 ## Checking links in context
 
 Step 02 matches by name alone, so a shared name is taken for one entity: three
