@@ -6,6 +6,28 @@ Python workflows for processing the [Islam West Africa Collection](https://islam
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21804210.svg)](https://doi.org/10.5281/zenodo.21804210)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+> [!TIP]
+> **Not comfortable with Python and a terminal? Use [Kalamu](https://github.com/fmadore/Kalamu).**
+> Kalamu is a free desktop app for Windows and macOS that brings these pipelines to a
+> graphical interface: install it, paste an API key, pick a file or a folder, press **Start**.
+> It ports their prompts, provider handling and model choices, and checks every result
+> against its source side by side, with corrections kept apart from the AI's text.
+>
+> <a href="https://apps.microsoft.com/detail/9MXT5555BZ1H?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" height="40"></a>
+> &nbsp;or the [releases page](https://github.com/fmadore/Kalamu/releases) for macOS and Windows installers.
+
+| Pipeline here | In Kalamu |
+|---------------|-----------|
+| OCR extraction, HTR, publication extraction | Extract text from PDFs and images, printed or handwritten, in the cloud or offline |
+| Audio, video and YouTube transcription | Transcribe with speakers and timestamps, in the cloud or offline with Whisper; YouTube from its link |
+| Summarization, NER, sentiment analysis | Analyse texts with ready-made or user-defined fields |
+| Magazine article extraction | Detailed table of contents of an issue, each article an item of its own |
+| OCR correction | Correct existing text page by page, every change shown against the original |
+
+Kalamu works on files on your computer, organised in projects; it does not read from or
+write to an Omeka S database. The `01` download and `03` write-back steps, authority
+reconciliation and authority curation remain specific to this repository.
+
 ## Context
 
 The [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) is an open-access digital database documenting Islam and Muslim communities in Benin, Burkina Faso, Côte d'Ivoire, Niger, Nigeria, and Togo since the 1960s. It was created by [Frédérick Madore](https://www.frederickmadore.com/) and is hosted at the Leibniz-Zentrum Moderner Orient (ZMO) in Berlin. The collection grows continuously; research reports should state a dated source snapshot and distinguish documents from authority records when reporting counts.
@@ -173,7 +195,7 @@ The approach assumes you have digitized materials and need to make them searchab
 ## Related Resources
 
 - [Islam West Africa Collection](https://islam.zmo.de/s/westafrica/) — The digital collection
-- [AI-NER-Validator](https://github.com/fmadore/AI-NER-Validator) — Web app for reviewing and validating NER results
+- [Kalamu](https://github.com/fmadore/Kalamu) — Desktop app (Windows, macOS) that runs these workflows through a graphical interface
 - [Leibniz-Zentrum Moderner Orient](https://www.zmo.de/en) — Host institution
 
 ## Citation
