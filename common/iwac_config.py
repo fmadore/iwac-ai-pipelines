@@ -215,6 +215,28 @@ AI_MODEL_ITEMS: Dict[str, Dict] = {
     # ``AI_audio_summary/02c``; the audio pipeline stamped no transcription
     # provenance at all before it.
     "gemini-3.5-transcribe": {"item_id": 113077, "display_title": "Gemini 3.5 Transcribe"},
+    # Created 2026-11-14 for the models brought over from Kalamu. The three
+    # Mistral-hosted open models are keyed on that route (``-mistral``); the
+    # Voxtral keys are ``02b``'s API ids, which ``03``'s header lookup expects.
+    "gemini-4-hydrogen": {"item_id": 217961, "display_title": "Gemini 4 Hydrogen"},
+    "gemini-4-argon": {"item_id": 217962, "display_title": "Gemini 4 Argon"},
+    "gemini-4-carbon": {"item_id": 217963, "display_title": "Gemini 4 Carbon"},
+    "gpt-6.1-sol": {"item_id": 217964, "display_title": "GPT-6.1 Sol"},
+    "gpt-6.1-terra": {"item_id": 217965, "display_title": "GPT-6.1 Terra"},
+    "gpt-6-astra": {"item_id": 217966, "display_title": "GPT-6 Astra"},
+    "mistral-large-4": {"item_id": 217967, "display_title": "Mistral Large 4"},
+    "glm-5.3-mistral": {"item_id": 217968, "display_title": "Z.ai GLM 5.3"},
+    "glm-5.3-flash-mistral": {"item_id": 217969, "display_title": "Z.ai GLM 5.3 Flash"},
+    "deepseek-v4.1-flash-mistral": {"item_id": 217970, "display_title": "DeepSeek V4.1 Flash"},
+    "claude-fable-5-2": {"item_id": 217971, "display_title": "Claude Fable 5.2"},
+    "voxtral-small-transcribe-3-0": {
+        "item_id": 217972,
+        "display_title": "Voxtral Small Transcribe 3",
+    },
+    "voxtral-mini-transcribe-3-0": {
+        "item_id": 217973,
+        "display_title": "Voxtral Mini Transcribe 3",
+    },
 }
 
 #: Superseded authority items — never annotate with these. Why each was

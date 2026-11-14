@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Audio Transcription Script using Mistral Voxtral Mini Transcribe 2
+Audio Transcription Script using Mistral Voxtral
 
-Transcribes audio and video files from the Audio folder using Voxtral's
-dedicated transcription model with optional speaker diarization.
+Transcribes audio and video files from the Audio folder using one of Voxtral's
+dedicated transcription models (``--model``) with optional speaker diarization.
 Video files are automatically converted to audio before transcription.
 Voxtral supports up to 3 hours of audio per request.
 """
@@ -37,7 +37,16 @@ from segments import transcription_path
 # Load environment variables from .env file
 load_dotenv()
 
-MODEL = "voxtral-mini-2602"
+#: Voxtral Small Transcribe 3 is Mistral's most accurate (preview, October
+#: 2026), Mini 3 the cheaper one for large batches; ``voxtral-mini-2602`` is
+#: the previous generation, kept for comparison. All three diarize with the
+#: same request and response (verified live 2026-11-14).
+ALLOWED_MODELS = (
+    "voxtral-small-transcribe-3-0",
+    "voxtral-mini-transcribe-3-0",
+    "voxtral-mini-2602",
+)
+DEFAULT_MODEL = ALLOWED_MODELS[0]
 
 # Voxtral caps a single transcription request at 3 hours of audio.
 VOXTRAL_MAX_SECONDS = 3 * 3600
@@ -60,6 +69,7 @@ class VoxtralTranscriber(TranscriberBase):
         language: Optional[str] = None,
         diarize: bool = True,
         requests_per_minute: Optional[int] = None,
+        model: str = DEFAULT_MODEL,
     ):
         """
         Initialize the Voxtral Transcriber.
@@ -69,6 +79,7 @@ class VoxtralTranscriber(TranscriberBase):
             language: Language code (e.g. 'en', 'fr') or None for auto-detect.
             diarize: Enable speaker diarization.
             requests_per_minute: Optional RPM limit for proactive throttling.
+            model: One of :data:`ALLOWED_MODELS`.
         """
         super().__init__(requests_per_minute)
 
@@ -79,7 +90,8 @@ class VoxtralTranscriber(TranscriberBase):
         self.client = Mistral(api_key=self.api_key)
         self.language = language  # None = auto-detect
         self.diarize = diarize
-        self.generator_label = f"Mistral {MODEL}"
+        self.model = model
+        self.generator_label = f"Mistral {model}"
 
     # ---- Transcription ----------------------------------------------------
 
@@ -113,7 +125,7 @@ class VoxtralTranscriber(TranscriberBase):
 
                 with open(audio_path, "rb") as f:
                     kwargs = {
-                        "model": MODEL,
+                        "model": self.model,
                         "file": {"content": f, "file_name": audio_path.name},
                     }
 
@@ -216,7 +228,7 @@ class VoxtralTranscriber(TranscriberBase):
         """Serialize the full API response to a JSON-serializable dict."""
         result = {
             "file": audio_filename,
-            "model": getattr(response, "model", MODEL),
+            "model": getattr(response, "model", self.model),
             "text": response.text,
         }
         if getattr(response, "language", None):
@@ -372,7 +384,7 @@ def select_language_interactive() -> Optional[str]:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Audio Transcription using Mistral Voxtral Mini Transcribe 2",
+        description="Audio Transcription using Mistral Voxtral",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -380,6 +392,12 @@ def parse_args():
         choices=["auto", "en", "fr", "de", "ha", "sw"],
         default=None,
         help="Audio language (default: interactive selection). 'auto' = auto-detect.",
+    )
+    parser.add_argument(
+        "--model",
+        choices=ALLOWED_MODELS,
+        default=DEFAULT_MODEL,
+        help=f"Voxtral transcription model (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
         "--audio-folder",
@@ -411,7 +429,7 @@ def main():
 
     # Welcome banner
     console.print(Panel(
-        "Transcribe audio and video files using Mistral Voxtral Mini Transcribe 2",
+        "Transcribe audio and video files using Mistral Voxtral",
         title="🎤 Audio Transcription using Voxtral",
         border_style="cyan",
     ))
@@ -433,7 +451,7 @@ def main():
         # Display configuration
         console.print()
         console.print(make_config_table([
-            ("Model", MODEL),
+            ("Model", args.model),
             ("Language", language if language else "Auto-detect"),
             ("Diarization", "[green]ON[/]" if diarize else "[dim]OFF[/]"),
             ("Audio Folder", args.audio_folder),
@@ -447,6 +465,7 @@ def main():
             language=language,
             diarize=diarize,
             requests_per_minute=args.rpm,
+            model=args.model,
         )
 
         return transcriber.transcribe_all_audio_files(

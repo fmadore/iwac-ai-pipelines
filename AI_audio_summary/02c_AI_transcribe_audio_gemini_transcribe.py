@@ -435,6 +435,9 @@ class GeminiTranscribeTranscriber(TranscriberBase):
                         uploaded = upload_and_wait_active(self.client, audio_path, mime_type=mime_type)
                     return self.client.interactions.create(
                         model=MODEL,
+                        # google-genai 3.x sends Interactions to v1 by default,
+                        # where this model is a 404; it is served on v1beta only.
+                        api_version="v1beta",
                         input=[{
                             "type": "audio",
                             "uri": uploaded.uri,

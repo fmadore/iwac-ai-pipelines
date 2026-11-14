@@ -34,7 +34,7 @@ def test_alias_normalization():
     # stamped in an iwac:*Model annotation, and a rolling id cannot be cited.
     assert normalize_model_key("gemini") == "gemini-3.8-flash"
     assert normalize_model_key("openai") == "gpt-6-luna"
-    assert normalize_model_key("mistral") == "mistral-large"
+    assert normalize_model_key("mistral") == "mistral-large-4"
     assert normalize_model_key("GEMINI") == "gemini-3.8-flash"
     assert normalize_model_key(None) is None
 
@@ -1059,12 +1059,39 @@ def test_models_without_authority_items_stay_out_of_stamping_tiers():
     from common.iwac_config import AI_MODEL_ITEMS
     from common.llm_registry import DOCUMENT_MODELS
 
-    for key in ("gpt-6.1-sol", "gpt-6.1-terra", "gemini-4-argon"):
-        assert key not in AI_MODEL_ITEMS
-        assert key in TEXT_FULL_MODELS
+    for key in TEXT_FULL_MODELS:
+        if key in AI_MODEL_ITEMS:
+            continue
         for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
             assert key not in tier
     assert normalize_model_key("gemini-3.8") == "gemini-3.8-flash"
+
+
+@pytest.mark.parametrize("key", ["gemini-4-hydrogen", "gemini-4-argon", "gemini-4-carbon"])
+def test_gemini_4_models_are_registered_but_stamp_nothing(key):
+    """Verified live 2026-11-14: no MINIMAL rung. No authority item yet, so
+    only the correction tier, which writes no model annotation, offers them."""
+    from common.iwac_config import AI_MODEL_ITEMS
+    from common.llm_registry import DOCUMENT_MODELS
+
+    option = MODEL_REGISTRY[key]
+    assert option.model == key
+    assert option.default_temperature is None
+    assert clamp_thinking_level(key, "minimal") == "low"
+    assert key in TEXT_FULL_MODELS
+    if key not in AI_MODEL_ITEMS:
+        for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
+            assert key not in tier
+
+
+def test_gemini_4_continuation_counts_as_cut_off():
+    from common.gemini_utils import finish_reason_name
+    from common.llm_provider import TruncatedOutputError, _raise_if_truncated
+
+    assert finish_reason_name("FinishReason.CONTINUATION") == "MAX_TOKENS"
+    assert finish_reason_name("STOP") == "STOP"
+    with pytest.raises(TruncatedOutputError):
+        _raise_if_truncated("gemini", "gemini-4-argon", "CONTINUATION")
 
 
 def test_rerouted_gemini_3_7_is_offered_nowhere():

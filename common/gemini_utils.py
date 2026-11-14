@@ -263,14 +263,17 @@ def finish_reason_name(finish_reason) -> str:
 
     Tolerates a ``types.FinishReason`` (or ``BlockedReason``) enum, a plain
     string such as ``"FinishReason.RECITATION"``, or ``None`` (``UNKNOWN``).
+    Gemini 4's ``CONTINUATION`` (one request's output cap reached, more
+    available through a continuation token these pipelines never send) is
+    reported as ``MAX_TOKENS``, so every caller salvages and marks it as cut off.
     """
     if finish_reason is None:
         return "UNKNOWN"
     name = getattr(finish_reason, "name", None)
-    if name:
-        return name
-    text = str(finish_reason)
-    return text.rsplit(".", 1)[-1] if "." in text else text
+    if not name:
+        text = str(finish_reason)
+        name = text.rsplit(".", 1)[-1] if "." in text else text
+    return "MAX_TOKENS" if name == "CONTINUATION" else name
 
 
 def extract_text_from_response(response) -> str:

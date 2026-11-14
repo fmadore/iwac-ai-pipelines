@@ -35,7 +35,7 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 
-# Last verified green on 2026-10-06 against: google-genai 2.28.0, openai 3.24.0,
+# Last verified green on 2026-11-14 against: google-genai 3.3.0, openai 3.24.0,
 # mistralai 3.0.0, pydantic 2.13.5, pypdf 6.19.0, requests 2.34.2,
 # python-dotenv 1.2.4, rich 15.0.0, pytest 9.1.1, ruff 0.16.10
 # (docs/validation/2026-10-06).
@@ -43,12 +43,11 @@ classifiers = [
 # eager drags in a cryptography build that has no wheel on Windows ARM64.
 dependencies = [
     # AI provider SDKs — pinned to a major version: these break routinely
-    # 2.x broke only the Interactions API; generate_content is unchanged.
-    # The floor is 2.20 because AI_audio_summary/02c needs the transcription
-    # mode types (VerbatimTranscriptionMode, SmartTranscriptionMode): 2.16 has
-    # interactions but no `mode` field on TranscriptionConfig, so the request
-    # builds and the model silently ignores timestamps and diarization.
-    "google-genai>=2.20,<3",
+    # 2.x and 3.x each broke only the Interactions API; generate_content is
+    # unchanged. 3.x sends Interactions to v1, where gemini-3.5-transcribe is a
+    # 404, so AI_audio_summary/02c asks for v1beta. The floor is 3.3 for the
+    # XHIGH thinking level (Gemini 4 Hydrogen).
+    "google-genai>=3.3,<4",
     "openai>=3.46,<4",  # prompt_cache_options / prompt_cache_breakpoint
     "mistralai>=2.5,<4", # import from mistralai.client and mistralai.client.errors; 3.x moved its transport to httpx2
     "anthropic>=1.15,<2", # the release the Claude adapter was written and tested against

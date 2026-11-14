@@ -208,10 +208,11 @@ class TruncatedOutputError(PermanentError, RuntimeError):
 #: Finish reasons that mean the answer was cut off, across the five wire
 #: formats: OpenAI Responses ``incomplete_details.reason``, Gemini
 #: ``finish_reason``, Anthropic ``stop_reason``, and the chat-completions
-#: ``finish_reason`` that Mistral, OpenRouter and vLLM report.
+#: ``finish_reason`` that Mistral, OpenRouter and vLLM report. ``continuation``
+#: is Gemini 4 stopping at one request's output cap.
 _TRUNCATED_FINISH_REASONS = frozenset(
     {"max_output_tokens", "max_tokens", "length", "model_length", "content_filter",
-     "model_context_window_exceeded"}
+     "model_context_window_exceeded", "continuation"}
 )
 
 

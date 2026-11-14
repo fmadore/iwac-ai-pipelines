@@ -44,12 +44,21 @@ DEFAULT_GEMINI_31_FLASH_LITE = "gemini-3.1-flash-lite"
 DEFAULT_GEMINI_31_PRO = "gemini-3.1-pro-preview"
 DEFAULT_GEMINI_PRO = "gemini-pro-latest"
 DEFAULT_GEMINI_4_ARGON = "gemini-4-argon"
+GEMINI_4_HYDROGEN = "gemini-4-hydrogen"
+GEMINI_4_CARBON = "gemini-4-carbon"
 DEFAULT_GEMMA_4 = "gemma-4-31b-it"
 DEFAULT_MISTRAL_LARGE = "mistral-large-2512"
 DEFAULT_MINISTRAL_14B = "ministral-14b-2512"
 DEFAULT_MISTRAL_SMALL = "mistral-small-2603"
 ANTHROPIC_HAIKU_55_MODEL = "claude-haiku-5-5"
 ANTHROPIC_SONNET_55_MODEL = "claude-sonnet-5-5"
+ANTHROPIC_OPUS_55_MODEL = "claude-opus-5-5"
+ANTHROPIC_FABLE_52_MODEL = "claude-fable-5-2"
+OPENAI_ASTRA_MODEL = "gpt-6-astra"
+MISTRAL_LARGE_4_MODEL = "mistral-large-4-0"
+MISTRAL_GLM_53_MODEL = "zai-glm-5-3"
+MISTRAL_GLM_53_FLASH_MODEL = "zai-glm-5-3-flash"
+MISTRAL_DEEPSEEK_V41_FLASH_MODEL = "deepseek-v4-1-flash-1017"
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_QWEN_MOE_MODEL = "qwen/qwen3.5-122b-a10b"
@@ -112,7 +121,7 @@ GEMINI_SAFETY_CATEGORIES = (
 #: Google's thinking levels, weakest first. The order is what
 #: :func:`clamp_thinking_level` measures distance along, so it is API contract,
 #: not decoration.
-THINKING_LEVELS = ("minimal", "low", "medium", "high")
+THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
 
 
 @dataclass(frozen=True)
@@ -129,7 +138,7 @@ class ModelOption:
     default_store: bool = False
     default_thinking_level: Optional[str] = None
     #: Which of :data:`THINKING_LEVELS` this model actually accepts. Empty means
-    #: all four. Google enforces this per model and rejects the rest with a 400
+    #: unconstrained. Google enforces this per model and rejects the rest with a 400
     #: ``INVALID_ARGUMENT``, so an unstated gap is not a soft preference — it is
     #: a pipeline that cannot make a single call. Verified against the live API,
     #: 2026-08-14.
@@ -220,6 +229,11 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "OpenAI Responses API — mid tier ($1/$0.05/$5 per 1M; 2026-11-07 pricing)",
         supported_reasoning_efforts=("none", "low", "medium", "high", "xhigh", "max"),
     ),
+    "gpt-6-astra": ModelOption(
+        "gpt-6-astra", PROVIDER_OPENAI, OPENAI_ASTRA_MODEL,
+        "ChatGPT (GPT-6 Astra)",
+        "OpenAI Responses API — most capable and most expensive tier",
+    ),
     "gpt-5.6-sol": ModelOption(
         "gpt-5.6-sol", PROVIDER_OPENAI, "gpt-5.6-sol",
         "ChatGPT (GPT-5.6 Sol)",
@@ -285,18 +299,36 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
     ),
-    # Gemini 4 Argon, Google's flagship since October 2026. Google's model page
-    # (read 2026-11-08): thinking levels low/medium/high (default medium, no
-    # MINIMAL), 65,536-token default output, temperature/top_p/top_k ignored,
-    # explicit ``cachedContents`` refused (implicit caching from 4,096 tokens),
-    # not on the free tier, and HTTP deadlines of at least 15 minutes advised
-    # for hard prompts. $2/$10 per 1M until 2026-11-30, then $4/$20. Not yet
-    # called live from this repo, and it has no Omeka authority item, so it
-    # sits only in TEXT_FULL_MODELS — see docs/PENDING.md.
+    # Gemini 4. Verified live 2026-11-14 on all three: LOW, MEDIUM and HIGH
+    # accepted, MINIMAL a 400, ``model_version`` naming the id asked for; XHIGH
+    # (google-genai 3.x) only on Hydrogen. One non-streamed request writes at
+    # most a "hop" (64K tokens, 32K on Argon and Carbon) and then stops with
+    # ``CONTINUATION``, which ``gemini_utils.finish_reason_name`` reads as
+    # MAX_TOKENS. Google advises HTTP deadlines of at least 15 minutes for Argon
+    # on hard prompts; Carbon, which thinks longer, gets the same. Temperature,
+    # top_p and top_k are ignored; explicit ``cachedContents`` are refused
+    # (implicit caching from 4,096 tokens). Prices are Google's list as of
+    # 2026-11-12. Authority items 217961-217963, but only the correction tier
+    # offers them until each has been compared — see docs/PENDING.md.
+    "gemini-4-hydrogen": ModelOption(
+        "gemini-4-hydrogen", PROVIDER_GEMINI, GEMINI_4_HYDROGEN,
+        "Gemini 4 Hydrogen",
+        "Google Gemini 4 fast tier, after 3.8 Flash — $1.50/$7.50 per 1M",
+        default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high", "xhigh"),
+    ),
     "gemini-4-argon": ModelOption(
         "gemini-4-argon", PROVIDER_GEMINI, DEFAULT_GEMINI_4_ARGON,
         "Gemini 4 Argon",
-        "Google Gemini 4 Argon — flagship, version-pinned; $2/$10 per 1M until 2026-11-30, then $4/$20",
+        "Google Gemini 4 Argon — efficient top tier; $2/$10 per 1M until 2026-11-30, then $4/$20",
+        default_thinking_level="LOW",
+        supported_thinking_levels=("low", "medium", "high"),
+        request_timeout_seconds=900.0,
+    ),
+    "gemini-4-carbon": ModelOption(
+        "gemini-4-carbon", PROVIDER_GEMINI, GEMINI_4_CARBON,
+        "Gemini 4 Carbon",
+        "Google Gemini 4 strongest model — $2/$10 per 1M until 2026-11-30, then $4/$20",
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
         request_timeout_seconds=900.0,
@@ -317,6 +349,37 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "mistral-large", PROVIDER_MISTRAL, DEFAULT_MISTRAL_LARGE,
         "Mistral Large 3", "Mistral AI Large 3 — 41B active multimodal MoE",
         default_temperature=0.2,
+    ),
+    # Mistral Large 4 (GA 2026-11-05; Medium 3.5 deprecated in its favour).
+    # No temperature: Mistral's server default applies, as for the models it
+    # hosts below.
+    "mistral-large-4": ModelOption(
+        "mistral-large-4", PROVIDER_MISTRAL, MISTRAL_LARGE_4_MODEL,
+        "Mistral Large 4", "Mistral AI Large 4 — flagship, 1M context",
+        default_reasoning_effort="low",
+        supported_reasoning_efforts=("low", "medium", "high"),
+    ),
+    # Open weights that Mistral serves on its own servers with the same key:
+    # the text goes to Mistral, not to Z.ai or DeepSeek. The route is half of
+    # the provenance, hence the ``-mistral`` suffix. All three reject ``none``.
+    "glm-5.3-mistral": ModelOption(
+        "glm-5.3-mistral", PROVIDER_MISTRAL, MISTRAL_GLM_53_MODEL,
+        "Z.ai GLM 5.3 (Mistral)", "Z.ai GLM 5.3 open weights, served by Mistral — text only",
+        default_reasoning_effort="low",
+        supported_reasoning_efforts=("low", "high", "max"),
+    ),
+    "glm-5.3-flash-mistral": ModelOption(
+        "glm-5.3-flash-mistral", PROVIDER_MISTRAL, MISTRAL_GLM_53_FLASH_MODEL,
+        "Z.ai GLM 5.3 Flash (Mistral)", "Z.ai GLM 5.3 Flash open weights, served by Mistral — $0.15/$0.50 per 1M",
+        default_reasoning_effort="low",
+        supported_reasoning_efforts=("low", "high", "max"),
+    ),
+    "deepseek-v4.1-flash-mistral": ModelOption(
+        "deepseek-v4.1-flash-mistral", PROVIDER_MISTRAL, MISTRAL_DEEPSEEK_V41_FLASH_MODEL,
+        "DeepSeek V4.1 Flash (Mistral)",
+        "DeepSeek V4.1 Flash open weights, served by Mistral — preview, $0.30/$1.20 per 1M",
+        default_reasoning_effort="low",
+        supported_reasoning_efforts=("low", "high", "max"),
     ),
     "ministral-14b": ModelOption(
         "ministral-14b", PROVIDER_MISTRAL, DEFAULT_MINISTRAL_14B,
@@ -356,6 +419,19 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
         "claude-sonnet-5-5", PROVIDER_ANTHROPIC, ANTHROPIC_SONNET_55_MODEL,
         "Claude Sonnet 5.5",
         "Anthropic Messages API — $2/$10 per 1M tokens",
+        default_reasoning_effort="high",
+        supported_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
+    ),
+    # Claude Opus 5.5 and Fable 5.2: the request surface of Sonnet 5.5.
+    "claude-opus-5-5": ModelOption(
+        "claude-opus-5-5", PROVIDER_ANTHROPIC, ANTHROPIC_OPUS_55_MODEL,
+        "Claude Opus 5.5", "Anthropic Messages API — Opus tier",
+        default_reasoning_effort="medium",
+        supported_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
+    ),
+    "claude-fable-5-2": ModelOption(
+        "claude-fable-5-2", PROVIDER_ANTHROPIC, ANTHROPIC_FABLE_52_MODEL,
+        "Claude Fable 5.2", "Anthropic Messages API — most capable tier ($8/$40 per 1M)",
         default_reasoning_effort="high",
         supported_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
     ),
@@ -475,8 +551,10 @@ MODEL_ALIASES = {
     "sol": "gpt-6.1-sol",
     "terra": "gpt-6.1-terra",
     "gpt-6.1": "gpt-6.1-sol",
+    "astra": "gpt-6-astra",
     "openai:gpt-6.1-sol": "gpt-6.1-sol",
     "openai:gpt-6.1-terra": "gpt-6.1-terra",
+    "openai:gpt-6-astra": "gpt-6-astra",
     "luna": "gpt-6-luna",
     "openai:gpt-5.6": "gpt-5.6-sol",
     "openai:gpt-5.6-sol": "gpt-5.6-sol",
@@ -501,6 +579,8 @@ MODEL_ALIASES = {
     "gemini-3-flash-preview": "gemini-flash",
     "gemini-3.7-flash-preview": "gemini-3.7-flash",
     "gemini-pro-latest": "gemini-pro",
+    "hydrogen": "gemini-4-hydrogen",
+    "carbon": "gemini-4-carbon",
     "gemini-3.1-pro-preview": "gemini-pro",
     "gemini-3-pro-preview": "gemini-pro",
     "gemma": "gemma-4",
@@ -509,7 +589,14 @@ MODEL_ALIASES = {
     # The OpenRouter slug names the OpenRouter route; the bare ids above keep
     # resolving to the Gemini one they have always meant.
     "google/gemma-4-31b-it": "gemma-4-openrouter",
-    "mistral": "mistral-large",
+    "mistral": "mistral-large-4",
+    "mistral-large-4-0": "mistral-large-4",
+    "glm": "glm-5.3-mistral",
+    "zai-glm-5-3": "glm-5.3-mistral",
+    "glm-flash": "glm-5.3-flash-mistral",
+    "zai-glm-5-3-flash": "glm-5.3-flash-mistral",
+    "deepseek-v4-1-flash-1017": "deepseek-v4.1-flash-mistral",
+    "deepseek-v4p1-flash-1017": "deepseek-v4.1-flash-mistral",
     "mistral-large-latest": "mistral-large",
     "mistral-large-2512": "mistral-large",
     "ministral": "ministral-14b",
@@ -550,6 +637,10 @@ MODEL_ALIASES = {
     "claude-sonnet": "claude-sonnet-5-5",
     "claude-sonnet-5.5": "claude-sonnet-5-5",
     "sonnet-5.5": "claude-sonnet-5-5",
+    "opus": "claude-opus-5-5",
+    "claude-opus-5.5": "claude-opus-5-5",
+    "fable": "claude-fable-5-2",
+    "claude-fable-5.2": "claude-fable-5-2",
 }
 
 
@@ -580,8 +671,12 @@ TEXT_EXTENDED_MODELS: List[str] = [
 # The one tier with room for models that have no authority item yet: OCR
 # correction, its only user, writes no model annotation of its own.
 TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-3.8-flash", "gemini-4-argon", "gemini-pro",
-    "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "mistral-large", "ministral-14b", "mistral-small",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-3.8-flash", "gemini-pro",
+    "gemini-4-hydrogen", "gemini-4-argon", "gemini-4-carbon",
+    "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra",
+    "mistral-large-4", "ministral-14b", "mistral-small",
+    "glm-5.3-mistral", "glm-5.3-flash-mistral", "deepseek-v4.1-flash-mistral",
+    "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]
 # Both Gemini entries are pinned, unlike the text tiers above, because this is

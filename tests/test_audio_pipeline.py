@@ -239,8 +239,10 @@ def test_voxtral_still_has_no_authority_item():
     """
     from common.iwac_config import AI_MODEL_ITEMS
 
-    assert voxtral_module.MODEL == "voxtral-mini-2602"
-    assert voxtral_module.MODEL not in AI_MODEL_ITEMS
+    assert voxtral_module.DEFAULT_MODEL in voxtral_module.ALLOWED_MODELS
+    assert "voxtral-mini-2602" not in AI_MODEL_ITEMS
+    for model in ("voxtral-small-transcribe-3-0", "voxtral-mini-transcribe-3-0"):
+        assert updater.annotation_key_for(f"Mistral {model}") == model
 
 
 # --- Reading the header back off disk ---------------------------------------

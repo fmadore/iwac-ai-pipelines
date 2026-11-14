@@ -4,26 +4,30 @@ What is known to be unfinished, and what closes each item. Remove an entry when
 it is done and record what happened in [CHANGELOG.md](../CHANGELOG.md); add one
 whenever a change stops short of where it should end.
 
-Last reviewed 2026-11-08.
+Last reviewed 2026-11-14.
 
-## Gemini 4 Argon, GPT-6.1 Sol and Terra: verify, register, then promote
+## Models from Kalamu: compare, then promote
 
-In `MODEL_REGISTRY` since 2026-11-08 but offered only in `TEXT_FULL_MODELS`
-(OCR correction, which stamps nothing). Argon is meant for OCR and HTR; the
-steps are in [issue #20](https://github.com/fmadore/iwac-ai-pipelines/issues/20):
+Gemini 4 Hydrogen, Argon and Carbon, GPT-6.1 Sol and Terra, GPT-6 Astra,
+Mistral Large 4, GLM 5.3 and 5.3 Flash and DeepSeek V4.1 Flash (all three on
+Mistral), and Claude Opus 5.5 and Fable 5.2 are registered, called live
+(2026-11-14) and have authority items, but sit only in `TEXT_FULL_MODELS`. GPT-6
+Sol is superseded by 6.1 Sol and needs no item. Closes when each has been
+compared on real material and placed
+([issue #20](https://github.com/fmadore/iwac-ai-pipelines/issues/20)):
 
-1. **Call each live.** For Argon, confirm the thinking ladder
-   (`low`/`medium`/`high`, MINIMAL a 400), PDF `media_resolution` HIGH, and
-   that `generate_content` and `model_version` behave like 3.8 Flash. For the
-   OpenAI pair, confirm `text.verbosity`, the efforts sent and
-   `responses.parse`, and that explicit prompt caching writes only the system
-   prompt (`cache_write_tokens` in the usage summary).
-2. **Create their Omeka authority items** (class 244, template 3, item set 267,
-   `dcterms:type` → "Notice d'autorité", listed under 78030) and add them to
-   `AI_MODEL_ITEMS`. Needs Omeka admin access.
-3. **Decide which tiers they join.** Argon → `GEMINI_DOCUMENT_MODELS`, with the
-   multimodal deadline raised to its 900 s. `tests/test_summary_annotation.py`
-   fails if a stamping tier gets a model with no authority item.
+- **Hydrogen against 3.8 Flash** for OCR and HTR, handwriting included, and
+  for refusals: its model card reports more unjustified refusals than 3.8 Flash
+  on multimodal prompts. The prices meet on 2027-01-01. **Argon or Carbon
+  against 3.1 Pro**; Google names no Pro successor.
+- **For `DOCUMENT_MODELS`, raise the multimodal transport deadline first:**
+  Argon and Carbon carry a 900 s `request_timeout_seconds` on the text route,
+  but `gemini_utils` still stops at 600 s.
+- **OpenAI explicit caching** should write only the system prompt: check
+  `cache_write_tokens` in a GPT-6.1 run's usage summary.
+- **Voxtral Small Transcribe 3** is `02b`'s default and in preview; compare it
+  with Gemini 3.5 Transcribe on the Hausa and French recordings before a bulk
+  run.
 
 ## Annotations that name Gemini 3.7 Flash but were written by 3.8
 

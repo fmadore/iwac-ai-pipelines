@@ -9,6 +9,36 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-14 — google-genai 3.3, and the rest of Kalamu's cloud models
+
+- google-genai 2.28 → 3.3.0. The 3.x Interactions client calls `v1`, where
+  `gemini-3.5-transcribe` answers 404 (2.28 used `v1beta`), so `02c` now pins
+  `api_version="v1beta"`. `XHIGH` joins `THINKING_LEVELS`; only Hydrogen
+  accepts it (Argon, Carbon and 3.8 Flash answer 400).
+- Registered and called live through the adapters, every declared reasoning
+  level and structured output: GPT-6 Astra, Mistral Large 4, GLM 5.3, GLM 5.3
+  Flash and DeepSeek V4.1 Flash (the last three on Mistral's own servers, keyed
+  `-mistral`), Claude Opus 5.5 and Fable 5.2. GPT-6.1 Sol and Terra (registered
+  2026-11-08) passed the same calls. `mistral` now resolves to Large 4. All sit
+  in `TEXT_FULL_MODELS` only.
+- `02b` takes `--model`: Voxtral Small Transcribe 3 (default) and Mini
+  Transcribe 3, both diarizing with the request and response of
+  `voxtral-mini-2602`, which stays available.
+
+### 2026-11-14 — Gemini 4 Hydrogen and Carbon join Argon
+
+- Hydrogen and Carbon join Argon in `MODEL_REGISTRY` and `TEXT_FULL_MODELS`;
+  Carbon gets Argon's 900 s deadline. All three probed live: LOW, MEDIUM and HIGH accepted,
+  MINIMAL a 400, `model_version` naming the id asked for, and any
+  `max_output_tokens` accepted through the SDK. That last one contradicts a
+  400 Kalamu reported on 2026-11-12 for requests over 32,768 tokens on Argon
+  and Carbon.
+- Gemini 4 writes at most one "hop" per request (64K tokens, 32K on Argon and
+  Carbon without streaming) and then stops with `CONTINUATION`.
+  `finish_reason_name()` reports it as `MAX_TOKENS` and the text adapter
+  raises `TruncatedOutputError`, so a long transcript or page is salvaged and
+  marked cut off instead of being taken as complete.
+
 ### 2026-11-08 — Gemini 4 Argon and GPT-6.1; text calls stop failing silently
 
 Compared with Kalamu's providers (`crates/providers`), which had been checked
@@ -837,6 +867,11 @@ What the constants used to explain in place. Dates are when the archive changed.
 - **2026-10-23** — `claude-sonnet-5-5` (item 188959, listed under category
   78030) for OCR and HTR, which stamp it as `iwac:ocrModel`. Registry key and
   `dcterms:alternative` are both the API model id, as for Haiku 5.5.
+
+- **2026-11-14** — 217961–217973 created for the Kalamu models (see Unreleased) and the Gemini
+  4 trio, and appended to 78030's `dcterms:hasPart` (backup of 78030 in
+  `AI_audio_summary/backups/model_items_2026-11-14/`). With them Voxtral 3
+  transcripts become annotatable by `AI_audio_summary/03`.
 
 ## Model registry (`common/llm_registry.py`)
 
