@@ -35,10 +35,9 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 
-# Last verified green on 2026-11-14 against: google-genai 3.3.0, openai 3.24.0,
-# mistralai 3.0.0, pydantic 2.13.5, pypdf 6.19.0, requests 2.34.2,
-# python-dotenv 1.2.4, rich 15.0.0, pytest 9.1.1, ruff 0.16.10
-# (docs/validation/2026-10-06).
+# Last verified green on 2026-11-14 against: google-genai 3.3.0, openai 3.51.0,
+# mistralai 3.7.0, anthropic 2.8.0, pydantic 2.14.3, pypdf 7.1.0,
+# requests 2.34.2, python-dotenv 1.2.4, rich 15.0.0, pytest 9.2.0, ruff 0.17.5.
 # Upgrade with `pip install --upgrade <names>`, not `--upgrade-strategy eager`:
 # eager drags in a cryptography build that has no wheel on Windows ARM64.
 dependencies = [
@@ -50,10 +49,10 @@ dependencies = [
     "google-genai>=3.3,<4",
     "openai>=3.46,<4",  # prompt_cache_options / prompt_cache_breakpoint
     "mistralai>=2.5,<4", # import from mistralai.client and mistralai.client.errors; 3.x moved its transport to httpx2
-    "anthropic>=1.15,<2", # the release the Claude adapter was written and tested against
+    "anthropic>=2.8,<3", # 2.x: verified live 2026-11-14 (Haiku, Sonnet, Opus 5.5, Fable 5.2)
     "pydantic>=2.5,<3",
     # PDF processing
-    "pypdf>=4,<7", # successor of the deprecated PyPDF2
+    "pypdf>=7,<8", # successor of the deprecated PyPDF2
     # Omeka S integration
     "requests>=2.31,<3",
     # Utilities
@@ -73,8 +72,8 @@ Dataset = "https://huggingface.co/datasets/fmadore/islam-west-africa-collection"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8",
-    "ruff>=0.8",
+    "pytest>=9",
+    "ruff>=0.17",
 ]
 
 [tool.setuptools]

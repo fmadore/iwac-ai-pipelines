@@ -23,8 +23,6 @@ compared on real material and placed
 - **For `DOCUMENT_MODELS`, raise the multimodal transport deadline first:**
   Argon and Carbon carry a 900 s `request_timeout_seconds` on the text route,
   but `gemini_utils` still stops at 600 s.
-- **OpenAI explicit caching** should write only the system prompt: check
-  `cache_write_tokens` in a GPT-6.1 run's usage summary.
 - **Voxtral Small Transcribe 3** is `02b`'s default and in preview; compare it
   with Gemini 3.5 Transcribe on the Hausa and French recordings before a bulk
   run.

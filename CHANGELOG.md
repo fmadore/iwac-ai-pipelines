@@ -9,6 +9,18 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-14 — Dependencies upgraded
+
+- anthropic 1.15 → 2.8 (pin `>=2.8,<3`, superseding Dependabot's #18), pypdf
+  6.19 → 7.1 (`>=7,<8`; 7.0 removed only deprecations and Python 3.9, none of
+  which the pipelines used), openai 3.24 → 3.51, mistralai 3.0 → 3.7, pydantic
+  2.14.3, pytest 9.2, ruff 0.17.5.
+- Checked live after the upgrade: text and structured calls on OpenAI, Mistral,
+  Claude, Gemini and OpenRouter, a page through `claude_page_processor` and
+  Mistral OCR, and a 119-page PDF read by `PdfPageSource`. OpenAI's explicit
+  cache now writes only the system prompt: on two calls sharing it, 1,604
+  tokens were written once and read back once.
+
 ### 2026-11-14 — google-genai 3.3, and the rest of Kalamu's cloud models
 
 - google-genai 2.28 → 3.3.0. The 3.x Interactions client calls `v1`, where
