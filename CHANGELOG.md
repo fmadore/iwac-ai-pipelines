@@ -9,6 +9,18 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-17 — Gemini 4 Carbon and Hydrogen replace Pro
+
+- Pro is offered nowhere. Carbon (strongest) and Hydrogen (fast tier) join
+  3.8 Flash in `DOCUMENT_MODELS` (OCR, HTR) and replace `gemini-pro-latest` in
+  audio transcription and video, where Carbon is the new default. The
+  `standard` issue-extraction profile reads pages with Carbon, and
+  `gemini-pro` leaves `TEXT_FULL_MODELS`. `gemini-pro` and `gemini-3.1-pro`
+  stay registered, the latter in `AI_MODEL_ITEMS`, so older runs still resolve.
+- `build_gemini_client(model=…)` takes the registry's `request_timeout_seconds`
+  when it is longer than the 600 s multimodal default, so Carbon pages get the
+  900 s deadline they get on the text route.
+
 ### 2026-11-14 — Dependencies upgraded
 
 - anthropic 1.15 → 2.8 (pin `>=2.8,<3`, superseding Dependabot's #18), pypdf

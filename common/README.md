@@ -513,12 +513,14 @@ The provider supports these models via the `MODEL_REGISTRY`:
 | `gemini-3.7-flash` | Gemini | `gemini-3.7-flash` | Gemini 3.7 Flash | Deprecated: Google answers it with 3.8, so `check_served_model` refuses a run on it. Kept for the annotations written with item 111774; in no tier |
 | `gemini-flash` | Gemini | `gemini-flash-latest` | Gemini Flash | Rolling alias that moves with each Flash release; in no tier — use a pinned key unless the run stamps nothing |
 | `gemini-flash-lite` | Gemini | `gemini-flash-lite-latest` | Gemini Flash-Lite | Most cost-effective, lowest latency |
-| `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Highest quality; rolling, so absent from the OCR document tier |
+| `gemini-pro` | Gemini | `gemini-pro-latest` | Gemini Pro | Rolling alias; in no tier — Gemini 4 Carbon and Hydrogen replace it |
 | `gemini-3.6-flash` | Gemini | `gemini-3.6-flash` | Gemini 3.6 Flash | Version-pinned; superseded by 3.7, kept for the backlog it already annotated |
 | `gemini-3.5-flash-lite` | Gemini | `gemini-3.5-flash-lite` | Gemini 3.5 Flash-Lite | Version-pinned; the generation-2 sentiment panel's Gemini seat |
 | `gemini-3.1-flash-lite` | Gemini | `gemini-3.1-flash-lite` | Gemini 3.1 Flash-Lite | Version-pinned |
-| `gemini-3.1-pro` | Gemini | `gemini-3.1-pro-preview` | Gemini 3.1 Pro | Version-pinned quality tier |
-| `gemini-4-argon` | Gemini | `gemini-4-argon` | Gemini 4 Argon | Google's flagship since October 2026; `LOW`/`MEDIUM`/`HIGH` thinking only; $2/$10 per 1M until 2026-11-30, then $4/$20; no free tier. In the correction tier only until it has an authority item |
+| `gemini-3.1-pro` | Gemini | `gemini-3.1-pro-preview` | Gemini 3.1 Pro | Kept for the annotations written with item 78536; in no tier |
+| `gemini-4-argon` | Gemini | `gemini-4-argon` | Gemini 4 Argon | Google's flagship since October 2026; `LOW`/`MEDIUM`/`HIGH` thinking only; $2/$10 per 1M until 2026-11-30, then $4/$20; no free tier; 900 s request deadline. In the correction tier only |
+| `gemini-4-hydrogen` | Gemini | `gemini-4-hydrogen` | Gemini 4 Hydrogen | Gemini 4 fast tier; `LOW`/`MEDIUM`/`HIGH`/`XHIGH` thinking; $1.50/$7.50 per 1M. In the document and correction tiers (authority item 217961) |
+| `gemini-4-carbon` | Gemini | `gemini-4-carbon` | Gemini 4 Carbon | Google's strongest model; `LOW`/`MEDIUM`/`HIGH` thinking only; $2/$10 per 1M until 2026-11-30, then $4/$20; 900 s request deadline. **The quality choice** in the document and correction tiers (authority item 217963) |
 | `gemma-4` | Gemini | `gemma-4-31b-it` | Gemma 4 31B | Dense open-weights flagship, served on `GEMINI_API_KEY`; text + image only, `MINIMAL`/`HIGH` thinking only |
 | `mistral-large` | Mistral | `mistral-large-2512` | Mistral Large 3 | 41B active params MoE |
 | `ministral-14b` | Mistral | `ministral-14b-2512` | Ministral 3 14B | Fast, cost-effective |
@@ -780,9 +782,10 @@ would otherwise have broken OCR, HTR, audio, video and every text tier at once.
 | Model | Thinking Levels | Default | Best For |
 |-------|----------------|---------|----------|
 | Gemini 3.8 Flash | `"low"`, `"medium"`, `"high"` | `"low"` | Fast processing, bulk tasks (verified live 2026-10-23) |
-| Gemini 4 Argon | `"low"`, `"medium"`, `"high"` | `"low"` | Hardest scans and handwriting; from Google's documentation, not yet probed live |
+| Gemini 4 Hydrogen | `"low"`, `"medium"`, `"high"`, `"xhigh"` | `"low"` | Fast Gemini 4 work (verified live 2026-11-14) |
+| Gemini 4 Carbon | `"low"`, `"medium"`, `"high"` | `"low"` | Hardest scans and handwriting, complex analysis (verified live 2026-11-14) |
+| Gemini 4 Argon | `"low"`, `"medium"`, `"high"` | `"low"` | Efficient top tier (verified live 2026-11-14) |
 | Gemini 3.6 Flash / Flash-Lite | `"minimal"`, `"low"`, `"medium"`, `"high"` | `"minimal"` | Cheapest bulk work |
-| Gemini Pro | `"low"`, `"medium"`, `"high"` | `"low"` | Complex analysis, higher accuracy |
 | Gemma 4 31B | `"minimal"`, `"high"` | `"high"` | Open-weights alternative |
 
 Verified against the live API on 2026-08-14. Re-probe rather than infer when
@@ -961,7 +964,7 @@ A: The Responses client never sends one — the GPT-5.6 and GPT-6 reasoning mode
 A: The checkpoint or `.artifact.json` beside the output records them, after clamping (`run_context.model_context`). For a live view, `logging.basicConfig(level=logging.DEBUG)` logs each request's parameters and every substitution a clamp makes.
 
 **Q: What model keys can I use with `--model`?**  
-A: Use registry keys like `gpt-6-luna`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gemini-3.8-flash`, `gemini-4-argon`, `gemini-pro`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `argon`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
+A: Use registry keys like `gpt-6-luna`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gemini-3.8-flash`, `gemini-4-hydrogen`, `gemini-4-carbon`, `gemini-4-argon`, `mistral-large`, `ministral-14b`. Common aliases like `openai`, `luna`, `terra`, `sol`, `gemini`, `hydrogen`, `carbon`, `argon`, `mistral` also work, as do the retired `gpt-5-mini` / `gpt-5.1` keys.
 
 **Q: How do I restrict which models a pipeline can use?**  
 A: Pass a tier as `allowed_keys`, so retiring a model stays a one-line change in `llm_registry`:

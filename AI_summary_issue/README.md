@@ -31,7 +31,7 @@ which **model profile** to run (or pass `--profile` / `--light` to skip the prom
 
 | Choice | Profile | Step 1 — per page | Step 2 — consolidation | Best for |
 |--------|---------|-------------------|------------------------|----------|
-| `1` / `a` | standard | Gemini Pro | Gemini 3.8 Flash | Best Gemini extraction |
+| `1` / `a` | standard | Gemini 4 Carbon | Gemini 3.8 Flash | Best Gemini extraction |
 | `2` / `b` | light | Gemini 3.8 Flash | Gemini 3.8 Flash | Cheaper extraction |
 | `3` / `c` | sonnet | Claude Sonnet 5.5 | Claude Sonnet 5.5 | The Anthropic alternative |
 
@@ -67,14 +67,14 @@ Older indexes read by a Claude model keep their `claude-opus-*` keys in
 
 | Provider | Model | Best For |
 |----------|-------|----------|
-| **Gemini** (standard profile) | Gemini Pro → Gemini 3.8 Flash | Best extraction quality, accurate article detection |
+| **Gemini** (standard profile) | Gemini 4 Carbon → Gemini 3.8 Flash | Best extraction quality, accurate article detection |
 | **Gemini** (light profile) | Gemini 3.8 Flash → Gemini 3.8 Flash | Cheaper visual extraction |
 | **Claude** (sonnet profile) | Claude Sonnet 5.5 → Claude Sonnet 5.5 | Same page and schema through Anthropic; a refused page is not retried |
 | Mistral | OCR → DeepSeek V4 Flash 0731 | Alternative if Gemini unavailable |
 
 Gemini model IDs come from the shared registry (`common/llm_registry.py`). The
-standard profile takes the rolling `gemini-pro-latest`, which always tracks the
-newest stable Pro; the light profile is pinned to `gemini-3.8-flash`, because
+standard profile reads pages with the pinned `gemini-4-carbon`, Google's
+strongest model, under a 900 s request deadline; the light profile is pinned to `gemini-3.8-flash`, because
 `gemini-flash-latest` rolled onto 3.7 on 2026-08-14 and 3.7 had dropped the
 `MINIMAL` thinking level, changing the model under a run that named no version.
 It moved from 3.7 to 3.8 when Google began answering 3.7 with 3.8 (2026-10-23).

@@ -78,7 +78,7 @@ class TranscriberBase:
         self._temp_audio_files: List[Path] = []
 
         # Written into the "Generated using:" transcription header line —
-        # subclasses set e.g. "Google gemini-pro-latest" or "Mistral voxtral-mini-2602".
+        # subclasses set e.g. "Google gemini-4-carbon" or "Mistral voxtral-mini-2602".
         self.generator_label = "unknown model"
 
     # ---- Provider hook -----------------------------------------------------

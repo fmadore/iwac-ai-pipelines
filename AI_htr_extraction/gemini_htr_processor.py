@@ -14,7 +14,7 @@ user request, and the RECITATION fallback strategies (Gemini only).
 
 Usage:
     python gemini_htr_processor.py
-    python gemini_htr_processor.py --model gemini-3.1-pro --language arabic
+    python gemini_htr_processor.py --model gemini-4-carbon --language arabic
     python gemini_htr_processor.py --pdf-dir /path/to/pdfs --rpm 5
     python gemini_htr_processor.py --model claude-sonnet-5-5 --language arabic
 
@@ -68,8 +68,8 @@ LANGUAGES = {
 }
 
 # The OCR tier: HTR output is written back under the same ``iwac:ocrModel``
-# annotation, so every key needs an authority item, and Flash is the pinned 3.7
-# because a rolling alias reports its own version as "Gemini Flash Latest".
+# annotation, so every key needs an authority item, and every Gemini key is
+# pinned because a rolling alias reports its own version as "Gemini Flash Latest".
 HTR_MODELS = DOCUMENT_MODELS
 
 
@@ -167,7 +167,7 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
   python gemini_htr_processor.py
-  python gemini_htr_processor.py --model gemini-3.1-pro --language arabic
+  python gemini_htr_processor.py --model gemini-4-carbon --language arabic
   python gemini_htr_processor.py --pdf-dir /path/to/pdfs --rpm 5
         """,
     )
@@ -280,7 +280,7 @@ def main() -> int:
             **common_kwargs,
         )
     else:
-        client = build_gemini_client(api_key)
+        client = build_gemini_client(api_key, model=model_option.model)
         generation_config = build_generation_config(
             model_option.model,
             system_instruction=load_system_instruction(language),

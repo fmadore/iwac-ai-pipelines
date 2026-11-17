@@ -4,25 +4,25 @@ What is known to be unfinished, and what closes each item. Remove an entry when
 it is done and record what happened in [CHANGELOG.md](../CHANGELOG.md); add one
 whenever a change stops short of where it should end.
 
-Last reviewed 2026-11-14.
+Last reviewed 2026-11-17.
 
 ## Models from Kalamu: compare, then promote
 
-Gemini 4 Hydrogen, Argon and Carbon, GPT-6.1 Sol and Terra, GPT-6 Astra,
+Gemini 4 Argon, GPT-6.1 Sol and Terra, GPT-6 Astra,
 Mistral Large 4, GLM 5.3 and 5.3 Flash and DeepSeek V4.1 Flash (all three on
 Mistral), and Claude Opus 5.5 and Fable 5.2 are registered, called live
-(2026-11-14) and have authority items, but sit only in `TEXT_FULL_MODELS`. GPT-6
+(2026-11-14) and have authority items, but sit only in `TEXT_FULL_MODELS`.
+Gemini 4 Hydrogen and Carbon also sit in `DOCUMENT_MODELS` and the audio,
+video and issue-extraction menus. GPT-6
 Sol is superseded by 6.1 Sol and needs no item. Closes when each has been
 compared on real material and placed
 ([issue #20](https://github.com/fmadore/iwac-ai-pipelines/issues/20)):
 
 - **Hydrogen against 3.8 Flash** for OCR and HTR, handwriting included, and
   for refusals: its model card reports more unjustified refusals than 3.8 Flash
-  on multimodal prompts. The prices meet on 2027-01-01. **Argon or Carbon
-  against 3.1 Pro**; Google names no Pro successor.
-- **For `DOCUMENT_MODELS`, raise the multimodal transport deadline first:**
-  Argon and Carbon carry a 900 s `request_timeout_seconds` on the text route,
-  but `gemini_utils` still stops at 600 s.
+  on multimodal prompts. The prices meet on 2027-01-01. Hydrogen and Carbon
+  replaced Pro on 2026-11-17 without a side-by-side run; compare Carbon with
+  3.1 Pro on a sample of hard pages before a bulk OCR or HTR run on it.
 - **Voxtral Small Transcribe 3** is `02b`'s default and in preview; compare it
   with Gemini 3.5 Transcribe on the Hausa and French recordings before a bulk
   run.

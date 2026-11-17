@@ -129,7 +129,7 @@ def write_transcription(
         original_file: Original audio/video file (its stem names the output).
         output_dir: Directory the transcription file is written into.
         generator: Value of the ``Generated using:`` header line
-            (e.g. ``"Google gemini-pro-latest"``).
+            (e.g. ``"Google gemini-4-carbon"``).
         extra_fields: Optional extra ``(name, value)`` header lines
             (e.g. Voxtral's Language/Diarization fields).
         segment_minutes: When the audio was split, the segment length used —

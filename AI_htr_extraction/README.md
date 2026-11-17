@@ -21,10 +21,10 @@ The script extracts individual pages from each PDF and sends them directly to Ge
    ```bash
    python gemini_htr_processor.py
    # or skip the prompts:
-   python gemini_htr_processor.py --model gemini-3.1-pro --language arabic --rpm 5
+   python gemini_htr_processor.py --model gemini-4-carbon --language arabic --rpm 5
    ```
 3. Select language mode (French, Arabic, or Multilingual)
-4. Select model (Flash or Pro)
+4. Select model (Gemini 3.8 Flash, Gemini 4 Hydrogen or Carbon, or Claude Sonnet 5.5)
 5. Find transcriptions in `OCR_Results/`
 
 Pages are always sent at `HIGH` media resolution, the most a PDF page accepts
@@ -59,7 +59,8 @@ Each mode uses a specialized prompt (`htr_system_prompt_*.md`) with language-spe
 | Model | Speed | Accuracy | Best For |
 |-------|-------|----------|----------|
 | Gemini 3.8 Flash | Faster | Good | Clear handwriting, bulk processing |
-| `gemini-3.1-pro` | Slower | Higher | Difficult scripts, faded ink |
+| `gemini-4-hydrogen` | Fast | Gemini 4 fast tier | Bulk processing; reports more unjustified refusals than 3.8 Flash on multimodal prompts |
+| `gemini-4-carbon` | Slower | Highest | Difficult scripts, faded ink |
 | `claude-sonnet-5-5` | Medium | Not yet benchmarked on handwriting | A second reading; needs `ANTHROPIC_API_KEY` |
 
 Claude runs on the same page loop at its lowest effort. It has no RECITATION
@@ -112,7 +113,7 @@ Edit the prompt files to adjust transcription behavior:
 
 | Problem | Solution |
 |---------|----------|
-| Empty transcriptions | Try different model (Pro for difficult scripts) |
+| Empty transcriptions | Try a different model (Gemini 4 Carbon for difficult scripts) |
 | Safety/copyright blocks | Check logs; some content may be filtered |
 | Wrong language detected | Use specific language mode instead of Multilingual |
 | Quota exhausted | Pipeline stops immediately and saves partial results; wait for daily reset |

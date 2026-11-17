@@ -13,7 +13,7 @@ request, and the generation settings.
 
 Usage:
     python 02_gemini_ocr_processor.py
-    python 02_gemini_ocr_processor.py --model gemini-3.1-pro --rpm 5
+    python 02_gemini_ocr_processor.py --model gemini-4-carbon --rpm 5
     python 02_gemini_ocr_processor.py --model claude-sonnet-5-5
 
 Requirements:
@@ -22,9 +22,10 @@ Requirements:
     - OCR system prompt in ocr_system_prompt.md
 
 Model Selection (``DOCUMENT_MODELS``):
-    * Gemini 3.7 Flash — faster, cost-effective, uses LOW thinking
-      (3.7 dropped MINIMAL; LOW is the shallowest rung it has.)
-    * Gemini 3.1 Pro — higher quality, uses LOW thinking
+    * Gemini 3.8 Flash — fast, cost-effective
+    * Gemini 4 Hydrogen — Gemini 4 fast tier
+    * Gemini 4 Carbon — Gemini 4 strongest model, for complex layouts and poor scans
+    All three run at LOW thinking, the shallowest rung each has.
     * Claude Sonnet 5.5 — Anthropic API, uses LOW effort (its lowest)
 
 Advantages over image-based approach:
@@ -181,7 +182,7 @@ def main() -> int:
         )
     else:
         processor = GeminiPageProcessor(
-            build_gemini_client(api_key),
+            build_gemini_client(api_key, model=model_option.model),
             model_option.model,
             build_generation_config(
                 model_option.model,

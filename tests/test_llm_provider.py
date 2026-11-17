@@ -1068,9 +1068,9 @@ def test_models_without_authority_items_stay_out_of_stamping_tiers():
 
 
 @pytest.mark.parametrize("key", ["gemini-4-hydrogen", "gemini-4-argon", "gemini-4-carbon"])
-def test_gemini_4_models_are_registered_but_stamp_nothing(key):
-    """Verified live 2026-11-14: no MINIMAL rung. No authority item yet, so
-    only the correction tier, which writes no model annotation, offers them."""
+def test_gemini_4_models_are_registered(key):
+    """Verified live 2026-11-14: no MINIMAL rung. A key without an authority
+    item stays in the correction tier, which writes no model annotation."""
     from common.iwac_config import AI_MODEL_ITEMS
     from common.llm_registry import DOCUMENT_MODELS
 
@@ -1082,6 +1082,33 @@ def test_gemini_4_models_are_registered_but_stamp_nothing(key):
     if key not in AI_MODEL_ITEMS:
         for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, DOCUMENT_MODELS):
             assert key not in tier
+
+
+def test_gemini_4_replaces_pro_wherever_a_pipeline_offers_gemini():
+    from common.iwac_config import AI_MODEL_ITEMS
+    from common.llm_registry import DOCUMENT_MODELS, TEXT_OPEN_MODELS
+
+    for tier in (TEXT_ECONOMY_MODELS, TEXT_EXTENDED_MODELS, TEXT_FULL_MODELS,
+                 TEXT_OPEN_MODELS, DOCUMENT_MODELS):
+        assert "gemini-pro" not in tier
+        assert "gemini-3.1-pro" not in tier
+    for key in ("gemini-4-hydrogen", "gemini-4-carbon"):
+        assert key in DOCUMENT_MODELS
+        assert key in AI_MODEL_ITEMS
+    # Kept registered: old OCR runs and transcripts still name it.
+    assert "gemini-3.1-pro" in AI_MODEL_ITEMS
+
+
+def test_multimodal_deadline_follows_the_registry():
+    from common.gemini_utils import (
+        DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS,
+        multimodal_timeout_for,
+    )
+
+    assert multimodal_timeout_for("gemini-4-carbon") == 900.0
+    assert multimodal_timeout_for("gemini-4-argon") == 900.0
+    assert multimodal_timeout_for("gemini-4-hydrogen") == DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS
+    assert multimodal_timeout_for(None) == DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS
 
 
 def test_gemini_4_continuation_counts_as_cut_off():

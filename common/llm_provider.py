@@ -505,7 +505,7 @@ class GeminiGenerateContentClient(BaseLLMClient):
     def _build_generation_config(self, effective_config: LLMConfig) -> Any:
         """Build Gemini generation config with thinking support.
 
-        All Gemini 3 models (Flash and Pro) use thinking_level; thinking cannot
+        Every Gemini 3 and 4 model uses thinking_level; thinking cannot
         be disabled. Which rungs of the ladder exist differs per model, so the
         requested level is snapped to a supported one by
         ``llm_registry.clamp_thinking_level`` rather than sent as-is.

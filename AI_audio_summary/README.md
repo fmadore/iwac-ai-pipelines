@@ -221,9 +221,10 @@ still stops the run and saves what completed.
 |-------|-------|---------|------|
 | `gemini-flash-lite-latest` | Fastest | Good | ~$0.20-1/hour |
 | `gemini-3.8-flash` | Faster | Good | ~$0.50-2/hour |
-| `gemini-pro-latest` | Slower | Higher | ~$5-15/hour |
+| `gemini-4-hydrogen` | Fast | Gemini 4 fast tier | $1.50/$7.50 per 1M tokens |
+| `gemini-4-carbon` | Slower | Highest | $2/$10 per 1M tokens until 2026-11-30, then $4/$20 |
 
-Use Flash-Lite for clean, single-speaker recordings on a budget, Flash for general use, Pro for noisy audio or multiple speakers.
+Use Flash-Lite for clean, single-speaker recordings on a budget, Flash or Hydrogen for general use, Carbon for noisy audio or multiple speakers. Gemini 4 writes at most 32K tokens per request on Carbon (64K on Hydrogen) before stopping, so split long recordings with `--split`.
 
 ### Voxtral
 
@@ -289,14 +290,16 @@ disk. The model is read from the transcripts' own `Generated using:` line, and
 `--model` overrides it.
 
 Only some of what this pipeline produces can be named that way. An annotation
-points at an Omeka authority item, and three of the five models here have none:
+points at an Omeka authority item, and some of the models here have none:
 
 | Header | Annotated as | Why |
 |---|---|---|
 | `Google gemini-3.5-transcribe` | Gemini 3.5 Transcribe | Pinned release, item 113077 |
 | `Google gemini-3.8-flash` | Gemini 3.8 Flash | Pinned release, item 195175 |
+| `Google gemini-4-hydrogen` | Gemini 4 Hydrogen | Pinned release, item 217961 |
+| `Google gemini-4-carbon` | Gemini 4 Carbon | Pinned release, item 217963 |
 | `Google gemini-3.7-flash` | Gemini 3.7 Flash | Item 111774, for transcripts made before Google began answering 3.7 with 3.8 |
-| `Google gemini-pro-latest` | — | Rolling alias: reports its version as "Gemini Pro Latest", so a run through it cannot say which release answered |
+| `Google gemini-pro-latest` | — | Older transcripts only. Rolling alias: reports its version as "Gemini Pro Latest", so a run through it cannot say which release answered |
 | `Google gemini-flash-lite-latest` | — | Same |
 | `Mistral voxtral-mini-2602` | — | No authority item yet |
 
@@ -373,7 +376,7 @@ Bonjour, je m'appelle Fatoumata Traoré...",
 
 ```
 Transcription of: interview_2024.mp3
-Generated using: Google gemini-pro-latest
+Generated using: Google gemini-4-carbon
 ==================================================
 
 [00:00:01] Speaker 1: Welcome to today's interview...
@@ -503,7 +506,7 @@ Create custom transcription modes (Gemini only) by adding `.md` files to `prompt
 | Segment failed (Gemini) | Use `--resume --split` to retry only failed segments |
 | pydub not installed | `pip install pydub` (required for splitting and video conversion) |
 | ffmpeg not found | Install ffmpeg or set `FFMPEG_PATH`/`FFPROBE_PATH` in `.env`. See `common/ffmpeg_utils.py` for discovery logic |
-| Poor transcription quality | Try Gemini Pro model, reduce background noise, or specify `--language` |
+| Poor transcription quality | Try Gemini 4 Carbon, reduce background noise, or specify `--language` |
 | `does not support <code>` on `02c_` | The locale is not in the model's table; omit `--language` to auto-detect |
 | `smart mode rejects timestamps` | Pass `--smart` on its own, or drop it to keep timestamps and speakers |
 | Fluent transcript of the wrong language | Almost certainly a local language `02c_` cannot hear — re-run on `02_` |

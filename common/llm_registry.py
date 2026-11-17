@@ -295,7 +295,7 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     ),
     "gemini-3.1-pro": ModelOption(
         "gemini-3.1-pro", PROVIDER_GEMINI, DEFAULT_GEMINI_31_PRO,
-        "Gemini 3.1 Pro", "Google Gemini 3.1 Pro — version-pinned quality tier",
+        "Gemini 3.1 Pro", "Google Gemini 3.1 Pro — kept for its runs' provenance, no longer offered",
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
     ),
@@ -308,8 +308,9 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     # on hard prompts; Carbon, which thinks longer, gets the same. Temperature,
     # top_p and top_k are ignored; explicit ``cachedContents`` are refused
     # (implicit caching from 4,096 tokens). Prices are Google's list as of
-    # 2026-11-12. Authority items 217961-217963, but only the correction tier
-    # offers them until each has been compared — see docs/PENDING.md.
+    # 2026-11-12. Authority items 217961-217963. Hydrogen and Carbon replace
+    # Pro in OCR, HTR, audio, video and issue extraction; Argon stays in the
+    # correction tier only.
     "gemini-4-hydrogen": ModelOption(
         "gemini-4-hydrogen", PROVIDER_GEMINI, GEMINI_4_HYDROGEN,
         "Gemini 4 Hydrogen",
@@ -335,7 +336,7 @@ MODEL_REGISTRY: Dict[str, ModelOption] = {
     ),
     "gemini-pro": ModelOption(
         "gemini-pro", PROVIDER_GEMINI, DEFAULT_GEMINI_PRO,
-        "Gemini Pro", "Google Gemini Pro — latest stable rolling alias",
+        "Gemini Pro", "Google Gemini Pro — rolling alias, no longer offered by any pipeline",
         default_thinking_level="LOW",
         supported_thinking_levels=("low", "medium", "high"),
     ),
@@ -671,7 +672,7 @@ TEXT_EXTENDED_MODELS: List[str] = [
 # The one tier with room for models that have no authority item yet: OCR
 # correction, its only user, writes no model annotation of its own.
 TEXT_FULL_MODELS: List[str] = [
-    DEFAULT_TEXT_MODEL_KEY, "gemini-3.8-flash", "gemini-pro",
+    DEFAULT_TEXT_MODEL_KEY, "gemini-3.8-flash",
     "gemini-4-hydrogen", "gemini-4-argon", "gemini-4-carbon",
     "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra",
     "mistral-large-4", "ministral-14b", "mistral-small",
@@ -679,12 +680,11 @@ TEXT_FULL_MODELS: List[str] = [
     "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2",
     "qwen3.5-moe", "qwen3.5-dense", "deepseek-v4-pro",
 ]
-# Both Gemini entries are pinned, unlike the text tiers above, because this is
-# the tier ``AI_ocr_extraction/02`` picks from and its step 03 stamps
-# ``iwac:ocrModel``. ``gemini-pro`` was the rolling alias here until 2026-08-14 —
-# an operator who ran OCR with it had no honest answer at the write step, since
-# every Pro authority item names a version the run never confirmed.
-GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.8-flash", "gemini-3.1-pro"]
+# Every Gemini entry is pinned, because this is the tier OCR and HTR pick from
+# and their step 03 stamps ``iwac:ocrModel``. Gemini 4 Carbon is the quality
+# choice and Hydrogen the fast one; Pro is no longer offered anywhere, though
+# ``gemini-3.1-pro`` stays registered for the annotations its runs left.
+GEMINI_DOCUMENT_MODELS: List[str] = ["gemini-3.8-flash", "gemini-4-hydrogen", "gemini-4-carbon"]
 # What OCR and HTR offer: the Gemini models plus Claude Sonnet 5.5, which reads
 # the same single-page PDFs through ``common/claude_page_processor.py``. Step 03
 # stamps whichever ran, so every key needs an authority item like the tiers above.

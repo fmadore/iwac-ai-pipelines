@@ -6,7 +6,7 @@ Processes video files from the video folder and saves summaries/transcriptions a
 Supports:
 - Video summarization
 - Full transcription with periodic visual descriptions
-- Both Gemini Pro and Gemini Flash models
+- Gemini 4 Carbon, Gemini 4 Hydrogen and Gemini 3.8 Flash
 """
 
 import argparse
@@ -64,10 +64,11 @@ RETRYABLE_API_CODES = (429, 500, 503)
 #: pipeline writes nothing to Omeka, so a model with no authority item can be
 #: offered here before anywhere that stamps one.
 ALLOWED_MODELS = {
-    "gemini-pro-latest": "Higher quality, best for detailed transcription",
-    "gemini-3.8-flash": "Newest Flash; spends more tokens by design on hard material",
+    "gemini-4-carbon": "Gemini 4 strongest model, best for detailed transcription",
+    "gemini-4-hydrogen": "Gemini 4 fast tier",
+    "gemini-3.8-flash": "Flash; spends more tokens by design on hard material",
 }
-DEFAULT_MODEL = "gemini-pro-latest"
+DEFAULT_MODEL = "gemini-4-carbon"
 
 
 def _is_retryable_api_error(exc: BaseException) -> bool:
@@ -101,7 +102,7 @@ class VideoProcessor:
         self.model = model
 
         # Initialize the Gemini client
-        self.client = build_gemini_client(self.api_key)
+        self.client = build_gemini_client(self.api_key, model=model)
 
         # Rate limiter for proactive throttling
         self.rate_limiter = RateLimiter(requests_per_minute, logger=logging.getLogger(__name__))

@@ -35,12 +35,12 @@ are not all in the folder waits for them.
 
 Each value written carries an ``iwac:transcriptionModel`` annotation naming the
 model that produced it, so a transcript's provenance survives outside the file
-header on disk. ``--model`` is deliberately optional: three of the four models
-that can fill ``Transcriptions/`` have no Omeka authority item to point at —
-``voxtral-mini-2602`` has none yet, and ``gemini-pro-latest`` /
-``gemini-flash-lite-latest`` are rolling aliases which deliberately have none,
-because a run through one cannot state which release answered it. Requiring
-``--model`` would make this step unusable for all three. Silence does not mean
+header on disk. ``--model`` is deliberately optional: some of the models that
+can fill ``Transcriptions/`` have no Omeka authority item to point at —
+``voxtral-mini-2602`` has none yet, and ``gemini-flash-lite-latest`` (and
+``gemini-pro-latest``, which older transcripts name) are rolling aliases which
+deliberately have none, because a run through one cannot state which release
+answered it. Requiring ``--model`` would make this step unusable for them. Silence does not mean
 "no provenance" either, though: with neither flag the model is read off the
 transcripts' own ``Generated using:`` header, and the run stops when that header
 names something no annotation can cite.
@@ -202,7 +202,7 @@ def resolve_model_key(
         elif inferred is None:
             # The expected shape for a rolling alias, and the reason a mismatch
             # is a warning rather than a refusal: only the operator can say
-            # which release answered "gemini-pro-latest" on the day it ran.
+            # which release answered "gemini-flash-lite-latest" on the day it ran.
             console.print(
                 f"[dim]Transcripts record {generator}, which no annotation can name; "
                 f"asserting {expected} as asked.[/]"
@@ -479,7 +479,7 @@ def main() -> int:
         "--model", choices=list(AI_MODEL_ITEMS),
         help="AI model that produced the transcriptions. Read from the "
              "transcripts' header when omitted; pass it to assert the pinned "
-             "release behind a rolling alias such as gemini-pro-latest.",
+             "release behind a rolling alias such as gemini-flash-lite-latest.",
     )
     parser.add_argument(
         "--no-model-annotation", action="store_true",

@@ -29,7 +29,12 @@ from typing import Optional, Union
 from google import genai
 from google.genai import types
 
-from common.llm_registry import GEMINI_SAFETY_CATEGORIES, check_served_model, clamp_thinking_level
+from common.llm_registry import (
+    GEMINI_SAFETY_CATEGORIES,
+    MODEL_REGISTRY,
+    check_served_model,
+    clamp_thinking_level,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,17 +59,37 @@ def has_truncation_marker(text: str) -> bool:
     return "TRANSCRIPTION TRUNCATED" in text
 
 
+def multimodal_timeout_for(model: Optional[str]) -> float:
+    """The HTTP deadline for a multimodal request to ``model``.
+
+    ``model`` is a registry key or an API id. The registry's own
+    ``request_timeout_seconds`` wins when it is longer than the multimodal
+    default: Gemini 4 Argon and Carbon need 900 s on hard pages.
+    """
+    if model:
+        for key, option in MODEL_REGISTRY.items():
+            if model in (key, option.model) and option.request_timeout_seconds:
+                return max(DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS, option.request_timeout_seconds)
+    return DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS
+
+
 def build_gemini_client(
     api_key: str,
     *,
-    timeout_seconds: float = DEFAULT_MULTIMODAL_REQUEST_TIMEOUT_SECONDS,
+    model: Optional[str] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> genai.Client:
     """Create a direct multimodal client with a finite HTTP deadline.
+
+    Pass ``model`` (key or API id) to get that model's deadline
+    (:func:`multimodal_timeout_for`); an explicit ``timeout_seconds`` overrides it.
 
     ``models.generate_content`` is wrapped so every response is checked against
     the model it was asked for (:func:`check_served_model`): the pipelines that
     use this client stamp that model into Omeka.
     """
+    if timeout_seconds is None:
+        timeout_seconds = multimodal_timeout_for(model)
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     client = genai.Client(
@@ -105,7 +130,7 @@ def get_thinking_level(model_name: str, override: Optional[str] = None) -> str:
     models without a MINIMAL rung. Nothing is inferred from the model's name.
 
     Args:
-        model_name: The full model ID (e.g. ``gemini-pro-latest``).
+        model_name: The full model ID (e.g. ``gemini-4-carbon``).
         override: An explicit level to use instead of the default. Still
             clamped — an override names a depth, not a promise the model has it.
 

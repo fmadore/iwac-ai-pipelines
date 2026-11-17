@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Audio Transcription Script using Google Gemini Pro
+Audio Transcription Script using Google Gemini
 Transcribes audio and video files from the Audio folder and saves them as text files.
 Video files are automatically converted to audio before transcription.
 """
@@ -53,18 +53,19 @@ from segments import (
 load_dotenv()
 
 #: The models this script offers, in menu order, with the note shown beside each.
-#: Two of them are rolling aliases, so ``03`` cannot annotate their output: an
-#: annotation naming "Gemini Pro Latest" asserts a release the run never
+#: Flash-Lite is a rolling alias, so ``03`` cannot annotate its output: an
+#: annotation naming "Gemini Flash Lite Latest" asserts a release the run never
 #: confirmed, which is why ``AI_MODEL_ITEMS`` deliberately holds no entry for
-#: either. Any *pinned* id added here needs an Omeka authority item, or ``03``
+#: it. Any *pinned* id added here needs an Omeka authority item, or ``03``
 #: will refuse the folder it fills — ``tests/test_audio_pipeline.py`` guards that.
 ALLOWED_MODELS = {
-    "gemini-pro-latest": "Higher quality, slower",
+    "gemini-4-carbon": "Gemini 4 strongest model, slower",
+    "gemini-4-hydrogen": "Gemini 4 fast tier",
     "gemini-3.8-flash": "Faster, good quality",
     "gemini-flash-lite-latest": "Fastest, cheapest, lowest latency",
 }
-# Pinned, so the default is a model step 03 can annotate; the rolling aliases
-# stay on offer for a run that does not go to Omeka.
+# Pinned, so the default is a model step 03 can annotate; the rolling alias
+# stays on offer for a run that does not go to Omeka.
 DEFAULT_MODEL = "gemini-3.8-flash"
 
 # Default transcription prompt (fallback when no prompt file is selected)
@@ -104,14 +105,11 @@ class AudioTranscriber(TranscriberBase):
 
         Args:
             api_key (str, optional): Gemini API key. If None, will use GEMINI_API_KEY environment variable.
-            model (str, optional): Model to use — 'gemini-pro-latest', 'gemini-3.8-flash', or
-                'gemini-flash-lite-latest'. Default is 'gemini-3.8-flash'.
-                The Flash slot names a pinned release where the other two roll,
-                because each transcript records ``Generated using: Google
-                <model>`` in its header — and "gemini-flash-latest" names no
-                version a reader could look up later. Pro and Flash-Lite are
-                still rolling for now; pin them when their headers start being
-                cited too.
+            model (str, optional): One of ``ALLOWED_MODELS``; default 'gemini-3.8-flash'.
+                Every key but Flash-Lite names a pinned release, because each
+                transcript records ``Generated using: Google <model>`` in its
+                header — and a rolling alias names no version a reader could
+                look up later.
             requests_per_minute: Optional RPM limit for proactive throttling (None = no throttling)
             transcription_prompt: The transcription prompt to use (selected in ``main()``);
                 falls back to ``DEFAULT_PROMPT``.
@@ -128,7 +126,7 @@ class AudioTranscriber(TranscriberBase):
         self.generator_label = f"Google {model}"
 
         # Initialize the Gemini client
-        self.client = build_gemini_client(self.api_key)
+        self.client = build_gemini_client(self.api_key, model=model)
 
         # Short, human-readable reason for the most recent transcription failure
         # (e.g. "RECITATION", "MAX_TOKENS", "API-503"). Surfaced in the

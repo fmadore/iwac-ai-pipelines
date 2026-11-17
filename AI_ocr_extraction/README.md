@@ -60,9 +60,10 @@ python 02_mistral_ocr_processor.py --rpm 30 # space requests to 30/minute
 | Model | Speed | Quality | Cost | Notes |
 |-------|-------|---------|------|-------|
 | Gemini 3.8 Flash (`gemini-3.8-flash`) | Fast | Good | Low | Recommended for most documents |
-| Gemini 3.1 Pro (`gemini-3.1-pro`) | Slower | Higher | Higher | Complex layouts, poor scans |
+| Gemini 4 Hydrogen (`gemini-4-hydrogen`) | Fast | Gemini 4 fast tier | $1.50/$7.50 per 1M | Its model card reports more unjustified refusals than 3.8 Flash |
+| Gemini 4 Carbon (`gemini-4-carbon`) | Slower | Highest | $2/$10 per 1M until 2026-11-30, then $4/$20 | Complex layouts, poor scans; 900 s request deadline |
 
-**Recommendation**: Start with Gemini 3.8 Flash. Switch to Pro for challenging documents or frequent copyright blocks.
+**Recommendation**: Start with Gemini 3.8 Flash or Hydrogen. Switch to Carbon for challenging documents.
 
 ### Claude Sonnet 5.5
 
@@ -97,7 +98,7 @@ never followed by a placeholder.
 
 ## Limitations
 
-**Copyright detection**: Gemini may refuse to process pages it identifies as copyrighted material (RECITATION error). The script logs these and continues. Gemini Pro is less restrictive than Flash.
+**Copyright detection**: Gemini may refuse to process pages it identifies as copyrighted material (RECITATION error). The script logs these and continues; rerun the failed pages with another model.
 
 **Column reading order**: Multi-column layouts are generally handled well, but unusual arrangements may produce out-of-order text.
 
@@ -132,7 +133,7 @@ Edit `ocr_system_prompt.md` to adjust extraction behavior:
 
 | Problem | Solution |
 |---------|----------|
-| RECITATION errors | Try Gemini Pro instead of Flash |
+| RECITATION errors | Rerun with another model (Gemini 4 Carbon or Claude Sonnet 5.5) |
 | Empty output files | Check PDF isn't corrupted or password-protected |
 | Page too large | Script auto-uploads large files; no action needed |
 | Out-of-order text | Adjust reading order rules in prompt |

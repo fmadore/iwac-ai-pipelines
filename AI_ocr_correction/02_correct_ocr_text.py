@@ -5,13 +5,14 @@ This script uses the shared LLM provider to correct and improve OCR text output.
 It processes text files containing raw OCR output, applies AI-powered corrections,
 and saves the improved versions while handling large texts through chunking.
 
-Supports multiple models via --model flag:
+Any model of ``TEXT_FULL_MODELS`` via --model, among them:
 - deepseek-v4-flash-0731 (default): DeepSeek official Flash release via OpenRouter
 - gemini-3.8-flash: Gemini Flash, version-pinned
-- gemini-pro: Gemini Pro - highest quality
+- gemini-4-hydrogen: Gemini 4 fast tier
+- gemini-4-carbon: Gemini 4 strongest model, for the hardest pages
 - gpt-6-luna: OpenAI GPT-6 Luna - cost-optimized tier
-- gpt-6-sol: OpenAI GPT-6 Sol - large tier
-- mistral-large: Mistral Large 3 - multimodal MoE
+- gpt-6.1-sol: OpenAI GPT-6.1 Sol - large tier
+- mistral-large-4: Mistral Large 4
 """
 
 import argparse

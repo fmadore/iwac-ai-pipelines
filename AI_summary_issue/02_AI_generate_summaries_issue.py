@@ -4,7 +4,7 @@ This script implements a two-step pipeline to extract and consolidate articles
 from an Islamic magazine using Gemini's native PDF understanding with structured outputs.
 
 Supported profiles — each runs on one provider, so it needs one API key:
-- standard: Gemini Pro per page, Gemini 3.8 Flash consolidates
+- standard: Gemini 4 Carbon per page, Gemini 3.8 Flash consolidates
 - light: Gemini 3.8 Flash for both steps
 - sonnet: Claude Sonnet 5.5 for both steps (same PDF page and JSON schema)
 
@@ -121,7 +121,7 @@ RETRY_DELAY = 2  # seconds
 #: This overrides the shared ``DEFAULT_TEXT_MODEL_KEY`` (DeepSeek through
 #: OpenRouter), which would add a second provider to every run.
 PROFILES = {
-    "standard": ("gemini-pro", "gemini-3.8-flash"),
+    "standard": ("gemini-4-carbon", "gemini-3.8-flash"),
     "light": ("gemini-3.8-flash", "gemini-3.8-flash"),
     "sonnet": ("claude-sonnet-5-5", "claude-sonnet-5-5"),
 }
@@ -158,7 +158,7 @@ def choose_profile() -> str:
     table.add_column("#", style="cyan", justify="center")
     table.add_column("Profile", style="green")
     table.add_column("Description", style="white")
-    table.add_row("1 / a", "standard", "Gemini Pro per page, Gemini Flash consolidates")
+    table.add_row("1 / a", "standard", "Gemini 4 Carbon per page, Gemini Flash consolidates")
     table.add_row("2 / b", "light", "Gemini Flash for both steps - cheaper / faster")
     table.add_row("3 / c", "sonnet", "Claude Sonnet 5.5 for both steps (ANTHROPIC_API_KEY)")
     console.print(table)
@@ -280,8 +280,8 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     Complete pipeline to process a magazine PDF using Gemini's native PDF understanding.
 
     Args:
-        model_step1: Model option for step 1 (Gemini Pro)
-        model_step2: Model option for step 2 (Gemini Flash)
+        model_step1: Model option for step 1 (page extraction)
+        model_step2: Model option for step 2 (consolidation)
         pdf_path: Path to PDF file
         output_dir: Output directory
         magazine_id: Magazine identifier (optional)
@@ -310,10 +310,10 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
     if not api_key:
         raise RuntimeError(f"{key_name} not found in environment variables")
 
-    client = build_claude_client(api_key) if is_claude else build_gemini_client(api_key)
+    client = build_claude_client(api_key) if is_claude else build_gemini_client(api_key, model=model_step1.model)
 
-    # Configure for each step - all Gemini 3 models use thinking_level.
-    # Step 1 (per-page extraction) is the quality-critical step - Pro (standard)
+    # Configure for each step - every Gemini model here uses thinking_level.
+    # Step 1 (per-page extraction) is the quality-critical step - Carbon (standard)
     # or Flash (light) - so it gets LOW thinking.
     # Neither step sets a temperature: Google recommends sending none for
     # Gemini 3, since lowering it can send the model into a loop.
@@ -360,7 +360,7 @@ def process_magazine(model_step1: ModelOption, model_step2: ModelOption,
                 max_output_tokens=8192,
                 response_schema=PageExtraction,
             )
-            logging.info(f"Using Gemini 3 with thinking_level={config_step1.thinking_level} for step 1")
+            logging.info(f"Using Gemini with thinking_level={config_step1.thinking_level} for step 1")
         generate = generate_with_claude if is_claude else generate_with_gemini
 
         def extract_page(page_num: int) -> Optional[PageExtraction]:
@@ -415,7 +415,7 @@ def main() -> int:
         )
         parser.add_argument(
             "--profile", choices=["standard", "light", "sonnet"], default=None,
-            help="standard = Gemini Pro per page, Gemini Flash consolidates; "
+            help="standard = Gemini 4 Carbon per page, Gemini Flash consolidates; "
                  "light = Gemini Flash for both; sonnet = Claude Sonnet 5.5 for both. "
                  "Omit to choose interactively.",
         )
