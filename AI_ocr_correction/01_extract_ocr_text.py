@@ -3,6 +3,7 @@ This script retrieves OCR text from items in an Omeka S database and saves them 
 It handles pagination, concurrent processing, and includes error handling and logging functionality.
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -92,13 +93,22 @@ def process_items(items, output_dir):
     return success_count, skipped_count, error_count
 
 
-def main():
+def main(argv=None) -> int:
     """
     Main execution function that orchestrates the OCR text extraction process.
 
-    Prompts for item set ID, initializes the client, and processes all items
-    while providing progress feedback through rich console output.
+    Takes the item set from ``--item-set-id`` or prompts for it, initializes the
+    client, and processes all items while providing progress feedback through
+    rich console output. Returns non-zero when an item could not be saved.
     """
+    parser = argparse.ArgumentParser(
+        description="Extract the raw OCR text of an Omeka S item set into TXT/."
+    )
+    parser.add_argument(
+        "--item-set-id", type=int, metavar="ID",
+        help="Item set to extract. Prompts interactively when omitted.",
+    )
+    args = parser.parse_args(argv)
     configure_logging(logging.WARNING)
     # Welcome banner
     console.print(Panel(
@@ -112,11 +122,16 @@ def main():
         client = OmekaClient.from_env()
     except ValueError as e:
         console.print(f"[red]{e}[/]")
-        return
+        return 1
 
-    # Get item set ID from user
-    console.print()
-    item_set_id = int(console.input("[cyan]Enter the item set ID:[/] "))
+    item_set_id = args.item_set_id
+    if item_set_id is None:
+        console.print()
+        try:
+            item_set_id = int(console.input("[cyan]Enter the item set ID:[/] "))
+        except ValueError:
+            console.print("[red]The item set ID must be a number.[/]")
+            return 1
     console.print()
 
     # Create the OUTPUT_DIR in the same folder as the script
@@ -141,7 +156,7 @@ def main():
 
     if not items:
         console.print("[yellow]No items found in this item set.[/]")
-        return
+        return 0
 
     # Process items
     console.rule("[bold cyan]Extracting Content")
@@ -165,7 +180,8 @@ def main():
         title="Complete",
         border_style="green"
     ))
+    return int(error_count > 0)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -448,11 +448,12 @@ def print_summary(results: List[Tuple[str, List[str]]], media_folder: Path) -> N
     console.print(files_table)
 
 
-def main():
+def main() -> int:
     """
     Main function to run the audio/video media download script.
 
     Prompts user for download type (item set or single item) and processes accordingly.
+    Returns non-zero when the run was cancelled or stopped on an error.
     """
     args = parse_args()
     # Initialize logging
@@ -493,17 +494,21 @@ def main():
 
         console.print(f"\n[green]{chr(10003)}[/] Download complete. Total items with media: [cyan]{len(results)}[/]")
         logging.info(f"Download complete. Total items with media: {len(results)}")
+        return 0
 
     except ValueError as e:
         console.print(f"\n[red]Configuration Error:[/] {e}")
         logging.error(f"Configuration error: {e}")
+        return 1
     except KeyboardInterrupt:
         console.print("\n\n[yellow]Download cancelled by user.[/]")
         logging.info("Download cancelled by user")
+        return 130
     except Exception as e:
         console.print(f"\n[red]Unexpected error:[/] {e}")
         logging.exception(f"Unexpected error: {e}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

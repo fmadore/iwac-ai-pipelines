@@ -9,7 +9,7 @@ library; numbered scripts, prompts and examples live in the repository.
 python -m pip install -e ".[dev]"
 python -m ruff check .
 python -X utf8 -m pytest tests/ -q
-python scripts/check_publication.py
+python scripts/check_publication.py   # links, heading anchors, citation/package versions
 python -m pip wheel . --no-deps --wheel-dir dist
 python examples/offline_workflow.py --output-dir .cache/example
 python scripts/capture_environment.py --output-dir .cache/release-environment
@@ -29,8 +29,8 @@ validation; install constraints with `pip install -c <constraints.txt> -e ".[dev
 on a compatible platform.
 
 CI covers Ubuntu with Python 3.11 and 3.13 and Windows with Python 3.13. It checks
-lint, behavioral tests, local documentation links, citation/package metadata
-agreement, and wheel construction. Passing mocked tests demonstrates pipeline
+lint, behavioral tests, local documentation links and heading anchors,
+citation/package metadata agreement, the offline example, and wheel construction. Passing mocked tests demonstrates pipeline
 behavior, not scientific accuracy or live provider availability.
 
 ## Artifact migration

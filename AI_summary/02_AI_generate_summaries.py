@@ -262,7 +262,8 @@ def process_txt_files(
 
     return success_count, error_count, skipped_count
 
-def main():
+def main() -> int:
+    """Generate the summaries; non-zero when a file failed or nothing was produced."""
     configure_logging()
     parser = argparse.ArgumentParser(
         description="Generate French and English summaries for extracted texts"
@@ -404,14 +405,18 @@ def main():
                 border_style="red",
                 box=box.ROUNDED
             ))
+        return int(error_count > 0 or not (success_count or skipped_count))
 
     except (FileNotFoundError, ValueError) as err:
         console.print(f"\n[red]✗ Error:[/red] {err}")
+        return 1
     except KeyboardInterrupt:
         console.print("\n[yellow]⚠ Interrupted by user[/yellow]")
+        return 130
     except Exception as exc:
         console.print(f"\n[red]✗ Unexpected failure:[/red] {exc}")
         console.print_exception()
+        return 1
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

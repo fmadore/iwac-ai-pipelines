@@ -38,8 +38,9 @@ which **model profile** to run (or pass `--profile` / `--light` to skip the prom
 Each profile runs on a single provider, so it needs a single API key:
 `GEMINI_API_KEY` for `standard` and `light`, `ANTHROPIC_API_KEY` for `sonnet`.
 The consolidating model is what step 03 stamps, so it is always a pinned key
-with an authority item. The Mistral variant uses Mistral OCR for step 1 and
-DeepSeek (`OPENROUTER_API_KEY`) for step 2.
+with an authority item. The Mistral variant, `02_Mistral_generate_summaries_issue.py`, uses Mistral OCR
+for step 1 and DeepSeek (`OPENROUTER_API_KEY`) for step 2. Both variants share
+their schema, cache and index writing through `magazine_extraction.py`.
 
 ### With Omeka S Integration
 

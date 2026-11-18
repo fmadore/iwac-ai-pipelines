@@ -58,6 +58,7 @@ modules in depth; the rest are only described here:
 |---|---|
 | `iwac_config.py` | IWAC-instance constants: property IDs, authority item sets, `AI_MODEL_ITEMS` |
 | `gemini_utils.py` | Gemini plumbing for multimodal scripts: generation config, Files API upload, text extraction that skips `thought` parts, `finish_reason_name()`, the shared `TRUNCATION_MARKER` |
+| `claude_page_processor.py` | The same page loop with Claude reading each page (`build_claude_client()`, `ClaudePageProcessor`): PDF `document` block, effort instead of a thinking level, a refused page recorded as failed rather than re-run on another model |
 | `gemini_page_processor.py` | The page-by-page Gemini PDF loop shared by OCR and HTR: inline→Files-API fallback, retry policy, `finish_reason` handling, page markers, batch driver |
 | `omeka_text_updater.py` | The `03` write step shared by summary/OCR/correction/transcription: change detection, `@annotation` attachment, `@language`-tagged values, several values per item in one PATCH, `--dry-run`, confirmation gate |
 | `omeka_link_updater.py` | The same idempotent write for *resource-link* properties (`dcterms:subject`, `dcterms:spatial`): dedup against existing links, `iwac:nerModel` annotation on every link added, whole-item PATCH, `dry_run`, pre-write snapshot; `provenance_model_key()` follows a `*_reconciled.csv` back to the checkpoint that names its model |
@@ -275,7 +276,9 @@ is set up by `configure_logging()` in `main()`, never by `logging.basicConfig`
 or at import.
 Text pipelines do not call `load_dotenv()` themselves — `llm_provider` loads it
 on import and `OmekaClient.from_env()` again; multimodal scripts that read a
-key before building any client still do. `main()` returns an exit code. A
+key before building any client still do. `main()` returns an exit code and the
+`__main__` guard is `sys.exit(main())`; `tests/test_entry_points.py` fails on a
+script that breaks this, the `sys.path` line or the sampling rule. A
 library module never touches `sys.stdout` on import.
 
 Incident history belongs in `CHANGELOG.md`, not beside the constant it

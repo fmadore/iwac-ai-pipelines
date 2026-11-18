@@ -11,11 +11,12 @@ import json
 from pathlib import Path
 import platform
 import subprocess
+import sys
 from urllib.request import urlopen
 from urllib.parse import quote
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -47,7 +48,8 @@ def main():
         "# Tested versions; upstream verified in environment.json. Platform-specific validation snapshot.\n"
         + "\n".join(f"{name}=={version['tested']}" for name, version in versions.items()) + "\n", encoding="utf-8")
     print(f"Recorded {len(versions)} registry-verified packages in {args.output_dir}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

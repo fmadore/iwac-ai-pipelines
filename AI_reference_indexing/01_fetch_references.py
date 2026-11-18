@@ -120,7 +120,7 @@ def export_authority_index(
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Fetch items and authority indices for reference indexing")
     parser.add_argument("--item-set-id", required=True, help="Comma-separated Omeka item set IDs")
     args = parser.parse_args()
@@ -137,7 +137,7 @@ def main():
         client = OmekaClient.from_env()
     except ValueError as e:
         console.print(f"[red]✗[/] Configuration error: {e}")
-        return
+        return 1
 
     item_set_ids = [s.strip() for s in args.item_set_id.split(",") if s.strip()]
 
@@ -164,7 +164,7 @@ def main():
 
     if not all_items:
         console.print("[red]✗[/] No items found.")
-        return
+        return 1
 
     # Build items CSV
     date_tag = datetime.now().strftime("%Y%m%d")
@@ -212,7 +212,8 @@ def main():
         title="Step 1 Complete",
         border_style="green",
     ))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

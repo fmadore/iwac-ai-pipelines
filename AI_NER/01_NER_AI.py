@@ -769,13 +769,13 @@ def prepare_run(args, mode_label: str) -> Optional[RunSetup]:
         resumed_items=resumed_items,
     )
 
-async def async_main(args) -> None:
+async def async_main(args) -> int:
     setup = prepare_run(args, mode_label="[yellow]Async[/]")
     if setup is None:
-        return
+        return 0
     if not setup.items:
         console.print("[green]✓[/] Output is already complete for this model and prompt.")
-        return
+        return 0
 
     stats = ProcessingStats(total_items=len(setup.items))
     ner_fn = partial(perform_ner, setup.llm_client)
@@ -787,21 +787,22 @@ async def async_main(args) -> None:
                                   resume=setup.resume)
 
     summarize(stats, setup.output_csv, setup.llm_client.usage)
+    return int(stats.failed_items > 0)
 
-def main() -> None:
+def main() -> int:
+    """Run the extraction; non-zero when an item failed or the run was refused."""
     configure_logging()
     args = parse_arguments()
     try:
         if getattr(args, 'async', False):
-            asyncio.run(async_main(args))
-            return
+            return asyncio.run(async_main(args))
 
         setup = prepare_run(args, mode_label="Sync")
         if setup is None:
-            return
+            return 0
         if not setup.items:
             console.print("[green]✓[/] Output is already complete for this model and prompt.")
-            return
+            return 0
 
         stats = ProcessingStats(total_items=len(setup.items))
         ner_fn = partial(perform_ner, setup.llm_client)
@@ -814,9 +815,11 @@ def main() -> None:
                 )
 
         summarize(stats, setup.output_csv, setup.llm_client.usage)
+        return int(stats.failed_items > 0)
     except (CheckpointMismatch, ValueError) as exc:
         console.print(f"[red]✗[/] {exc}")
+        return 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

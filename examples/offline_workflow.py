@@ -26,7 +26,7 @@ class PreviewArchive:
         raise AssertionError("The example must never write to an archive")
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -52,7 +52,8 @@ def main():
                              PropertyTarget("bibo:content", 91), guard=WriteGuard(dry_run=True))
     atomic_write_text(out / "preview.json", json.dumps(stats, indent=2) + "\n")
     assert stats["would_update"] == 1 and stats["updated"] == 0
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

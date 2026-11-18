@@ -9,6 +9,34 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-18 — Exit statuses, a real CLI for the exporter, and a pre-publication pass
+
+- Eight entry points ended in a bare `main()` and so exited 0 whatever
+  happened: `AI_NER/01`, `AI_summary/01` and `02`, `AI_ocr_correction/01`,
+  `AI_reference_indexing/01`, `AI_audio_summary/01`, `serving/probe_reasoning.py`
+  and the two release helpers. Each now returns a status and hands it to the
+  shell; NER and summary generation exit 1 when an item failed or the run was
+  refused. `tests/test_entry_points.py` checks every script for this, for the
+  canonical `sys.path` line, for `logging.basicConfig` and for sampling
+  parameters.
+- `NotebookLM/omeka_items_to_md.py` parses its arguments with `argparse`.
+  `--help` prints help, `--all` and `--subject ID` join the positional forms,
+  and an unrecognised target is an error instead of a drop into the
+  interactive menu. `AI_ocr_correction/01_extract_ocr_text.py` takes
+  `--item-set-id`.
+- Tests for the shared modules that had few: the link write step end to end
+  (`link_update_cli`, 62% → 92%), the reconciliation run (33% → 95%),
+  `prompt_loader`, `pdf_utils` and the Mistral PDF splitter. Coverage of
+  `common/` goes from 78% to 84%.
+- `scripts/check_publication.py` also checks that a link's `#anchor` names a
+  heading. CI runs the offline example.
+- README: every pipeline in one table linked to its own README (publication
+  extraction, authority curation and the NotebookLM export were missing), the
+  repository layout, the Anthropic models and key, and a section on what can
+  and cannot be reproduced. The Mistral row named Large 3 where OCR correction
+  offers Large 4; `.env.example` listed GPT-5.6 and `gpt-6-sol` as offered.
+  `common/README.md` opens with an index of every module.
+
 ### 2026-11-17 — Gemini 4 Carbon and Hydrogen replace Pro
 
 - Pro is offered nowhere. Carbon (strongest) and Hydrogen (fast tier) join

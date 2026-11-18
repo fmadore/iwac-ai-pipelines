@@ -188,8 +188,11 @@ def filter_by_language(
     return kept, len(items) - len(kept)
 
 
-def main():
-    """Fetch items, filter them to the summarizable ones, and save their OCR text."""
+def main() -> int:
+    """Fetch items, filter them to the summarizable ones, and save their OCR text.
+
+    Returns non-zero when an item's text could not be saved.
+    """
     configure_logging()
     parser = argparse.ArgumentParser(
         description="Extract OCR text from Omeka S items into TXT/ for summarization."
@@ -256,7 +259,7 @@ def main():
             ]
         if not item_set_ids:
             logging.info("No item set IDs provided. Exiting.")
-            return
+            return 0
         items = []
         for item_set_id in item_set_ids:
             logging.info(f"Fetching item set {item_set_id}...")
@@ -266,7 +269,7 @@ def main():
 
     if not items:
         logging.info("No items found. Exiting.")
-        return
+        return 0
 
     items, dropped = filter_by_language(items, args.language)
     if dropped:
@@ -286,7 +289,7 @@ def main():
 
     if not items:
         logging.info("Nothing left to process after filtering. Exiting.")
-        return
+        return 0
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     logging.info(f"Extracting content from {len(items)} items...")
@@ -298,7 +301,8 @@ def main():
         logging.info(f"Total items skipped (no content): {skipped_count}")
     if failed_count:
         logging.info(f"Total items failed: {failed_count}")
+    return int(failed_count > 0)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

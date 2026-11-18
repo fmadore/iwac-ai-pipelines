@@ -40,5 +40,8 @@ jobs:
       - name: Publication metadata and local links
         run: python scripts/check_publication.py
 
+      - name: Offline example
+        run: python examples/offline_workflow.py --output-dir .cache/example
+
       - name: Build wheel
         run: python -m pip wheel . --no-deps --wheel-dir dist

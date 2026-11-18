@@ -1,6 +1,36 @@
 # Shared Utilities
 
-This directory contains shared modules used across all pipelines.
+This directory contains shared modules used across all pipelines. It is the only
+importable package (`pip install -e .`); pipeline scripts are run directly.
+
+## Module index
+
+| Module | Purpose | Section |
+|---|---|---|
+| `omeka_client.py` | Authenticated Omeka S client: retry, pagination, batch fetch, whole-item update | [Omeka S Client](#omeka-s-client-omeka_clientpy) |
+| `omeka_text_updater.py` | The `03` write step for literal text: change detection, `@language` values, model annotation, upload ledger | [Omeka Text Updater](#omeka-text-updater-omeka_text_updaterpy) |
+| `omeka_link_updater.py` | The same idempotent write for resource links, each added link annotated with its model | [Omeka Resource-Link Updater](#omeka-resource-link-updater-omeka_link_updaterpy) |
+| `link_update_cli.py`, `reconciliation_cli.py` | The link write step and the reconciliation run shared by NER and reference indexing | [Link Update and Reconciliation Runs](#link-update-and-reconciliation-runs-link_update_clipy-reconciliation_clipy) |
+| `reconciliation.py` | Matching of extracted terms against authority records: exact keys, ambiguity across sets, fuzzy candidates for review | — |
+| `write_guard.py` | The gate in front of every bulk write: `--dry-run`, `--yes`, pre-write backup, confirmation | [Write Guard](#write-guard-write_guardpy) |
+| `iwac_config.py` | Constants of the IWAC instance: property IDs, authority item sets, the model authority items | — |
+| `llm_registry.py` | The model catalog, model tiers and per-model defaults; no SDK import | [LLM Provider Configuration Guide](#llm-provider-configuration-guide) |
+| `llm_provider.py` | Provider adapters behind one interface: `generate()`, `generate_structured()`, usage totals | [LLM Provider Configuration Guide](#llm-provider-configuration-guide) |
+| `gemini_utils.py` | Gemini client with a finite deadline and the served-model check, Files API upload, text extraction | — |
+| `gemini_page_processor.py` | The page-by-page PDF loop shared by OCR and HTR | [Gemini Page Processor](#gemini-page-processor-gemini_page_processorpy) |
+| `claude_page_processor.py` | The same loop with Claude reading each page; a refused page is recorded as failed, never re-run on another model | — |
+| `mistral_ocr.py` | Mistral Document AI: pinned model id, Markdown to plain text, block classification, splitting of files over 50 MB | — |
+| `pdf_utils.py`, `pdf_downloader.py` | Parse a PDF once and serve single pages; the shared Omeka PDF download step | — |
+| `downloader.py` | Streaming download through a `.part` file | [Streaming Downloader](#streaming-downloader-downloaderpy) |
+| `ffmpeg_utils.py` | ffmpeg/ffprobe discovery, conversion, MIME lookup | [FFmpeg Utilities](#ffmpeg-utilities-ffmpeg_utilspy) |
+| `rate_limiter.py`, `retry.py` | Proactive throttling, quota-exhaustion detection, the retry decorator | [Rate Limiter](#rate-limiter-rate_limiterpy), [Retry Decorator](#retry-decorator-retrypy) |
+| `checkpoint.py` | Atomic JSON checkpoints; a fingerprint of model, prompt and input decides resume or regenerate | [Durable Checkpoints](#durable-checkpoints-checkpointpy) |
+| `artifacts.py`, `run_context.py`, `outcomes.py`, `instrument.py` | Output sidecars with source and output hashes, the model context a run records, batch exit status, instrument identity for the sentiment panel | [Output sidecars](#output-sidecars-artifactspy-run_contextpy-outcomespy) |
+| `prompt_loader.py` | Discovery and selection among several `prompts/*.md` | — |
+| `log_redaction.py` | `configure_logging()` and credential redaction | [Logging](#logging-log_redactionpy) |
+| `console_utils.py` | The progress bar and tables every pipeline prints | [Console Utilities](#console-utilities-console_utilspy) |
+
+Modules without a section are documented in their own docstrings.
 
 ## Omeka S Client (`omeka_client.py`)
 

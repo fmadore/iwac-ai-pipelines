@@ -167,11 +167,37 @@ def test_summary_extraction_tolerates_missing_property():
     assert exporter.extract_summary({"bibo:shortDescription": []}) is None
 
 
+def _parsed(*argv):
+    args = exporter.build_argument_parser().parse_args(list(argv))
+    return exporter.parse_cli_request(exporter.request_argv(args)), args.include_summary
+
+
 def test_summary_flag_is_accepted_on_either_side_of_the_mode():
-    assert exporter.extract_summary_flag(["12345", "--with-summaries"]) == (
-        ["12345"], True,
+    assert _parsed("12345", "--with-summaries") == (
+        exporter.ExportRequest("item_set", "12345"), True,
     )
-    assert exporter.extract_summary_flag(["--with-summaries", "all"]) == (
-        ["all"], True,
-    )
-    assert exporter.extract_summary_flag(["all"]) == (["all"], False)
+    assert _parsed("--with-summaries", "all") == (exporter.ExportRequest("all"), True)
+    assert _parsed("all") == (exporter.ExportRequest("all"), False)
+
+
+def test_flag_and_positional_spellings_agree():
+    assert _parsed("--all") == _parsed("all")
+    assert _parsed("--subject", "678") == _parsed("subject:678")
+    assert _parsed() == (None, False)
+
+
+def test_help_and_typos_exit_before_omeka_is_touched(monkeypatch, capsys):
+    import pytest
+
+    def refuse():
+        raise AssertionError("OmekaClient built before argv was parsed")
+
+    monkeypatch.setattr(exporter.OmekaClient, "from_env", staticmethod(refuse))
+    with pytest.raises(SystemExit) as helped:
+        exporter.main(["--help"])
+    assert helped.value.code == 0
+    assert "subject:ID" in capsys.readouterr().out
+    for typo in (["--sumaries", "all"], ["unknown"], ["subject:abc"]):
+        with pytest.raises(SystemExit) as refused:
+            exporter.main(typo)
+        assert refused.value.code == 2

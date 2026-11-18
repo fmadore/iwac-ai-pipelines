@@ -76,6 +76,7 @@ Notes
 - Maximum 250 articles per file to stay within NotebookLM's word limits.
 """
 
+import argparse
 import os
 import re
 import sys
@@ -917,21 +918,34 @@ class ExportRequest:
     item_id: Optional[str] = None
 
 
-#: CLI spellings that turn on the stored-summary line. Not argparse: this
-#: entry point reads nothing and writes nothing to Omeka, so the flag is a
-#: presentation choice rather than one of the consent gates write_guard exists
-#: to enforce.
-SUMMARY_FLAGS = ("--with-summaries", "--with-summary", "--summaries")
+def build_argument_parser() -> argparse.ArgumentParser:
+    """The exporter's CLI: the compact positional syntax plus explicit flags."""
+    parser = argparse.ArgumentParser(
+        description="Export IWAC newspaper articles from Omeka S to NotebookLM-ready Markdown.",
+        epilog="With no target, the script asks for one interactively.",
+    )
+    parser.add_argument(
+        "target", nargs="?", metavar="TARGET",
+        help="'all' for the whole collection, an item set ID (12345), or "
+             "'subject:ID' for the articles that reference an authority record.",
+    )
+    parser.add_argument("--all", action="store_true", help="Same as the 'all' target.")
+    parser.add_argument("--subject", metavar="ID", help="Same as the 'subject:ID' target.")
+    parser.add_argument(
+        "--with-summaries", "--with-summary", "--summaries",
+        dest="include_summary", action="store_true",
+        help="Add each article's stored AI summary above its text.",
+    )
+    return parser
 
 
-def extract_summary_flag(argv: List[str]) -> Tuple[List[str], bool]:
-    """Split the summary flag out of argv, returning the remaining arguments.
-
-    Keeps the compact positional syntax ("all", "12345", "subject:678") free of
-    flag handling, so the flag can appear on either side of the mode.
-    """
-    remaining = [a for a in argv if a.strip().lower() not in SUMMARY_FLAGS]
-    return remaining, len(remaining) != len(argv)
+def request_argv(args: argparse.Namespace) -> List[str]:
+    """Reduce parsed arguments to the compact form ``parse_cli_request`` reads."""
+    if args.all:
+        return ["all"]
+    if args.subject is not None:
+        return ["--subject", args.subject]
+    return [args.target] if args.target is not None else []
 
 
 def parse_cli_request(argv: List[str]) -> Optional[ExportRequest]:
@@ -1100,30 +1114,21 @@ def export_one_request(
     console.print(f"[yellow]⚠[/] No files were created for the specified {noun}.")
 
 
-def main() -> int:
-    """Main entry point for the Omeka to NotebookLM Markdown exporter.
-    
-    This function handles:
-    1. Loading environment variables and configuration
-    2. Parsing command-line arguments or prompting for user input
-    3. Dispatching to the appropriate export mode:
-       - Whole IWAC collection (all countries and their Item Sets)
-       - Single Item Set by ID  
-       - Articles referencing a specific subject Item ID
-    4. Providing summary output of what was exported
-    
-    The script supports three main export modes:
-    - Mode 1: Export entire IWAC collection (uses COUNTRY_ITEM_SETS mapping)
-    - Mode 2: Export single Item Set by providing its numeric ID
-    - Mode 3: Export articles that reference a subject authority by its ID
-    
-    CLI usage examples:
-        python script.py all                    # Export whole collection
-        python script.py 12345                  # Export Item Set 12345
-        python script.py subject:67890          # Export articles about subject 67890
-        python script.py --subject 67890        # Alternative subject syntax
-        python script.py 12345 --with-summaries # Inline the stored AI summaries
+def main(argv: Optional[List[str]] = None) -> int:
+    """Export one selection of articles; non-zero when the request is refused.
+
+    The target is one of three modes — the whole collection, one item set, or
+    the articles that reference a subject authority — given on the command
+    line (see ``--help``) or chosen interactively when none is given.
     """
+    parser = build_argument_parser()
+    args = parser.parse_args(argv)
+    given = request_argv(args)
+    request = parse_cli_request(given)
+    if given and request is None:
+        parser.error(f"unrecognised target: {' '.join(given)}")
+    include_summary = args.include_summary
+
     configure_logging(logging.WARNING)
     # Welcome banner
     console.print(Panel(
@@ -1145,13 +1150,6 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)
     file_ext = export_file_extension()
 
-    argv, include_summary = extract_summary_flag(sys.argv[1:])
-    request = parse_cli_request(argv)
-    if request is None and argv:
-        console.print(
-            f"[yellow]⚠[/] Unrecognized CLI arguments '{' '.join(argv)}'. "
-            "Switching to interactive mode..."
-        )
     if request is None:
         request = prompt_export_request()
         if request is None:

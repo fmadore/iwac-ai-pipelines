@@ -4,7 +4,7 @@ What is known to be unfinished, and what closes each item. Remove an entry when
 it is done and record what happened in [CHANGELOG.md](../CHANGELOG.md); add one
 whenever a change stops short of where it should end.
 
-Last reviewed 2026-11-17.
+Last reviewed 2026-11-18.
 
 ## Models from Kalamu: compare, then promote
 
@@ -84,9 +84,11 @@ articles on 2026-10-23. Left:
 
 ## Dates
 
-- **2026-10-23** — GPT-5 and GPT-5.1 snapshots shut down. Their keys already
-  resolve to `gpt-6-luna` / `gpt-6-sol`. After that date, check whether any
-  script or saved command still names them, then drop `LEGACY_CLI_MODEL_KEYS`.
+- **2026-10-23** (passed) — GPT-5 and GPT-5.1 snapshots shut down. Their keys
+  resolve to `gpt-6-luna` / `gpt-6-sol`. Checked 2026-11-18: no script, prompt
+  or README in the repository names them in a command; `LEGACY_CLI_MODEL_KEYS`
+  is still accepted by `--model` in NER, summaries and both OCR-correction
+  scripts. Drop it once no saved command outside the repository uses them.
 - **2026-11-30** — Gemini 4 Argon's introductory $2/$10 per 1M ends; $4/$20
   from 2026-12-01. Update the registry description.
 - **2027-01-01** — Gemini 3.8 Flash goes from $0.75/$3.75 to $1.50/$7.50 per
@@ -138,7 +140,24 @@ articles on 2026-10-23. Left:
 - **Voxtral provenance.** `voxtral-mini-2602` has no authority item, so its
   transcripts can only be uploaded with `--no-model-annotation`. Create one if
   Voxtral output is to carry `iwac:transcriptionModel`.
-- **NotebookLM exporter argv.** `NotebookLM/omeka_items_to_md.py` parses argv
-  by hand: `--help` is reported as an unrecognised argument and the script drops
-  into its interactive menu. It only reads Omeka, so this is a usability gap
-  rather than a write-safety one; `argparse` would fix it.
+
+## Before the paper's release
+
+- **Tag a release.** Everything since 1.3.1 (2026-10-06) is under "Unreleased"
+  in the changelog, including the google-genai 3.x and anthropic 2.x upgrades.
+  A paper should cite a version DOI, so cut the release the paper's runs used,
+  update `CITATION.cff` and `pyproject.toml` together, and let Zenodo mint it.
+- **Capture the environment.** `docs/validation/2026-10-06` predates the
+  2026-11-14 dependency upgrades. Run `scripts/capture_environment.py` on the
+  release commit and link the new snapshot from `docs/PUBLICATION.md`.
+- **Cite the article.** Once it has a DOI, add `preferred-citation` to
+  `CITATION.cff` and replace "forthcoming" in the README.
+
+## Test coverage owed
+
+Line coverage of `common/` is 84% (`pytest --cov=common` with `pytest-cov`).
+Two modules sit well below it because their untested lines call a real program
+or service: `ffmpeg_utils.py` (30%: discovery, probing, conversion and
+splitting all run ffmpeg) and `mistral_ocr.py` (75%: the OCR request and its
+retry). Closes when each has a test with the external call faked, as
+`tests/test_gemini_page_processor.py` does for Gemini.

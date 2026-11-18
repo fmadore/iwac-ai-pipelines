@@ -27,7 +27,7 @@ Corrects text while maintaining word-level coordinates. Essential when coordinat
 ### Plain Text Workflow
 
 ```bash
-python 01_extract_ocr_text.py      # Extract the raw OCR (extracttext:extracted_text) from Omeka S
+python 01_extract_ocr_text.py      # Extract the raw OCR (extracttext:extracted_text) from Omeka S; --item-set-id N skips the prompt
 python 02_correct_ocr_text.py      # Apply AI corrections
 python 03_update_database.py       # Write bibo:content (--dry-run to preview; backups/ holds the pre-write copy)
 ```

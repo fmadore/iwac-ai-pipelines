@@ -32,10 +32,14 @@ Choose from three export modes:
 
 Or use command line:
 ```bash
-python omeka_items_to_md.py all              # Whole collection
+python omeka_items_to_md.py all              # Whole collection (or --all)
 python omeka_items_to_md.py 60638            # Single item set
-python omeka_items_to_md.py subject:12345    # Subject lookup
+python omeka_items_to_md.py subject:12345    # Subject lookup (or --subject 12345)
+python omeka_items_to_md.py --help
 ```
+
+A target the script does not recognise is an error, not a fall-through to the
+interactive menu.
 
 ## Markdown layout
 

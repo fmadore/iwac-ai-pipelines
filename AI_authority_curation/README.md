@@ -3,7 +3,7 @@
 Descriptions, person roles and duplicate merges for the authority records —
 persons (set 266), organisations (854), subjects (1), places (268) and events
 (2). The judgment steps are done by Claude Haiku 5.5 reviewers through the
-`iwac-authority-curation` skill (`.claude/skills/`); the four scripts here do
+`iwac-authority-curation` skill (`.claude/skills/`); the numbered scripts here do
 every Omeka read and write, so what reaches the archive is decided by code and
 by the curator, not by an agent.
 

@@ -260,7 +260,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> int:
     args = build_argument_parser().parse_args()
     configure_logging(logging.WARNING, console=console)
     logger = logging.getLogger(__name__)
@@ -336,7 +336,9 @@ def main() -> None:
             encoding="utf-8",
         )
         console.print(f"\n[green]✓[/] Measurements written to {path}")
+    # A failed call is a measurement, so it does not change the exit status.
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

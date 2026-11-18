@@ -291,3 +291,44 @@ def test_ocr_extraction_render_pages_keeps_first_page_furniture_only():
     assert "Corps de la page une." in text and text.count("p. 1") == 1
     assert "--- Page 2 ---" in text and "Suite du texte." in text
     assert "Page 3" not in text and "[Empty page" not in text
+
+
+# --- splitting oversized PDFs ------------------------------------------------
+
+def _blank_pdf(path, pages):
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=200, height=200)
+    with path.open("wb") as handle:
+        writer.write(handle)
+    return path
+
+
+def test_a_pdf_under_the_cap_is_sent_whole(tmp_path):
+    from common.mistral_ocr import split_pdf_for_upload
+
+    path = _blank_pdf(tmp_path / "small.pdf", 3)
+    (part,) = split_pdf_for_upload(path)
+    assert (part.first_page_index, part.page_count) == (0, 3)
+    assert part.data == path.read_bytes()
+
+
+def test_an_oversized_pdf_is_split_into_contiguous_parts_covering_every_page(tmp_path):
+    import io
+
+    from pypdf import PdfReader
+
+    from common.mistral_ocr import split_pdf_for_upload
+
+    path = _blank_pdf(tmp_path / "large.pdf", 10)
+    parts = split_pdf_for_upload(path, target_bytes=path.stat().st_size // 4)
+
+    assert len(parts) > 1
+    expected_start = 0
+    for part in parts:
+        assert part.first_page_index == expected_start
+        assert len(PdfReader(io.BytesIO(part.data)).pages) == part.page_count
+        expected_start += part.page_count
+    assert expected_start == 10
