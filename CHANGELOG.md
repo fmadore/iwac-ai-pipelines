@@ -7,7 +7,7 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
-## Unreleased
+## 1.4.0 — 2026-11-18
 
 ### 2026-11-18 — Exit statuses, a real CLI for the exporter, and a pre-publication pass
 
