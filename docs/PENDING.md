@@ -143,15 +143,10 @@ articles on 2026-10-23. Left:
 
 ## Before the paper's release
 
-- **Tag a release.** Everything since 1.3.1 (2026-10-06) is under "Unreleased"
-  in the changelog, including the google-genai 3.x and anthropic 2.x upgrades.
-  A paper should cite a version DOI, so cut the release the paper's runs used,
-  update `CITATION.cff` and `pyproject.toml` together, and let Zenodo mint it.
-- **Capture the environment.** `docs/validation/2026-10-06` predates the
-  2026-11-14 dependency upgrades. Run `scripts/capture_environment.py` on the
-  release commit and link the new snapshot from `docs/PUBLICATION.md`.
 - **Cite the article.** Once it has a DOI, add `preferred-citation` to
   `CITATION.cff` and replace "forthcoming" in the README.
+- **Version DOI.** 1.4.0 was tagged on 2026-11-18. When Zenodo has minted its
+  DOI, cite that one, not the concept DOI, for the runs the paper reports.
 
 ## Test coverage owed
 
