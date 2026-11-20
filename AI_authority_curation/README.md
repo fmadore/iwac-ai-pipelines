@@ -11,11 +11,11 @@ by the curator, not by an agent.
 |---|---|---|
 | `01_collect.py` | no | Finds records with no `dcterms:description` (and persons with no role category), quotes the documents that link to each, lists candidate duplicate pairs, writes reviewer batches |
 | *reviewers* | no | One `iwac-authority-reviewer` agent per batch writes `verdicts/<batch>.json` |
-| `02_build_plan.py` | no | Checks every verdict and writes `plan_descriptions.csv`, `plan_roles.csv`, `plan_merges.csv` for the curator |
+| `02_build_plan.py` | no | Checks every verdict and writes `plan_descriptions.csv`, `plan_roles.csv`, `plan_merges.csv`, `plan_identifiers.csv` and `review.xlsx` for the curator |
 | `03_apply.py` | yes | Writes approved descriptions (`fr` + `en`), role links and Wikidata identifiers |
 | `04_merge.py` | yes | Repoints every link from an approved loser to its survivor and keeps the loser's names as alternatives |
 | `05_sort.py` | yes | Files approved stubs from "Notices d'autorités à traiter" (set 12826): class, template, item set, `dcterms:type`, cleaned title, alternatives, person dates |
-| `06_ner_plan.py` | no | Turns a review of `AI_NER` leftovers (`proposals.json`) into plans for 03, 05 and 07 |
+| `06_ner_plan.py` | no | Turns a review of `AI_NER` leftovers (`proposals.json`) into plans for 03, 05 and 07, and `review.xlsx` |
 | `07_create.py` | yes | Creates approved new records and adds approved alternative names to existing ones |
 
 ## NER leftovers
@@ -28,7 +28,11 @@ curator workbook plus `proposals.json`. `06_ner_plan.py --proposals … --label
 duplicates. New records and alternatives are pre-approved unless flagged; a
 proposal whose title may already exist is held back. Apply them in order:
 `05_sort.py` (stubs), `03_apply.py` (their descriptions and categories),
-`07_create.py` (new records, alternatives), then reconcile again.
+`07_create.py` (new records, alternatives), then reconcile again. Once
+`AI_NER/03` has linked articles to them, run `01_collect.py --task wikidata
+--ids …` on every record the round created or filed, per kind: the collector
+reads only records that documents link to, and the reviewer judges a
+candidate from those documents.
 
 It writes no merge plan. The reviewers' remarks about other records that look
 alike go to `duplicates_to_examine.csv`; turned into pairs on 2026-10-21 they
@@ -49,6 +53,11 @@ Records without a Wikidata item are offered candidates from the Wikidata API
 picks one or none, and a QID already on another authority is flagged as a
 possible duplicate. `--task wikidata` reconciles records that need nothing
 else.
+
+Every round ends with `review.xlsx` in its run folder (`review_workbook.py`):
+one sheet per plan, rows coloured by status, links clickable, header frozen
+and filtered. It is a view regenerated from the CSVs; approvals and edited
+descriptions go in the CSVs, which are what the write steps read.
 
 `01_collect.py --kind unsorted` prepares triage batches for set 12826 instead of
 describe batches: each stub with its evidence and the closest existing

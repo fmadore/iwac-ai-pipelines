@@ -69,10 +69,12 @@ Windows). Read `AI_authority_curation/README.md` for what each script writes.
 
    It checks every verdict (right model, one or two sentences per language,
    evidence drawn from the batch, roles from the offered list) and writes
-   `plan_descriptions.csv`, `plan_roles.csv` and `plan_merges.csv`.
+   `plan_descriptions.csv`, `plan_roles.csv`, `plan_merges.csv`,
+   `plan_identifiers.csv` and `review.xlsx`, one sheet per plan.
 
 4. **Curator review.** Show the curator the counts and the `flagged` rows with
-   their reasons, and point to the three CSVs. The curator marks rows
+   their reasons, and send them `review.xlsx` (SendUserFile) after every
+   round. Decisions go in the CSVs, which the write steps read. The curator marks rows
    `approve = yes`, may edit a description (it is then written without the
    model annotation), may fill `role_id` on a `new_role` proposal once the
    category item exists, and may swap `survivor_id`/`loser_id`. Never approve
@@ -202,12 +204,20 @@ Haiku review, `country_rule.py`, workbook. The curator reads the workbook;
 then this pipeline writes:
 
 1. `06_ner_plan.py --proposals <run>/proposals.json --label <country>` — five
-   plans and `duplicates_to_examine.csv` in `output/ner_<country>_<ts>/`, no
-   Omeka write.
+   plans, `duplicates_to_examine.csv` and `review.xlsx` in
+   `output/ner_<country>_<ts>/`, no Omeka write. Send the workbook to the
+   curator; approvals still go in the CSVs.
 2. `05_sort.py --run <that folder>` — files the stubs the review matched.
 3. `03_apply.py --run <that folder>` — their descriptions and categories.
 4. `07_create.py --run <that folder>` — new records and alternative names.
-5. `04_merge.py` — only for duplicates the curator has confirmed, in a
+5. **Wikidata, always**, once `AI_NER/02`–`03` have linked articles to the
+   new records: `01_collect.py --kind <kind> --task wikidata --ids <created
+   and filed ids>` per kind, the reviewers, `02_build_plan.py`, then
+   `03_apply.py --only identifiers`. The collector skips records no document
+   links to, so running it straight after `07` finds almost nothing (Togo,
+   2026-11-20: 28 of 152). Ministers, parties, national bodies and other
+   well-known entities usually have an item; connect them.
+6. `04_merge.py` — only for duplicates the curator has confirmed, in a
    `plan_merges.csv` written for them. `06` writes no merge plan: the
    reviewers' duplicate remarks of 2026-10-21, made into pairs, would have
    merged events into places and persons (the Yirgou clashes into the village,

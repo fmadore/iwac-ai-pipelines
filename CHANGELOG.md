@@ -7,6 +7,27 @@ comments beside the constants it explains — kept because an annotation on the
 archive can only be read back with it, moved here so the code states rules and
 the changelog tells stories.
 
+## Unreleased
+
+### 2026-11-20 — A curator workbook after every curation round; Togo NER leftovers written
+
+- `AI_authority_curation/review_workbook.py`: `02_build_plan.py` and
+  `06_ner_plan.py` end by writing `review.xlsx` in the run folder, one sheet
+  per plan CSV, rows coloured by status, links clickable. The CSVs stay what
+  the write steps read. `openpyxl` joins the dependencies.
+- The Togo pass (1,564 articles, Haiku 5.5, 2026-10-23): 245 clusters of
+  leftovers reviewed, then on 2026-11-20 32 stubs filed with descriptions and
+  21 role links, 120 records created and alternative names added to 24
+  (`AI_authority_curation/output/ner_togo_20261120T104127/`). Curator's rules
+  on the way: no bare "Zongo" in any title or alternative (quarters and
+  mosques of that name exist in every country); the bare "Ahmadiyya" stays the
+  worldwide movement, so no Togolese branch was created; Alex Mivedor is Alex
+  Ayité Gachin Mivedor (13835). Twelve creations and fourteen other rows wait
+  for the curator.
+- Wikidata reconciliation now follows every NER round, after `AI_NER/03`: the
+  collector reads only records that documents link to, so straight after the
+  creations it found 28 of the 152.
+
 ## 1.4.0 — 2026-11-18
 
 ### 2026-11-18 — Exit statuses, a real CLI for the exporter, and a pre-publication pass

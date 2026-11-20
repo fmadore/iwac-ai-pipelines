@@ -58,6 +58,7 @@ dependencies = [
     # Utilities
     "python-dotenv>=1.0,<2",
     "rich>=13,<16",
+    "openpyxl>=3.1,<4", # the curator's review.xlsx in AI_authority_curation
     "pydub>=0.25,<1",
     "audioop-lts; python_version >= '3.13'", # pydub dependency removed from stdlib in 3.13
 ]

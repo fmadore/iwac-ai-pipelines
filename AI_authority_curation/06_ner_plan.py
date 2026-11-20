@@ -62,6 +62,7 @@ from curation_core import (  # noqa: E402
     REVIEWER_MODEL_KEY,
     fold,
 )
+from review_workbook import write_review_workbook  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -237,7 +238,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     console.print(count_table(
         [(name, f"{sum(r.get('approve') == 'yes' for r in rows)} approved / {len(rows)}")
          for name, (_, rows) in plans.items()], title="Plans"))
-    console.print(f"Run: [cyan]{run_dir}[/]")
+    console.print(f"Run: [cyan]{run_dir}[/], workbook [cyan]{write_review_workbook(run_dir).name}[/]")
     return 0
 
 

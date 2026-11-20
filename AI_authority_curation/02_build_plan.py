@@ -50,6 +50,7 @@ from curation_core import (  # noqa: E402
     check_duplicate_batch,
     check_triage_batch,
 )
+from review_workbook import write_review_workbook  # noqa: E402
 
 console = Console()
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
@@ -246,8 +247,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if missing_files:
         console.print(f"[yellow]{missing_files} batch(es) have no verdict file yet: "
                       f"their rows are marked invalid.[/]")
-    console.print(f"Plan written to [cyan]{run_dir}[/]. Only rows written by {REVIEWER_MODEL_KEY} "
-                  "can be ready; mark the ones to write with approve = yes.")
+    workbook = write_review_workbook(run_dir)
+    console.print(f"Plan written to [cyan]{run_dir}[/], workbook [cyan]{workbook.name}[/]. Only rows written by "
+                  f"{REVIEWER_MODEL_KEY} can be ready; mark the ones to write with approve = yes in the CSVs.")
     return 1 if missing_files else 0
 
 

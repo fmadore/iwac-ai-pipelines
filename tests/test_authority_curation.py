@@ -525,3 +525,30 @@ def test_plan_holds_back_what_may_exist_and_writes_no_merge_plan():
                                   "note": "the curator may prefer to link the event"}])
     assert "approve" not in remarks[0] and "survivor_id" not in remarks[0]
     assert not hasattr(plan, "merge_rows")
+
+
+# --- the curator's workbook ----------------------------------------------------
+
+def test_every_plan_becomes_a_sheet_with_links_and_status_colours(tmp_path):
+    from openpyxl import load_workbook
+
+    import review_workbook as rw
+
+    (tmp_path / "plan_roles.csv").write_text("approve,status,url\n,flagged,https://islam.zmo.de/s/x/item/2\n",
+                                             encoding="utf-8-sig")
+    (tmp_path / "plan_create.csv").write_text("approve,status,title\nyes,ready,Lomé II\n", encoding="utf-8-sig")
+    (tmp_path / "duplicates_to_examine.csv").write_text("record_a,record_b\n1,2\n", encoding="utf-8-sig")
+    (tmp_path / "created_20261120.csv").write_text("title,o:id\nX,1\n", encoding="utf-8-sig")
+
+    book = load_workbook(rw.write_review_workbook(tmp_path))
+    assert book.sheetnames == ["create", "roles", "duplicates_to_examine"]
+    assert book["create"]["C2"].value == "Lomé II"
+    assert book["roles"]["C2"].hyperlink.target == "https://islam.zmo.de/s/x/item/2"
+    assert book["roles"]["B2"].fill.fgColor.rgb.endswith(rw.STATUS_FILL["flagged"])
+    assert book["create"].freeze_panes == "A2"
+
+
+def test_a_run_without_plans_still_gets_a_workbook(tmp_path):
+    import review_workbook as rw
+
+    assert rw.write_review_workbook(tmp_path).exists()
