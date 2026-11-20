@@ -24,6 +24,26 @@ the changelog tells stories.
   worldwide movement, so no Togolese branch was created; Alex Mivedor is Alex
   Ayité Gachin Mivedor (13835). Twelve creations and fourteen other rows wait
   for the curator.
+- Set 12826 ("Notices d'autorités à traiter"): 47 empty stubs deleted on the
+  curator's instruction — a title and nothing else, no other item set, and no
+  item linking to them through any property (searched with an empty property
+  id, re-checked before each delete). Set down from 2,902 to 2,855; backups
+  and log in `AI_authority_curation/output/empty_stubs_20261120/`. The 1,121
+  stubs `01_collect.py --kind unsorted` called unlinked on 2026-10-17 are not:
+  almost all are article bylines (`dcterms:creator`), a property the unsorted
+  kind's `evidence_terms` left out. It now counts for unsorted stubs, persons
+  and organisations. A signed text is evidence of authorship only: the
+  collector gives no AI summary for it, the reviewer is told that a byline is
+  not a profession (columns are signed by politicians, imams and academics
+  too), and `02_build_plan.py` flags a description or role drawn only from
+  texts the record signed.
+- `01_collect.py --kind unsorted --track topics|bylines`: ranked together, the
+  1,071 byline-only stubs filled 55 of the first 60 places. The topics track
+  ranks the 1,778 stubs documents are about by those documents alone.
+- `05_sort.py` and `04_merge.py` make documents' links follow the kind, at the
+  curator's request: a place moves from `dcterms:subject` to `dcterms:spatial`
+  on every linking item, any other kind the other way, annotation kept and no
+  property naming the record twice.
 - Wikidata reconciliation now follows every NER round, after `AI_NER/03`: the
   collector reads only records that documents link to, so straight after the
   creations it found 28 of the 152.

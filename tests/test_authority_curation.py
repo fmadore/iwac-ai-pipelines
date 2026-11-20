@@ -138,6 +138,19 @@ def test_roles_must_come_from_the_offered_list_with_evidence():
     assert proposal.role_status == "flagged"
 
 
+def test_what_rests_only_on_signed_texts_is_flagged():
+    batch = describe_batch(needs=("description", "role"))
+    for entry in batch["authorities"][0]["evidence"]:
+        entry["linked_as"] = "dcterms:creator" if entry["item_id"] == 8 else "dcterms:subject"
+    signed = checked(batch, verdict_file({**GOOD, "evidence": [8], "role_id": 8874, "role_evidence": [8]}))
+    assert (signed.description_status, signed.role_status) == ("flagged", "flagged")
+    assert "byline" in signed.description_problems[0]
+    assert "not necessarily a journalist" in signed.role_problems[0]
+    mixed = checked(batch, verdict_file({**GOOD, "evidence": [7, 8], "role_id": 8874,
+                                         "role_evidence": [7, 8]}))
+    assert (mixed.description_status, mixed.role_status) == ("ready", "ready")
+
+
 def test_a_role_for_a_record_that_has_one_is_refused():
     row = checked(describe_batch(), verdict_file({**GOOD, "role_id": 8874, "role_evidence": [8]}))
     assert row.role_status == "invalid"
@@ -552,3 +565,49 @@ def test_a_run_without_plans_still_gets_a_workbook(tmp_path):
     import review_workbook as rw
 
     assert rw.write_review_workbook(tmp_path).exists()
+
+
+# --- topical property and tracks ---------------------------------------------
+
+def topical_link(rid, pid, **extra):
+    return {"type": "resource:item", "property_id": pid, "value_resource_id": rid, **extra}
+
+
+TOPICAL = {"dcterms:subject": 3, "dcterms:spatial": 40}
+
+
+def test_a_place_cited_as_subject_moves_to_spatial_with_its_annotation():
+    note = {"iwac:nerModel": [{"@value": "x"}]}
+    item = {"dcterms:subject": [topical_link(5, 3, **{"@annotation": note}), topical_link(6, 3)],
+            "dcterms:spatial": [topical_link(7, 40)]}
+    assert cc.move_topical_links(item, 5, "places", TOPICAL) == (1, 0)
+    assert [v["value_resource_id"] for v in item["dcterms:subject"]] == [6]
+    moved = item["dcterms:spatial"][-1]
+    assert (moved["value_resource_id"], moved["property_id"], moved["@annotation"]) == (5, 40, note)
+
+
+def test_a_moved_link_never_doubles_one_already_there():
+    item = {"dcterms:subject": [topical_link(5, 3)], "dcterms:spatial": [topical_link(5, 40)]}
+    assert cc.move_topical_links(item, 5, "places", TOPICAL) == (0, 1)
+    assert "dcterms:subject" not in item and len(item["dcterms:spatial"]) == 1
+
+
+def test_anything_but_a_place_moves_out_of_spatial():
+    item = {"dcterms:spatial": [topical_link(9, 40)]}
+    assert cc.move_topical_links(item, 9, "organisations", TOPICAL) == (1, 0)
+    assert item["dcterms:subject"][0]["property_id"] == 3
+    assert cc.move_topical_links(item, 9, "organisations", TOPICAL) == (0, 0)
+
+
+def test_kind_of_reads_the_item_set():
+    assert cc.kind_of({"o:item_set": [{"o:id": 268}]}) == "places"
+    assert cc.kind_of({"o:item_set": [{"o:id": 12826}]}) is None
+
+
+def test_tracks_split_topics_from_bylines():
+    collect = _load("01_collect.py")
+    signed_only = {"dcterms:creator": 12, "dcterms:subject": 0}
+    mixed = {"dcterms:creator": 12, "dcterms:subject": 2}
+    assert (collect.track_links(signed_only, "topics"), collect.track_links(signed_only, "bylines")) == (0, 12)
+    assert (collect.track_links(mixed, "topics"), collect.track_links(mixed, "bylines")) == (2, 0)
+    assert collect.track_links(mixed, "all") == 14

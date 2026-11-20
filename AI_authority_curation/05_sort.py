@@ -14,6 +14,11 @@ is ``yes``, PATCHes the stub whole so that it follows its kind's template:
 - for persons, ``birth_year`` / ``death_year`` as ``foaf:birthday`` /
   ``dcterms:date`` (year only), unless those fields are already set.
 
+Documents' links then follow the kind: a stub filed as a place and cited
+through ``dcterms:subject`` moves to ``dcterms:spatial`` on every linking
+item, and a stub filed as anything else moves the other way. Annotations
+travel with the link, and no property ends up naming the record twice.
+
 A stub the plan lists as already filed elsewhere only leaves set 12826.
 Stubs that duplicate an existing authority are not filed here: they are rows
 of ``plan_merges.csv``, for ``04_merge.py``. Descriptions and roles are rows of
@@ -48,7 +53,17 @@ from common.omeka_text_updater import open_backup  # noqa: E402
 from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from curation_core import KINDS, SORT_TARGETS, UNSORTED_SET_ID, normalize_name, record_names  # noqa: E402
+from curation_core import (  # noqa: E402
+    KINDS,
+    SORT_TARGETS,
+    TOPICAL_TERMS,
+    UNSORTED_SET_ID,
+    move_topical_links,
+    normalize_name,
+    record_names,
+    repeated_links,
+    topical_term,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -114,6 +129,41 @@ def file_stub(item: Dict[str, Any], row: Dict[str, str], props: Dict[str, int]) 
     return added
 
 
+def relocate_links(client: OmekaClient, aid: int, kind: str, topical_ids: Dict[str, int],
+                   dry_run: bool, sink) -> Dict[str, int]:
+    """Move documents' links to a filed stub into its kind's topical property.
+
+    A stub filed as a place and cited through ``dcterms:subject`` is moved to
+    ``dcterms:spatial``, a stub filed as anything else the other way. Each
+    linking item is PATCHed whole and fetched again.
+    """
+    wrong = next(t for t in TOPICAL_TERMS if t != topical_term(kind))
+    linking = client.get_items(**{"property[0][property]": topical_ids[wrong],
+                                  "property[0][type]": "res", "property[0][text]": aid})
+    report = {"links_moved": 0, "link_failures": 0, "linking_items": len(linking)}
+    for listed in linking:
+        item_id = int(listed["o:id"])
+        item = client.get_item(item_id) if not dry_run else listed
+        if not item:
+            report["link_failures"] += 1
+            continue
+        original = copy.deepcopy(item)
+        moved, dropped = move_topical_links(item, aid, kind, topical_ids)
+        report["links_moved"] += moved + dropped
+        if dry_run or not (moved or dropped):
+            continue
+        if sink is not None:
+            sink(original)
+        if not client.update_item(item_id, item):
+            report["link_failures"] += 1
+            continue
+        after = client.get_item(item_id) or {}
+        left = any(isinstance(v, dict) and v.get("value_resource_id") == aid for v in after.get(wrong, []))
+        if left or repeated_links(after, [aid]) or value_count(after) != value_count(original) - dropped:
+            report["link_failures"] += 1
+    return report
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     configure_logging()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -143,9 +193,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     client = OmekaClient.from_env()
     props = {term: client.get_property_id(term) for term in
              ("dcterms:type", "dcterms:title", "dcterms:alternative", "foaf:birthday", "dcterms:date")}
+    topical_ids = {term: client.get_property_id(term) for term in TOPICAL_TERMS}
     targets = sorted({r["target"] for r in usable})
     if not guard.confirm(console, action="File stubs into the authority sets", base_url=client.base_url,
-                         item_count=len(usable), details=[f"Into:          {', '.join(targets)}"],
+                         item_count=len(usable),
+                         details=[f"Into:          {', '.join(targets)}",
+                                  "Documents' links follow the kind: places in dcterms:spatial, "
+                                  "the rest in dcterms:subject."],
                          title="About to file authority records"):
         return 1
 
@@ -164,8 +218,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             original = copy.deepcopy(item)
             added = file_stub(item, row, props)
             if guard.dry_run:
+                links = relocate_links(client, aid, row["target"], topical_ids, True, None)
                 results.append({"authority_id": aid, "target": row["target"], "status": "would_file",
-                                "values_added": added})
+                                "values_added": added, **links})
                 continue
             if sink is not None:
                 sink(original)
@@ -178,12 +233,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             ok = (kind.item_set_id in sets and UNSORTED_SET_ID not in sets
                   and value_count(after) == value_count(original) + added
                   and (not row.get("new_title") or after.get("o:title") == row["new_title"].strip()))
-            results.append({"authority_id": aid, "target": row["target"], "values_added": added,
+            links = relocate_links(client, aid, row["target"], topical_ids, False, sink)
+            ok = ok and not links["link_failures"]
+            results.append({"authority_id": aid, "target": row["target"], "values_added": added, **links,
                             "status": "filed, verified" if ok else "filed, CHECK FAILED"})
 
     log_path = run_dir / f"sorted_{'dryrun_' if guard.dry_run else ''}{datetime.now():%Y%m%dT%H%M%S}.csv"
     with log_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["authority_id", "target", "status", "values_added"],
+        writer = csv.DictWriter(handle, fieldnames=["authority_id", "target", "status", "values_added",
+                                                     "links_moved", "link_failures"],
                                 extrasaction="ignore")
         writer.writeheader()
         writer.writerows(results)

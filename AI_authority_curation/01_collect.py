@@ -26,7 +26,9 @@ its title and describe it. Stubs are taken most-linked first, from a cached
 count (``output/unsorted_link_counts.json``, ``--recount`` to refresh); each run
 skips stubs an earlier run already batched, so repeating the command continues
 the pass. Stubs already in an authority set are only listed (``already_filed``),
-and stubs nothing links to go to ``unlinked_stubs.csv``.
+and stubs nothing links to go to ``unlinked_stubs.csv``. ``--track topics``
+takes only the stubs documents are about, ranked by those documents;
+``--track bylines`` only the stubs that are nothing but article signatures.
 
 Usage:
     python AI_authority_curation/01_collect.py --kind organisations --limit 40
@@ -35,6 +37,7 @@ Usage:
     python AI_authority_curation/01_collect.py --kind persons --ids 125261,43062
     python AI_authority_curation/01_collect.py --kind unsorted --limit 60
     python AI_authority_curation/01_collect.py --kind unsorted --limit 60 --recount
+    python AI_authority_curation/01_collect.py --kind unsorted --track topics --limit 60
 """
 from __future__ import annotations
 
@@ -59,6 +62,7 @@ from common.omeka_client import OmekaClient  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from curation_core import (  # noqa: E402
+    AUTHORSHIP_TERMS,
     KINDS,
     SORT_TARGETS,
     NameIndex,
@@ -159,7 +163,9 @@ def gather_evidence(
                 }
                 if snippets:
                     entry["quotes"] = snippets
-                else:
+                elif term not in AUTHORSHIP_TERMS:
+                    # A summary of an article someone wrote describes its topic,
+                    # not its author: title, date and publisher are the evidence.
                     summary = next((_text(v) for v in _values(doc, "bibo:shortDescription")
                                     if v.get("@language") in (None, "fr")), "")
                     summary = summary or next((_text(v) for v in _values(doc, "dcterms:abstract")), "")
@@ -286,6 +292,23 @@ def attach_wikidata(entry: Dict[str, Any], record: Dict[str, Any], search: Optio
     entry["needs"] = [*entry["needs"], "wikidata"]
 
 
+#: What ``--track`` keeps of a stub's link counts. "topics" ranks stubs by the
+#: documents that are about them and drops those only signed; "bylines" keeps
+#: exactly the stubs that are only signatures, ranked by texts signed.
+TRACK_RANKING = {"all": "linked documents", "topics": "documents about the stub",
+                 "bylines": "texts signed"}
+
+
+def track_links(counts: Dict[str, int], track: str) -> int:
+    signed = sum(n for term, n in counts.items() if term in AUTHORSHIP_TERMS)
+    about = sum(counts.values()) - signed
+    if track == "topics":
+        return about
+    if track == "bylines":
+        return signed if not about else 0
+    return about + signed
+
+
 def collect_triage(args, client: OmekaClient, records: List[Dict[str, Any]],
                    prop_ids: Dict[str, int], run_dir: Path, manifest: Dict[str, Any]) -> None:
     """Batches for the unsorted set: where each stub goes, and what it may duplicate.
@@ -325,12 +348,12 @@ def collect_triage(args, client: OmekaClient, records: List[Dict[str, Any]],
     stub_counts = stub_link_counts(client, stubs, prop_ids, args.output_dir / COUNTS_FILE, args.recount)
     manifest["counts_from"] = counts_stamp(args.output_dir / COUNTS_FILE)
     reviewed = set() if args.revisit or wanted else previously_batched(args.output_dir, run_dir)
-    total = {rid: sum(c.values()) for rid, c in stub_counts.items()}
+    total = {rid: track_links(c, args.track) for rid, c in stub_counts.items()}
 
     pool = [r for r in stubs if (wanted is None or int(r["o:id"]) in wanted)
             and int(r["o:id"]) not in reviewed]
-    unlinked = [r for r in pool if not total[int(r["o:id"])]]
-    if not (args.include_unlinked or wanted):
+    unlinked = [r for r in pool if not sum(stub_counts[int(r["o:id"])].values())]
+    if not (args.include_unlinked or wanted) or (args.track != "all" and not wanted):
         pool = [r for r in pool if total[int(r["o:id"])]]
     pool.sort(key=lambda r: (-total[int(r["o:id"])], int(r["o:id"])))
     if args.limit:
@@ -340,7 +363,8 @@ def collect_triage(args, client: OmekaClient, records: List[Dict[str, Any]],
         writer.writerow(["o:id", "title"])
         writer.writerows([r["o:id"], r.get("o:title")] for r in unlinked)
     manifest.update({"stubs": len(stubs), "previously_reviewed": len(reviewed & set(total)),
-                     "unlinked": len(unlinked), "ranked_by": "linked documents"})
+                     "unlinked": len(unlinked), "track": args.track,
+                     "ranked_by": TRACK_RANKING[args.track]})
 
     with standard_progress(console) as progress, ThreadPoolExecutor(MAX_WORKERS) as executor:
         task = progress.add_task("[cyan]Reading the documents…", total=len(pool))
@@ -385,6 +409,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--limit", type=int, help="At most this many records, most-linked first")
     parser.add_argument("--recount", action="store_true",
                         help="--kind unsorted: count every stub's links again instead of using the cache")
+    parser.add_argument("--track", choices=sorted(TRACK_RANKING), default="all",
+                        help="unsorted only: stubs documents are about (topics), stubs that are "
+                             "only article signatures (bylines), or both (default)")
     parser.add_argument("--revisit", action="store_true",
                         help="--kind unsorted: include stubs an earlier run already sent to a reviewer")
     parser.add_argument("--include-unlinked", action="store_true",

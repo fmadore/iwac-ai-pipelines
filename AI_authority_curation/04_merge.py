@@ -15,6 +15,9 @@ other way):
    links to the survivor keeps that link and drops the loser's, and a survivor
    link the item already held twice is reduced to one. Annotations on kept
    links are kept.
+   A link to a place sits in ``dcterms:spatial`` and a link to any other kind
+   in ``dcterms:subject``: on each repointed item, links to the survivor in the
+   wrong one of the two move to the right one (``moved_property``).
 3. The loser's names become ``dcterms:alternative`` values on the survivor,
    unless it already carries them; dates in parentheses are not names.
 4. Every PATCHed item is fetched again and checked: no link to the loser, no
@@ -53,7 +56,14 @@ from common.omeka_text_updater import open_backup  # noqa: E402
 from common.write_guard import WriteGuard, add_write_guard_args  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from curation_core import missing_alternatives, repeated_links, repoint_links  # noqa: E402
+from curation_core import (  # noqa: E402
+    TOPICAL_TERMS,
+    kind_of,
+    missing_alternatives,
+    move_topical_links,
+    repeated_links,
+    repoint_links,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -120,7 +130,8 @@ def alternative_value(name: str, property_id: int) -> Dict[str, Any]:
 
 
 def merge_one(client: OmekaClient, survivor_id: int, loser_id: int, property_ids: List[int],
-              alternative_pid: int, guard: WriteGuard, sink) -> Dict[str, Any]:
+              alternative_pid: int, topical_ids: Dict[str, int], guard: WriteGuard,
+              sink) -> Dict[str, Any]:
     survivor, loser = client.get_item(survivor_id), client.get_item(loser_id)
     if not survivor or not loser:
         return {"status": "not_found"}
@@ -130,7 +141,8 @@ def merge_one(client: OmekaClient, survivor_id: int, loser_id: int, property_ids
     extra_fields = sorted(k for k in loser if ":" in k and not k.startswith("o:")
                           and loser.get(k) and not survivor.get(k))
 
-    report = {"linking_items": len(links), "retargeted": 0, "dropped": 0,
+    kind = kind_of(survivor)
+    report = {"linking_items": len(links), "retargeted": 0, "dropped": 0, "moved_property": 0,
               "alternatives_added": len(names),
               "loser_fields_survivor_lacks": " ".join(extra_fields), "check_failures": 0}
     # The survivor is visited even when it does not link to the loser: it
@@ -142,13 +154,18 @@ def merge_one(client: OmekaClient, survivor_id: int, loser_id: int, property_ids
             continue
         original = copy.deepcopy(item)
         retargeted, dropped = repoint_links(item, loser_id, survivor_id, client.base_url)
+        moved = 0
+        if kind and item_id != survivor_id:
+            moved, merged_away = move_topical_links(item, survivor_id, kind, topical_ids)
+            dropped += merged_away
         added = 0
         if item_id == survivor_id and names:
             item.setdefault("dcterms:alternative", []).extend(
                 alternative_value(n, alternative_pid) for n in names)
             added = len(names)
-        if not (retargeted or dropped or added):
+        if not (retargeted or dropped or added or moved):
             continue
+        report["moved_property"] += moved
         report["retargeted"] += retargeted
         report["dropped"] += dropped
         if guard.dry_run:
@@ -219,6 +236,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
     property_ids = all_property_ids(client)
     alternative_pid = client.get_property_id("dcterms:alternative")
+    topical_ids = {term: client.get_property_id(term) for term in TOPICAL_TERMS}
 
     results: List[Dict[str, Any]] = []
     with open_backup(guard.backup_dir if guard.backup_enabled else None,
@@ -228,14 +246,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         for row in rows:
             survivor_id, loser_id = int(row["survivor_id"]), int(row["loser_id"])
             try:
-                report = merge_one(client, survivor_id, loser_id, property_ids, alternative_pid, guard, sink)
+                report = merge_one(client, survivor_id, loser_id, property_ids, alternative_pid,
+                                   topical_ids, guard, sink)
             except ScanFailed as exc:
                 report = {"status": f"aborted: {exc}"}
             results.append({"survivor_id": survivor_id, "loser_id": loser_id, **report})
             progress.advance(task)
 
     columns = ["survivor_id", "loser_id", "status", "safe_to_delete", "linking_items", "retargeted",
-               "dropped", "alternatives_added", "links_left_on_loser", "check_failures",
+               "dropped", "moved_property", "alternatives_added", "links_left_on_loser", "check_failures",
                "loser_fields_survivor_lacks"]
     log_path = run_dir / f"merged_{'dryrun_' if guard.dry_run else ''}{datetime.now():%Y%m%dT%H%M%S}.csv"
     with log_path.open("w", encoding="utf-8", newline="") as handle:

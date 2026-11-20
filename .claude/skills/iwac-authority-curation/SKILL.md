@@ -103,8 +103,17 @@ stub is filed into one of the five kinds, or merged into the authority it
 duplicates.
 
 ```bash
-python AI_authority_curation/01_collect.py --kind unsorted --limit 60
+python AI_authority_curation/01_collect.py --kind unsorted --track topics --limit 60
 ```
+
+**Two tracks.** On 2026-11-20, 1,778 stubs were cited as a subject or place
+and 1,071 only as an article's signature (`dcterms:creator`). Ranked
+together, prolific bylines crowd out the topics, so `--track topics` takes the
+stubs documents are about, ranked by those documents, and `--track bylines`
+the stubs that are only signatures. A byline says who wrote a text, not who
+the author is: columns are signed by politicians, imams and academics as well
+as journalists, and `02` flags a description or role drawn only from signed
+texts. Initials-only bylines ("A. B.") are the curator's call.
 
 **Most-used first.** Stubs are ranked by how many documents link to them, so
 the ones the archive relies on most become real authorities first. The counts
@@ -113,8 +122,9 @@ are cached in `output/unsorted_link_counts.json`: the first run counts all
 cache (`--recount` after merges or a NER upload). Each run skips stubs an
 earlier run already sent to a reviewer, so running the same command again
 continues the pass (`--revisit` includes them again). Stubs no document links
-to go to `unlinked_stubs.csv` and are not batched: ask the curator whether to
-file them (`--include-unlinked`) or delete them.
+to, through any property, go to `unlinked_stubs.csv` and are not batched: ask
+the curator whether to file them (`--include-unlinked`) or delete them. The
+curator had the 47 empty ones deleted on 2026-11-20.
 
 This writes `batches/triage_NNN.json`. Each stub comes with its evidence and its
 `candidates`: the existing authorities whose names are closest, found
@@ -134,7 +144,10 @@ python AI_authority_curation/03_apply.py --run <run folder> --dry-run  # then li
 "Notice d'autorité", writes the cleaned title and alternatives, and for persons
 the years in `foaf:birthday` / `dcterms:date`. The name rule is enforced by
 `02`: a new title may only rearrange the stub's words, and every word must
-survive in the title or an alternative. Flagged and unfiled stubs stay in the
+survive in the title or an alternative. Documents' links then follow the
+kind, in `05_sort.py` and in `04_merge.py` alike: a place is cited through
+`dcterms:spatial`, anything else through `dcterms:subject`, and a link in the
+wrong one moves with its annotation. Flagged and unfiled stubs stay in the
 set for the curator.
 
 ## Wikidata

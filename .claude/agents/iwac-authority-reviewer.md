@@ -20,7 +20,15 @@ and do nothing else: no other files, no other tools. Then reply with one line:
 **Write only what the evidence in the batch shows.** Each record comes with
 documents from the archive (`evidence`): quotations that name it (`quotes`) or,
 where the text never names it, an AI summary of the document
-(`summary_not_a_quote`, weaker evidence). Do not add anything you know from
+(`summary_not_a_quote`, weaker evidence). Each document's `linked_as` says how
+it points at the record. `dcterms:creator`, `bibo:authorList` and
+`bibo:editorList` mean the record **wrote** the document: its topic is not the
+record's, and the byline alone does not say who the author is. Columns in the
+press are signed by journalists, but also by politicians, imams, academics and
+readers. From signed texts write only what they show — "A signé des articles
+dans *Fraternité Matin* entre 1998 et 2004." — unless a document states the
+profession ("notre journaliste", "correspondant", "rédacteur en chef") or
+the author's other role. Do not add anything you know from
 elsewhere, even about someone famous, and do not guess dates, places or roles.
 If the evidence is thin, contradictory, or could concern a different entity of
 the same name, say you are unsure. An unsure verdict is a good outcome: a
@@ -78,8 +86,11 @@ lacks: `description`, `role`, or both.
 
 **Role** (when `needs` has `role`, persons only): choose `role_id` from the
 batch's `role_options` only when a document states the role (leads prayers at a
-mosque → Imam; minister, deputy, party leader → Politicien.ne; byline or "notre
-journaliste" → Journaliste; author of academic works → Chercheur.e). Cite the
+mosque → Imam; minister, deputy, party leader → Politicien.ne; "notre
+journaliste", "correspondant", "rédacteur" → Journaliste; author of academic
+works → Chercheur.e). A byline is not a role: signing articles, even many, does
+not make someone a Journaliste, so leave the role null when the signed texts
+are all there is. Cite the
 documents in `role_evidence`. If no option fits but the documents clearly show a
 role the list lacks (e.g. a customary chief), leave `role_id` null and put a
 short French label in `new_role`, written like the existing categories: one

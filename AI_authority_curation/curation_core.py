@@ -51,17 +51,23 @@ SORT_TARGETS = ("persons", "organisations", "subjects", "places", "events")
 
 KINDS: Dict[str, AuthorityKind] = {
     "persons": AuthorityKind("persons", 266, 94, 5,
-                             ("dcterms:subject", "bibo:authorList", "bibo:editorList")),
+                             ("dcterms:subject", "dcterms:creator", "bibo:authorList",
+                              "bibo:editorList")),
     "organisations": AuthorityKind("organisations", 854, 96, 7,
-                                   ("dcterms:subject", "dcterms:publisher", "bibo:authorList")),
+                                   ("dcterms:subject", "dcterms:publisher", "dcterms:creator",
+                                    "bibo:authorList")),
     "subjects": AuthorityKind("subjects", 1, 244, 3, ("dcterms:subject",)),
     "places": AuthorityKind("places", 268, 9, 6, ("dcterms:spatial",)),
     "events": AuthorityKind("events", 2, 54, 2, ("dcterms:subject",)),
     # Not a kind but where kinds come from: no class or template of its own.
     "unsorted": AuthorityKind("unsorted", UNSORTED_SET_ID, 0, 0,
-                              ("dcterms:subject", "dcterms:spatial", "bibo:authorList",
-                               "dcterms:publisher")),
+                              ("dcterms:subject", "dcterms:spatial", "dcterms:creator",
+                               "bibo:authorList", "dcterms:publisher")),
 }
+
+#: Properties that make a record the document's author, not its topic: the
+#: text is by them, so it says nothing about them beyond the byline.
+AUTHORSHIP_TERMS = frozenset({"dcterms:creator", "bibo:authorList", "bibo:editorList"})
 
 #: Leading honorifics that never distinguish two people. Stripped for duplicate
 #: detection only — the record keeps its title as written.
@@ -517,6 +523,8 @@ def check_describe_batch(
             rows.append(failed(aid, "two verdicts for one authority", verdict))
             continue
         offered = {int(e["item_id"]) for e in entry.get("evidence", [])}
+        signed = {int(e["item_id"]) for e in entry.get("evidence", [])
+                  if e.get("linked_as") in AUTHORSHIP_TERMS}
         needs = set(entry.get("needs", ["description"]))
         if getattr(verdict, "duplicate_of", None) or getattr(verdict, "target", None) in (
                 "not_authority", "unsure"):
@@ -551,6 +559,8 @@ def check_describe_batch(
                     to_check.append(f"check the year(s) {', '.join(years)}: not in the evidence")
                 if verdict.general_knowledge:
                     to_check.append("from general knowledge, check: " + "; ".join(verdict.general_knowledge))
+                if verdict.evidence and set(verdict.evidence) <= signed:
+                    to_check.append("drawn only from texts this record signed: a byline is not a profession")
             desc_problems += to_check
             desc_status = _status(desc_problems, flagged=unsure or bool(to_check))
 
@@ -567,7 +577,12 @@ def check_describe_batch(
             proposal = verdict.role_id is None and bool(verdict.new_role)
             if proposal and not role_problems:
                 role_problems.append(f"new category proposed: {verdict.new_role}")
-            role_status = _status(role_problems, flagged=proposal and len(role_problems) == 1)
+            only_signed = bool(verdict.role_evidence) and set(verdict.role_evidence) <= signed
+            if only_signed and not role_problems:
+                role_problems.append("role rests only on texts this person signed: an author is not "
+                                     "necessarily a journalist")
+            role_status = _status(role_problems,
+                                  flagged=(proposal or only_signed) and len(role_problems) == 1)
         elif "role" not in needs and verdict.role_id is not None:
             role_problems.append("proposes a role where none is needed (already typed, or not a person)")
             role_status = "invalid"
@@ -796,6 +811,54 @@ def repeated_links(item: Dict[str, Any], resource_ids: Iterable[int]) -> List[Tu
         ids = [v.get("value_resource_id") for v in values if isinstance(v, dict)]
         found += [(key, rid) for rid in sorted(wanted) if ids.count(rid) > 1]
     return found
+
+
+#: A document is *about* a subject, person, organisation or event and *located*
+#: at a place: the two topical properties are not interchangeable, and a link
+#: follows the kind of the record it points at.
+TOPICAL_TERMS = ("dcterms:subject", "dcterms:spatial")
+
+
+def topical_term(kind: str) -> str:
+    return "dcterms:spatial" if kind == "places" else "dcterms:subject"
+
+
+def kind_of(record: Dict[str, Any]) -> Optional[str]:
+    """The authority kind whose item set holds *record*, if exactly one does."""
+    sets = {s.get("o:id") for s in record.get("o:item_set", [])}
+    kinds = [k for k in SORT_TARGETS if KINDS[k].item_set_id in sets]
+    return kinds[0] if len(kinds) == 1 else None
+
+
+def move_topical_links(item: Dict[str, Any], target: int, kind: str,
+                       property_ids: Dict[str, int]) -> Tuple[int, int]:
+    """Move links to *target* from the wrong topical property to its kind's, in place.
+
+    A place linked through ``dcterms:subject`` moves to ``dcterms:spatial``,
+    anything else the other way. The first link moves with its annotation; if
+    the right property already links to *target*, that link is kept and the
+    moved ones are dropped, so no property names *target* twice. Returns
+    ``(moved, dropped)``.
+    """
+    right = topical_term(kind)
+    wrong = next(t for t in TOPICAL_TERMS if t != right)
+    values = item.get(wrong) or []
+    moving = [v for v in values if isinstance(v, dict) and v.get("value_resource_id") == target]
+    if not moving:
+        return 0, 0
+    rest = [v for v in values if not any(v is m for m in moving)]
+    if rest:
+        item[wrong] = rest
+    else:
+        item.pop(wrong, None)
+    dest = item.setdefault(right, [])
+    if any(isinstance(v, dict) and v.get("value_resource_id") == target for v in dest):
+        return 0, len(moving)
+    value = moving[0]
+    value["property_id"] = property_ids[right]
+    value.pop("property_label", None)
+    dest.append(value)
+    return 1, len(moving) - 1
 
 
 def missing_alternatives(survivor: Dict[str, Any], loser: Dict[str, Any]) -> List[str]:
