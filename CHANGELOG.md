@@ -27,6 +27,15 @@ the changelog tells stories.
 - Wikidata reconciliation now follows every NER round, after `AI_NER/03`: the
   collector reads only records that documents link to, so straight after the
   creations it found 28 of the 152.
+- Then, the same day: AI_NER/02 re-run (places 84.3 %, subjects 60.0 %), the
+  context check (227 drops, 70 fuzzy or ambiguous terms settled), the bare
+  alternative "Fête nationale" removed from 248, and `AI_NER/03` wrote 703
+  spatial and 5,142 subject links on 1,473 Togolese articles, annotated
+  Claude Haiku 5.5 (`AI_NER/output/_pre_write_ner_links_20261120T110636Z_558bac41.jsonl`).
+  The Wikidata pass over the 146 linked records wrote 35 identifiers (19
+  persons, 7 organisations, 9 places), Azeddine Laraki's on the curator's
+  word. Four reviewer verdict files used a malformed status and were refused
+  by `02`; re-running the three that had candidates recovered four matches.
 
 ## 1.4.0 — 2026-11-18
 
