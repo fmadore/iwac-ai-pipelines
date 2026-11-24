@@ -81,6 +81,19 @@ the changelog tells stories.
   the CASEF under its full name, Tchamba 1), five stubs filed, five
   alternatives added. Curator's rule: the full name is the title and the
   acronym an alternative, for every kind.
+- 2026-11-24: Togo re-reconciled after those writes; `03` added 160 links on
+  150 articles, mostly to the new records and the filed stubs.
+- 2026-11-24: Moustapha Diaby, nicknamed "Koweït", untangled from Kuwait. Haiku
+  reviewers read the 778 documents that mention the name or link either
+  record, and every removal was checked against the full text: 18 links to
+  the country (351) were his nickname, a Yopougon quarter or nothing at all,
+  and 8 links to him were namesakes, five of them the physician Dr Moustapha
+  Diaby (died 2020), now his own record (225679). 48 documents that name
+  Koweït gained the link. His two records were one person: 46268 merged into
+  23504, which lost the physician's 2020 date; 46268 is left for the curator
+  to delete. Mentions of the country with no link (85 substantive, 136 in
+  passing) are listed in `AI_authority_curation/output/diaby_koweit_review.xlsx`
+  and not written.
 
 ## 1.4.0 — 2026-11-18
 
