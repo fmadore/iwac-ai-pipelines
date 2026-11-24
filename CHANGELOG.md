@@ -91,9 +91,11 @@ the changelog tells stories.
   Diaby (died 2020), now his own record (225679). 48 documents that name
   Koweït gained the link. His two records were one person: 46268 merged into
   23504, which lost the physician's 2020 date; 46268 is left for the curator
-  to delete. Mentions of the country with no link (85 substantive, 136 in
-  passing) are listed in `AI_authority_curation/output/diaby_koweit_review.xlsx`
-  and not written.
+  to delete. The country then gained 219 links (`dcterms:spatial`, annotated
+  Haiku 5.5) on the documents that mention Kuwait, in passing or not, as the
+  Denmark audit kept passing mentions; left out were two mosques named
+  "Koweït" and two figures of speech ("martien ou koweïtien"). The review is in
+  `AI_authority_curation/output/diaby_koweit_review.xlsx`.
 
 ## 1.4.0 — 2026-11-18
 
