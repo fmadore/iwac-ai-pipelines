@@ -242,6 +242,11 @@ then this pipeline writes:
 Dry run each before its live run, as separate invocations. Things the
 2026-10-21 Burkinabè pass taught:
 
+- **The full name is the title, the acronym an alternative**, for every kind
+  ("Agence nationale de l'aviation civile (Togo)" / ANAC, "Centre
+  administratif des services économiques et financiers (Lomé)" / CASEF).
+  Expand an acronym title in the plan before approving it. The curator's
+  rule, 2026-11-24.
 - **Country in the title** for ministries, regions and national bodies with a
   generic name, never a bare generic alternative ("Nord", "Gendarmerie
   nationale"). The curator's rule; the four Togolese regions were renamed to

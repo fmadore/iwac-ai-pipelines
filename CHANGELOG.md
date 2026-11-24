@@ -72,6 +72,15 @@ the changelog tells stories.
   persons, 7 organisations, 9 places), Azeddine Laraki's on the curator's
   word. Four reviewer verdict files used a malformed status and were refused
   by `02`; re-running the three that had candidates recovered four matches.
+- 2026-11-24: La Haye 188541 and Genève 188575, duplicates created on
+  2026-10-23, merged into 12874 and 13385 (`04_merge.py`), which took their
+  Wikidata items, coordinates, English names and Genève's country; the two
+  losers are left for the curator to delete. The Togo plan's held rows were
+  decided: six more records created (Assemblée nationale (Togo), Conseil
+  suprême pour les affaires islamiques (Togo), ANAC (Togo), Forever (Lomé),
+  the CASEF under its full name, Tchamba 1), five stubs filed, five
+  alternatives added. Curator's rule: the full name is the title and the
+  acronym an alternative, for every kind.
 
 ## 1.4.0 — 2026-11-18
 
