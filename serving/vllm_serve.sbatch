@@ -67,11 +67,14 @@ EOF
 # Structured output needs no flag: vLLM implements `response_format` with a
 # json_schema through its guided-decoding backend, which is what
 # generate_structured() sends.
+#
+# The token goes in VLLM_API_KEY, which vLLM reads in place of --api-key: a
+# command line is readable by every user on the node through `ps`.
+export VLLM_API_KEY="$SERVE_API_KEY"
 exec vllm serve "$SERVE_MODEL" \
   --revision "$SERVE_REVISION" \
   --host 0.0.0.0 \
   --port "$SERVE_PORT" \
-  --api-key "$SERVE_API_KEY" \
   --max-model-len "$SERVE_MAX_LEN" \
   --max-num-seqs "$SERVE_MAX_SEQS" \
   --reasoning-parser qwen3 \

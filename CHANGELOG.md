@@ -9,6 +9,22 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-24 — Credentials out of logged tracebacks and the vLLM command line
+
+- `common/log_redaction.py`: the filter scrubbed only the interpolated
+  message, while `Formatter` and `RichHandler` render a record's `exc_info`
+  after every filter has run — so `logger.exception()` and `exc_info=True`
+  printed a `requests` error's URL, Omeka keys included. The record factory
+  and the filter now format the traceback, scrub it into `exc_text` and clear
+  `exc_info`; Rich shows that text under the message in place of its own
+  traceback. An exception passed as a `%s` argument (`LOGGER.error("...: %s",
+  exc)`) is scrubbed at the factory too, so `logging.lastResort` no longer
+  prints it raw with no handler configured, and the filter is now attached to
+  `lastResort` as well.
+- `serving/vllm_serve.sbatch`: the bearer token went to `vllm serve` as
+  `--api-key`, readable by any user on the shared node through `ps`. It is now
+  exported as `VLLM_API_KEY`, which vLLM reads in its place.
+
 ### 2026-11-20 — A curator workbook after every curation round; Togo NER leftovers written
 
 - `AI_authority_curation/review_workbook.py`: `02_build_plan.py` and

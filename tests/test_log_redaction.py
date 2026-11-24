@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest  # noqa: E402
 
 from common.log_redaction import (  # noqa: E402
+    LOG_FORMAT,
     REDACTED,
     CredentialRedactingFilter,
     configure_logging,
@@ -87,9 +88,12 @@ def _capture(emit) -> str:
     """Run ``emit`` against an isolated root logger and return what was written."""
     root = logging.getLogger()
     saved_handlers, saved_filters = root.handlers[:], root.filters[:]
+    saved_last_resort = logging.lastResort.filters[:]
     root.handlers, root.filters = [], []
     stream = io.StringIO()
-    root.addHandler(logging.StreamHandler(stream))
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root.addHandler(handler)
     root.setLevel(logging.WARNING)
     try:
         install_credential_redaction()
@@ -97,6 +101,7 @@ def _capture(emit) -> str:
         return stream.getvalue()
     finally:
         root.handlers, root.filters = saved_handlers, saved_filters
+        logging.lastResort.filters = saved_last_resort
 
 
 def test_filter_scrubs_urllib3_style_lazy_args():
@@ -236,12 +241,14 @@ def bare_root():
     transports = ("httpx", "httpcore", "httpx2", "httpcore2")
     saved = (root.handlers[:], root.filters[:], root.level,
              {name: logging.getLogger(name).level for name in transports})
+    saved_last_resort = logging.lastResort.filters[:]
     root.handlers, root.filters = [], []
     try:
         yield root
     finally:
         for handler in root.handlers:
             handler.close()
+        logging.lastResort.filters = saved_last_resort
         root.handlers, root.filters, level, transport_levels = saved
         root.setLevel(level)
         for name, transport_level in transport_levels.items():
@@ -289,6 +296,123 @@ def test_an_already_configured_process_gets_no_log_file(tmp_path):
         root.addHandler(logging.NullHandler())
         configure_logging(log_file=log_file, terminal=False)
     assert not log_file.parent.exists()
+
+
+# ---------------------------------------------------------------------------
+# Logged exceptions — a requests error carries its URL into the traceback
+# ---------------------------------------------------------------------------
+
+def _leaking_error() -> ConnectionError:
+    return ConnectionError(f"Max retries exceeded with url: {OMEKA_URL}")
+
+
+def _log_exception(logger: logging.Logger) -> None:
+    try:
+        raise _leaking_error()
+    except ConnectionError:
+        logger.exception("Download failed")
+
+
+def _assert_redacted_traceback(out: str) -> None:
+    assert "Download failed" in out
+    assert "Traceback" in out and "ConnectionError" in out
+    assert f"key_credential={REDACTED}" in out
+    assert IDENTITY not in out and CREDENTIAL not in out
+
+
+def test_logged_traceback_is_redacted_by_a_plain_formatter():
+    out = _capture(lambda: _log_exception(logging.getLogger("pipeline")))
+    _assert_redacted_traceback(out)
+
+
+def test_logged_traceback_is_redacted_by_the_rich_handler():
+    """Rich renders ``exc_info`` itself, after the filters; the scrubbed text
+    must still be shown in its place, not dropped."""
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    with bare_root():
+        configure_logging(console=Console(file=buffer, width=1000, color_system=None))
+        _log_exception(logging.getLogger("pipeline"))
+    _assert_redacted_traceback(buffer.getvalue())
+
+
+def test_last_resort_redacts_an_exception_argument(monkeypatch):
+    """``LOGGER.error("...: %s", exc)`` with no handler configured: only the
+    record factory and ``logging.lastResort`` see it."""
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stderr)
+    with bare_root():
+        install_credential_redaction()
+        logging.getLogger("pipeline").error("Fetch failed: %s", _leaking_error())
+    printed = stderr.getvalue()
+    assert "Fetch failed: Max retries exceeded" in printed
+    assert IDENTITY not in printed and CREDENTIAL not in printed
+
+
+def test_last_resort_redacts_a_logged_traceback(monkeypatch):
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stderr)
+    with bare_root():
+        install_credential_redaction()
+        logging.lastResort.filters = []  # the record factory alone must suffice
+        _log_exception(logging.getLogger("pipeline"))
+    _assert_redacted_traceback(stderr.getvalue())
+
+
+def test_factory_scrubs_exception_args_and_keeps_harmless_ones(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    with bare_root():
+        install_credential_redaction()
+    harmless = ValueError("no such item")
+    record = logging.getLogger("pipeline").makeRecord(
+        "pipeline", logging.ERROR, __file__, 1, "%s / %s", (_leaking_error(), harmless), None
+    )
+    assert record.args[1] is harmless
+    assert IDENTITY not in record.args[0] and CREDENTIAL not in record.args[0]
+    mapped = logging.getLogger("pipeline").makeRecord(
+        "pipeline", logging.ERROR, __file__, 1, "%(error)s", ({"error": _leaking_error()},), None
+    )
+    assert IDENTITY not in mapped.getMessage()
+
+
+def test_filter_on_exc_info_is_idempotent():
+    """Root logger and every root handler share one filter instance."""
+    try:
+        raise _leaking_error()
+    except ConnectionError:
+        # Built directly, so the record factory has not touched it.
+        record = logging.LogRecord(
+            "pipeline", logging.ERROR, __file__, 1, "Download failed", (), sys.exc_info()
+        )
+    log_filter = CredentialRedactingFilter()
+    log_filter.filter(record)
+    first = record.exc_text
+    log_filter.filter(record)
+    assert record.exc_text == first and record.exc_info is None
+    out = logging.Formatter().format(record)
+    assert out.count("Traceback") == 1
+    _assert_redacted_traceback(out)
+
+
+def test_filter_scrubs_a_traceback_already_formatted():
+    """A handler without the filter may have cached the raw text in ``exc_text``."""
+    try:
+        raise _leaking_error()
+    except ConnectionError:
+        record = logging.LogRecord(
+            "pipeline", logging.ERROR, __file__, 1, "Download failed", (), True
+        )
+        CredentialRedactingFilter().filter(record)  # exc_info=True: read sys.exc_info()
+    _assert_redacted_traceback(logging.Formatter().format(record))
+
+    record = logging.LogRecord("pipeline", logging.ERROR, __file__, 1, "Download failed", (), None)
+    record.exc_text = f"Traceback ...\nConnectionError: {OMEKA_URL}"
+    CredentialRedactingFilter().filter(record)
+    assert CREDENTIAL not in logging.Formatter().format(record)
 
 
 # ---------------------------------------------------------------------------

@@ -159,6 +159,7 @@ class CredentialRedactingFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        _collapse_exc_info(record)
         message = record.getMessage()
         cleaned = redact(message)
         if cleaned != message:
@@ -170,26 +171,69 @@ class CredentialRedactingFilter(logging.Filter):
         return True
 
 
+def _redact_value(value: Any) -> Any:
+    """``value`` scrubbed if it is a string or an exception, else unchanged.
+
+    An exception is turned into its redacted text only when redaction changes
+    it, so a record without a credential keeps its original argument objects.
+    """
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, BaseException):
+        text = str(value)
+        cleaned = redact(text)
+        if cleaned != text:
+            return cleaned
+    return value
+
+
+def _collapse_exc_info(record: logging.LogRecord) -> None:
+    """Replace a record's exception with its redacted traceback text.
+
+    ``Formatter.format`` and ``RichHandler`` both render ``exc_info`` after
+    every filter has run, and a ``requests`` error's message carries the URL.
+    So the traceback is formatted here, scrubbed into ``exc_text`` — which
+    ``Formatter`` appends as it is — and ``exc_info`` is cleared so nothing can
+    render the live exception again. Rich then prints the plain text under the
+    message instead of its own traceback, which cannot be scrubbed. Safe to run
+    any number of times on one record.
+    """
+    exc_info = record.exc_info
+    if exc_info and not isinstance(exc_info, tuple):
+        # Normalised as Logger._log does; a record built by hand may skip that.
+        if isinstance(exc_info, BaseException):
+            exc_info = (type(exc_info), exc_info, exc_info.__traceback__)
+        else:
+            exc_info = sys.exc_info()
+    if exc_info and exc_info[0] is not None:
+        if not record.exc_text:
+            record.exc_text = _redacted_traceback(*exc_info).rstrip("\n")
+        record.exc_info = None
+    if record.exc_text:
+        record.exc_text = redact(record.exc_text)
+    if record.stack_info:
+        record.stack_info = redact(record.stack_info)
+
+
 def _redact_record_in_place(record: logging.LogRecord) -> None:
-    """Scrub a record's message and string args without formatting them.
+    """Scrub a record's message, args and exception without formatting the message.
 
     Deliberately does not call ``getMessage()``: this runs for every record the
     process creates, including ones no handler will ever emit, so it must not
     force interpolation or call ``__str__`` on arbitrary argument objects. It
     scrubs ``msg`` and any ``str`` argument, which is where a URL actually
     arrives — urllib3 passes the retry target as a plain ``%s`` argument.
+    Exceptions are the one exception: ``LOGGER.error("...: %s", exc)`` and
+    ``logger.exception()`` are how a ``requests`` error reaches a log, and with
+    no handler configured ``logging.lastResort`` prints them.
     """
-    if isinstance(record.msg, str):
-        record.msg = redact(record.msg)
+    record.msg = _redact_value(record.msg)
     args = record.args
     if isinstance(args, tuple):
-        record.args = tuple(
-            redact(a) if isinstance(a, str) else a for a in args
-        )
+        record.args = tuple(_redact_value(a) for a in args)
     elif isinstance(args, dict):
-        record.args = {
-            k: (redact(v) if isinstance(v, str) else v) for k, v in args.items()
-        }
+        record.args = {k: _redact_value(v) for k, v in args.items()}
+    _collapse_exc_info(record)
 
 
 def _install_record_factory() -> None:
@@ -197,10 +241,11 @@ def _install_record_factory() -> None:
 
     Needed because most entry points in this repo never call ``basicConfig``.
     With no handler on the root logger, a warning goes out through
-    ``logging.lastResort`` — a module-level handler that no ``addFilter`` call
-    of ours can reach. ``AI_NER/03_Omeka_update.py`` and the other write
-    scripts are in exactly that state, so a handler-only install would leave
-    the scripts that hold credentials uncovered while appearing to be wired up.
+    ``logging.lastResort`` — a module-level handler outside the root's handler
+    list, which any code may replace. ``AI_NER/03_Omeka_update.py`` and the
+    other write scripts are in exactly that state, so a handler-only install
+    would leave the scripts that hold credentials uncovered while appearing to
+    be wired up.
 
     The factory is process-global and installed at most once.
     """
@@ -281,6 +326,14 @@ def install_credential_redaction(
     for handler in root.handlers:
         if not any(isinstance(f, CredentialRedactingFilter) for f in handler.filters):
             handler.addFilter(log_filter)
+
+    # The factory already covers lastResort; the filter adds the interpolated
+    # message, for an argument object that is neither a string nor an exception.
+    last_resort = logging.lastResort
+    if last_resort is not None and not any(
+        isinstance(f, CredentialRedactingFilter) for f in last_resort.filters
+    ):
+        last_resort.addFilter(log_filter)
 
     for name in logger_names or ():
         named = logging.getLogger(name)
