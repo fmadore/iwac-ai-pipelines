@@ -73,6 +73,7 @@ from curation_core import (  # noqa: E402
     description_problem,
 )
 from wikidata import ITEM_URL, record_qids  # noqa: E402
+import decision_log  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -162,6 +163,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     roles = [r for r in roles if (r.get("role_id") or "").strip().isdigit()]
     identifiers = approved_rows(run_dir / "plan_identifiers.csv") if "identifiers" in wanted else []
     identifiers = [r for r in identifiers if re.fullmatch(r"Q\d+", (r.get("qid") or "").strip())]
+    identifiers = decision_log.keep_unrefused("plan_identifiers", identifiers, decision_log.load(), console)
     if not descriptions and not roles and not identifiers:
         console.print("Nothing approved to write.")
         return 0
@@ -275,6 +277,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         tally[key] = tally.get(key, 0) + 1
     console.print(count_table(sorted(tally.items()), title=guard.mode_label))
     console.print(f"Log: [cyan]{log_path}[/]")
+    if not guard.dry_run and "identifiers" in wanted:
+        recorded = decision_log.append(decision_log.refusals_from_plan(
+            run_dir / "plan_identifiers.csv", f"output/{run_dir.name}"))
+        if recorded:
+            console.print(f"{recorded} refused Wikidata match(es) recorded in decisions.csv")
     failed = [r for r in results if "FAILED" in r["status"] or r["status"] in ("failed", "not_found")]
     return 1 if failed else 0
 

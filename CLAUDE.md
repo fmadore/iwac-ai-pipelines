@@ -282,7 +282,11 @@ script that breaks this, the `sys.path` line or the sampling rule. A
 library module never touches `sys.stdout` on import.
 
 Incident history belongs in `CHANGELOG.md`, not beside the constant it
-explains: the code states the rule, the changelog tells the story. Work left
+explains: the code states the rule, the changelog tells the story.
+Record-level curation decisions — merges, splits, links removed, refusals,
+acts left to the curator — go in `AI_authority_curation/decisions.csv`
+(`decision_log.py`), which the curation scripts read before proposing or
+writing. Work left
 unfinished goes in `docs/PENDING.md` with what closes it; read it before adding
 or promoting a model, and remove an entry once it is done.
 

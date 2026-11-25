@@ -15,6 +15,23 @@ file each. They never touch Omeka.
 Run everything from the repo root with the venv (`.venv/Scripts/python` on
 Windows). Read `AI_authority_curation/README.md` for what each script writes.
 
+**Descriptions serve the linking.** The description is what the NER context
+check (`AI_NER/02b`) sees of each candidate record, and the only thing that
+tells namesakes apart: country, calling, period. Keep them factual and
+discriminating, and give priority to records that share a name with others.
+
+## Start every pass with the registry
+
+`AI_authority_curation/decisions.csv` records what Omeka cannot show: merges,
+splits, links removed after a review, refusals, and acts left to the curator.
+Before a pass, run `python AI_authority_curation/decision_log.py pending` and
+tell the curator what is still open, and run `decision_log.py about <id>` on any
+record you are about to merge, split, relink or rename. Never propose again
+what the registry records as rejected, and never undo a done decision without
+the curator saying so. The plan and write scripts apply it themselves; your own
+reviews and chat decisions do not, so record them (`decision_log.py add`) as
+soon as they are written to the archive or refused.
+
 ## Before the first live write
 
 - `iwac:descriptionModel` must be installed: v1.5 of
@@ -75,7 +92,8 @@ Windows). Read `AI_authority_curation/README.md` for what each script writes.
 4. **Curator review.** Show the curator the counts and the `flagged` rows with
    their reasons, and send them `review.xlsx` (SendUserFile) after every
    round. Decisions go in the CSVs, which the write steps read. The curator marks rows
-   `approve = yes`, may edit a description (it is then written without the
+   `approve = yes`, or `approve = no` to refuse a proposal for good (the next
+   live run records it in the registry, and no later plan offers it again), may edit a description (it is then written without the
    model annotation), may fill `role_id` on a `new_role` proposal once the
    category item exists, and may swap `survivor_id`/`loser_id`. Never approve
    rows yourself.
@@ -277,6 +295,9 @@ Dry run each before its live run, as separate invocations. Things the
   after the next `iwac-upload index`.
 - Add a dated line to `CHANGELOG.md` for any pass that wrote to the archive:
   kind, rows written, merges made, run folder.
+- Record in `decisions.csv` what the scripts did not: links removed, splits,
+  refusals, items held for the curator. Run `decision_log.py check-deletes`
+  once the curator says the losers are deleted.
 
 ## Scholarly authors (next pass, not yet scripted)
 

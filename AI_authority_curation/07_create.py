@@ -66,6 +66,7 @@ from curation_core import (  # noqa: E402
     record_names,
     split_names,
 )
+import decision_log  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -116,6 +117,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     creates = [] if args.only == "alternatives" else approved(args.run / "plan_create.csv")
     alternatives = [] if args.only == "create" else approved(args.run / "plan_alternatives.csv")
+    decisions = decision_log.load()
+    creates = decision_log.keep_unrefused("plan_create", creates, decisions, console)
+    alternatives = decision_log.keep_unrefused("plan_alternatives", alternatives, decisions, console)
     if not creates and not alternatives:
         console.print("Nothing approved to write.")
         return 0
@@ -254,6 +258,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         tally[key] = tally.get(key, 0) + 1
     console.print(count_table(sorted(tally.items()), title=guard.mode_label))
     console.print(f"Log: [cyan]{log_path}[/]")
+    if not guard.dry_run:
+        source = f"output/{args.run.name}"
+        recorded = decision_log.append(
+            decision_log.refusals_from_plan(args.run / "plan_create.csv", source)
+            + decision_log.refusals_from_plan(args.run / "plan_alternatives.csv", source))
+        if recorded:
+            console.print(f"{recorded} refusal(s) recorded in decisions.csv")
     bad = [r for r in results if "FAILED" in r["status"] or r["status"] in ("failed", "not_found")
            or r["status"].startswith("INTERRUPTED")]
     return 1 if bad else 0

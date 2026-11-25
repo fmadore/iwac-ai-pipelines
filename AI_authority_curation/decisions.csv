@@ -1,0 +1,66 @@
+date,action,records,value,status,decided_by,note,source
+2026-10-21,merge,26349 28033,,done,curator,,output/hajj_review
+2026-10-21,delete,28033,,pending,curator,"merged loser, no links left",output/hajj_review
+2026-10-21,merge,579 14111,,done,curator,,output/hajj_review
+2026-10-21,delete,14111,,pending,curator,"merged loser, no links left",output/hajj_review
+2026-10-21,merge,781 13115,,done,curator,,output/hajj_review
+2026-10-21,delete,13115,,pending,curator,"merged loser, no links left",output/hajj_review
+2026-10-21,merge,127882 14112,Comité pour le Pèlerinage de la Mecque 1973,done,curator,Comité pour le Pèlerinage de la Mecque 1973 merged into Comité national d'organisation du pèlerinage à la Mecque (Bénin),output/hajj_review
+2026-10-21,delete,14112,Comité pour le Pèlerinage de la Mecque 1973,pending,curator,"merged loser, no links left",output/hajj_review
+2026-11-24,merge,12874 188541,La Haye,done,curator,La Haye merged into La Haye,output/merge_cities_20261124
+2026-11-24,delete,188541,La Haye,pending,curator,"merged loser, no links left",output/merge_cities_20261124
+2026-11-24,merge,13385 188575,Genève,done,curator,Genève merged into Genève,output/merge_cities_20261124
+2026-11-24,delete,188575,Genève,pending,curator,"merged loser, no links left",output/merge_cities_20261124
+2026-11-24,merge,23504 46268,Diaby Moustapha,done,curator,Diaby Moustapha merged into Moustapha Diaby,output/merge_diaby_20261124
+2026-11-24,delete,46268,Diaby Moustapha,pending,curator,"merged loser, no links left",output/merge_diaby_20261124
+2026-11-17,merge,50 27838,Marabouts,done,curator,Marabouts merged into Marabout,output/merge_dupes_20261117
+2026-11-17,delete,27838,Marabouts,pending,curator,"merged loser, no links left",output/merge_dupes_20261117
+2026-11-17,merge,452 13587,Université d'Abomey Calavi (UAC),done,curator,Université d'Abomey Calavi (UAC) merged into Université d'Abomey-Calavi,output/merge_dupes_20261117
+2026-11-17,delete,13587,Université d'Abomey Calavi (UAC),pending,curator,"merged loser, no links left",output/merge_dupes_20261117
+2026-11-17,merge,1127 44416,Mokodu Thiam,done,curator,Mokodu Thiam merged into Mokodou Thiam,output/merge_dupes_20261117
+2026-11-17,delete,44416,Mokodu Thiam,pending,curator,"merged loser, no links left",output/merge_dupes_20261117
+2026-11-17,merge,218096 218022,Possession par les esprits,done,curator,Possession par les esprits merged into Possession spirituelle,output/merge_possession_20261117
+2026-11-17,delete,218022,Possession par les esprits,pending,curator,"merged loser, no links left",output/merge_possession_20261117
+2026-10-21,merge,636 14587,BID (Banque Islamique de Développement),done,curator,BID (Banque Islamique de Développement) merged into Banque Islamique de Développement,output/ner_burkina_faso_20261021T112819
+2026-10-21,delete,14587,BID (Banque Islamique de Développement),pending,curator,"merged loser, no links left",output/ner_burkina_faso_20261021T112819
+2026-10-21,merge,126067 126600,"Chambre de commerce, d'industrie et d'artisanat du Burkina Faso",done,curator,"Chambre de commerce, d'industrie et d'artisanat du Burkina Faso merged into Chambre de Commerce et d'Industrie du Burkina Faso",output/ner_burkina_faso_20261021T112819
+2026-10-21,delete,126600,"Chambre de commerce, d'industrie et d'artisanat du Burkina Faso",pending,curator,"merged loser, no links left",output/ner_burkina_faso_20261021T112819
+2026-10-21,merge,126000 126779,Armée malienne,done,curator,Armée malienne merged into Forces armées maliennes,output/ner_burkina_faso_20261021T112819
+2026-10-21,delete,126779,Armée malienne,pending,curator,"merged loser, no links left",output/ner_burkina_faso_20261021T112819
+2026-10-21,merge,76313 15008,Kaaba,done,curator,Kaaba merged into Kaaba,output/ner_burkina_faso_20261021T112819
+2026-10-21,delete,15008,Kaaba,pending,curator,"merged loser, no links left",output/ner_burkina_faso_20261021T112819
+2026-10-22,links,23699,FOI,done,curator via plan,317 of 410 links were the word 'foi' and were removed; 92 kept,output/foi_review
+2026-10-23,links,23467,AIDE,done,curator,"108 links removed across ten acronym-word records, 99 of them 'aide' on AIDE",output/acronym_review
+2026-10-23,links,428,Danemark,done,curator,93 of 124 links were Danyi/Dankpen (Togo) and were removed,output/denmark_review
+2026-10-23,split,1314 188930 188934 188954,Mamadou Bamba,done,curator,"1314 stays the researcher; press links moved to the politician, the lieutenant-colonel and the deputy imam; the 1979 El Hadji Mamadou Bamba left unlinked",output/bamba_backup
+2026-10-23,split,654 579,CNOPM,done,curator,654 is the 2025 Burkinabè committee; its 1996-2004 articles moved to 579,output/open_items_backup
+2026-10-23,split,1099 188677,Mahamadi Ouédraogo,done,curator,17 homonym links removed; the STMB Tours administrator became 188677,output/open_items_backup
+2026-10-23,alternative,781,CONACO,done,curator,stub 14597 was a journalist's name for 781,output/open_items_backup
+2026-10-23,delete,14597,CONACO,pending,curator,emptied stub,output/open_items_backup
+2026-11-20,alternative,248,Fête nationale,rejected,curator,generic: every country has one; removed after being added,output/ner_togo_20261120T104127
+2026-11-24,create,,Association pour l'Appel et l'Orientation à l'Islam et de Bienfaisance,pending,curator,"AAOIB: held, no decision yet",output/ner_togo_20261120T104127
+2026-11-24,alternative,73314,Ba-Traoré Aboubakar,pending,curator,held: homonym risk,output/ner_togo_20261120T104127
+2026-11-24,hold,27770,Moumouni Koumaï,pending,curator,stub not filed: may be the prefect Pounpouni Koumaï Tchadarou,output/ner_togo_20261120T104127
+2026-11-24,identifier,15065,,rejected,curator,Komla Agbétiafa: curator unsure; no Wikidata identifier,Wikidata pass 2026-11-24
+2026-11-24,identifier,219314,,rejected,curator,Amoutivé: curator unsure; no Wikidata identifier,Wikidata pass 2026-11-24
+2026-11-24,identifier,27958,,rejected,curator,Issa Touré: curator unsure; no Wikidata identifier,Wikidata pass 2026-11-24
+2026-11-24,split,23504 225679,Moustapha Diaby,done,curator,23504 is Moustapha Diaby 'Koweït' (CSI); the physician who died in 2020 became 225679 with his five articles; the 2020 date removed from 23504,output/diaby_koweit_review.xlsx
+2026-11-24,links,351,Koweït,done,curator,"18 links removed: Diaby's nickname, the Yopougon quarter, or no mention; 219 country mentions linked",output/diaby_koweit_review.xlsx
+2026-11-24,links,351 24793 24880 44806 45373,Koweït,rejected,curator,"not the country: two mosques named Koweït, two figures of speech; never link these to 351",output/diaby_koweit_review.xlsx
+2026-11-24,links,23504 61550 64721,Moustapha Diaby,pending,curator,hand links to Diaby on 61550 and 64721; the text never names him,output/diaby_koweit_review.xlsx
+2026-11-25,delete,28033,,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,14111,,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,13115,,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,14112,Comité pour le Pèlerinage de la Mecque 1973,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,188541,La Haye,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,188575,Genève,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,46268,Diaby Moustapha,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,27838,Marabouts,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,13587,Université d'Abomey Calavi (UAC),done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,44416,Mokodu Thiam,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,218022,Possession par les esprits,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,14587,BID (Banque Islamique de Développement),done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,126600,"Chambre de commerce, d'industrie et d'artisanat du Burkina Faso",done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,126779,Armée malienne,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,15008,Kaaba,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-25,delete,14597,CONACO,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes

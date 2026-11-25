@@ -63,6 +63,7 @@ from curation_core import (  # noqa: E402
     fold,
 )
 from review_workbook import write_review_workbook  # noqa: E402
+import decision_log  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -225,6 +226,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "plan_roles.csv": (ROLE_COLUMNS, roles),
         "duplicates_to_examine.csv": (EXAMINE_COLUMNS, examine_rows(proposals["doublons"])),
     }
+    decisions = decision_log.load()
+    refused = sum(decision_log.screen_plan(Path(name).stem, rows, decisions)
+                  for name, (_, rows) in plans.items())
+    if refused:
+        console.print(f"[yellow]{refused} proposal(s) the curator already refused (decisions.csv) "
+                      "are marked rejected.[/]")
     run_dir = OUTPUT_DIR / f"ner_{args.label}_{datetime.now():%Y%m%dT%H%M%S}"
     run_dir.mkdir(parents=True)
     for name, (columns, rows) in plans.items():

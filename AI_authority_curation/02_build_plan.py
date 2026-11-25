@@ -51,6 +51,7 @@ from curation_core import (  # noqa: E402
     check_triage_batch,
 )
 from review_workbook import write_review_workbook  # noqa: E402
+import decision_log  # noqa: E402
 
 console = Console()
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
@@ -223,6 +224,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "problems": "; ".join(row.problems), "batch": name, "model": model,
                 })
 
+    decisions = decision_log.load()
+    refused = (decision_log.screen_plan("plan_merges", merges, decisions)
+               + decision_log.screen_plan("plan_identifiers", identifiers, decisions))
+    if refused:
+        console.print(f"[yellow]{refused} proposal(s) the curator already refused (decisions.csv) "
+                      "are marked rejected.[/]")
     order = {"ready": 0, "flagged": 1, "invalid": 2, "rejected": 3}
     for rows in (descriptions, roles, merges, sorts, identifiers):
         rows.sort(key=lambda r: order.get(r["status"], 9))

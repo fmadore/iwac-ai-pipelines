@@ -64,6 +64,7 @@ from curation_core import (  # noqa: E402
     repeated_links,
     repoint_links,
 )
+import decision_log  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -213,6 +214,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     for row in [r for r in rows if r["status"] == "invalid"]:
         console.print(f"[yellow]Skipping {row['survivor_id']}/{row['loser_id']}: approved but invalid[/]")
     rows = [r for r in rows if r["status"] != "invalid"]
+    rows = decision_log.keep_unrefused("plan_merges", rows, decision_log.load(), console)
     for row in [r for r in rows if r["status"] == "rejected"]:
         console.print(f"[yellow]{row['survivor_id']}/{row['loser_id']}: the reviewer judged these "
                       "two different entities; merging on your approval.[/]")
@@ -275,6 +277,25 @@ def main(argv: Optional[List[str]] = None) -> int:
             console.print(f"[red]Do NOT delete yet: links or checks still fail for {unsafe}. "
                           "See the log.[/]")
     console.print(f"Log: [cyan]{log_path}[/]")
+    if not guard.dry_run:
+        source = f"output/{run_dir.name}"
+        titles = {(int(r["survivor_id"]), int(r["loser_id"])): (r.get("survivor_title") or "",
+                                                                  r.get("loser_title") or "") for r in rows}
+        done = []
+        for r in results:
+            if r["status"] != "merged, verified":
+                continue
+            pair = (r["survivor_id"], r["loser_id"])
+            survivor_title, loser_title = titles.get(pair, ("", ""))
+            done.append(decision_log.Decision(decision_log.today(), "merge", pair, loser_title, "done",
+                                              "curator via plan", f"{loser_title} merged into {survivor_title}",
+                                              source))
+            done.append(decision_log.Decision(decision_log.today(), "delete", (pair[1],), loser_title, "pending",
+                                              "curator", "merged loser, no links left", source))
+        recorded = decision_log.append(done + decision_log.refusals_from_plan(plan, source))
+        if recorded:
+            console.print(f"{recorded} decision(s) recorded in decisions.csv; deletions left to you: "
+                          "decision_log.py pending")
     return 0 if all(str(r["status"]) in ("would_merge", "merged, verified") for r in results) else 1
 
 

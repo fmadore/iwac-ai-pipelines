@@ -17,6 +17,7 @@ by the curator, not by an agent.
 | `05_sort.py` | yes | Files approved stubs from "Notices d'autorités à traiter" (set 12826): class, template, item set, `dcterms:type`, cleaned title, alternatives, person dates |
 | `06_ner_plan.py` | no | Turns a review of `AI_NER` leftovers (`proposals.json`) into plans for 03, 05 and 07, and `review.xlsx` |
 | `07_create.py` | yes | Creates approved new records and adds approved alternative names to existing ones |
+| `decision_log.py` | no | The registry `decisions.csv`: `pending`, `about ID`, `add`, `check-deletes` |
 
 ## NER leftovers
 
@@ -70,6 +71,37 @@ stubs already reviewed, and those no document links to are listed in
 The full procedure, with the rules the reviewers follow, is the skill's
 `SKILL.md`; the reviewer's instructions are
 `.claude/agents/iwac-authority-reviewer.md`.
+
+## Why descriptions
+
+A description is what `AI_NER/02b_context_check.py` shows the checker for each
+candidate record (French first, 300 characters), beside its title, type and
+country. Two records named Kassoum Coulibaly differ only there, and the three
+contradictions the check may act on — another country, an incompatible calling,
+dates that cannot fit — are what a description supplies. A record without one
+gives the check a name and a country, nothing else. Describing records that
+share a name with others is therefore linking work as much as cataloguing.
+
+## Decision registry
+
+`decisions.csv` holds what the archive itself cannot show: merges (the loser is
+gone), splits, links removed after a review, names, matches and records the
+curator refused, and acts left to the curator, such as deleting a merged loser.
+One row per decision: `date, action, records, value, status, decided_by, note,
+source`, with `status` done, rejected or pending. It is versioned with the code;
+the CHANGELOG tells the story, the registry is what scripts and agents check.
+
+- `02_build_plan.py` and `06_ner_plan.py` mark a proposal the registry refuses
+  as `rejected` (a merge refused or already made, a refused QID, name or
+  record), so it is not offered twice.
+- `03_apply.py`, `04_merge.py` and `07_create.py` refuse such rows even when an
+  old plan still approves them, and after a live run record their merges (and
+  the deletion left to the curator) and every plan row marked `approve = no`.
+- Decisions taken outside the scripts — a review that removed links, a split,
+  a refusal given in conversation — go in with
+  `python AI_authority_curation/decision_log.py add …`.
+- `decision_log.py pending` lists what is left to the curator;
+  `check-deletes` marks the deletions Omeka confirms as done.
 
 ## Provenance
 

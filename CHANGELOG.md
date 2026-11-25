@@ -9,6 +9,26 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-25 — A decision registry for authority curation
+
+- `AI_authority_curation/decisions.csv` and `decision_log.py`: one row per
+  decision the archive cannot show — merges, splits, links removed after a
+  review, refusals, acts left to the curator. `02_build_plan.py` and
+  `06_ner_plan.py` mark proposals it refuses as `rejected`; `03_apply.py`,
+  `04_merge.py` and `07_create.py` refuse them even from an old approved plan,
+  and record their merges, the deletions left to the curator and every
+  `approve = no` row. The trap it closes: on 2026-11-24 re-running `07_create`
+  on the Togo plan would have put back "Fête nationale" on 248, removed by hand
+  the day before; only the dry run showed it.
+- Seeded with 49 rows from the `04_merge` logs and the changelog (October
+  splits and link reviews, the Togo held rows, Diaby Koweït); `check-deletes`
+  found all 16 merged losers already deleted, 46268, 188541, 188575 and 14597
+  among them. Four items stay pending for the curator.
+- The skill now starts every pass with `decision_log.py pending`, and says why
+  descriptions matter to linking: they are what `AI_NER/02b` sees of each
+  candidate. 1,021 of the 1,611 authority descriptions are AI-drafted
+  (2026-11-25).
+
 ### 2026-11-24 — Credentials out of logged tracebacks and the vLLM command line
 
 - `common/log_redaction.py`: the filter scrubbed only the interpolated
