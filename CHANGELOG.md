@@ -9,6 +9,24 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-26 — Beninese press: NER written
+
+- `AI_NER/01` on Bénin with Claude Haiku 5.5: 2,003 articles from 32 item
+  sets, 1,983 extracted (20 without text) in 23 minutes. `02` matched 73.3 %
+  of place and 59.1 % of subject mentions. The context check dropped every
+  "Borgou" link: the only record, 60482, is the Togolese canton of Kpendjal
+  (Q117831419), yet 79 of its 81 documents named the Beninese department. The
+  department became 226113 (Q29136, alternatives "Département du Borgou",
+  "Province du Borgou") and took those 79; 60482 was retitled "Borgou (Togo)"
+  (registry rows). After re-running `02` and `02b`: 15,925 matches kept, 168
+  dropped, 103 fuzzy or ambiguous terms settled ("Ahmadiyya" mostly to the
+  worldwide organisation 76335). `03` wrote 354 spatial and 2,649 subject links
+  on 1,548 articles, annotated Claude Haiku 5.5
+  (`AI_NER/output/_pre_write_ner_links_20261126T143101Z_c8a12893.jsonl`).
+- Left for the leftovers review: Beninese departments with no record
+  (Atlantique, Zou, Littoral, Plateau, Collines), the Assemblée nationale and
+  ministries of Bénin, Place Idi and the Cotonou mosques.
+
 ### 2026-11-26 — Batch mode for scholarly OCR
 
 - `AI_publication_extraction/02_mistral_blocks_processor.py --batch` sends the

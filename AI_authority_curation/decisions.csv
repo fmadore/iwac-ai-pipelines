@@ -64,3 +64,5 @@ date,action,records,value,status,decided_by,note,source
 2026-11-25,delete,126779,Armée malienne,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
 2026-11-25,delete,15008,Kaaba,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
 2026-11-25,delete,14597,CONACO,done,curator,deletion confirmed in Omeka,decision_log.py check-deletes
+2026-11-26,split,60482 226113,Borgou,done,curator,"60482 is the Togolese canton (Kpendjal), retitled Borgou (Togo); the Benin department became 226113 with 79 documents",AI_NER Bénin run 2026-11-26
+2026-11-26,title,60482,Borgou (Togo),done,curator,was Borgou,AI_NER Bénin run 2026-11-26
