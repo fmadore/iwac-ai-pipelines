@@ -545,6 +545,17 @@ def process_alto_file(
         return False, 0, 0, 0, str(e)
 
 
+def find_alto_files(input_dir: Path) -> list[Path]:
+    """Return the ALTO and XML files in a directory in sorted order."""
+    if not input_dir.is_dir():
+        return []
+    return sorted(
+        path
+        for path in input_dir.iterdir()
+        if path.suffix.lower() in {".xml", ".alto"} and path.is_file()
+    )
+
+
 def process_alto_files(
     client,
     input_dir: Path,
@@ -567,12 +578,7 @@ def process_alto_files(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find ALTO XML files (common extensions)
-    alto_files = sorted(
-        list(input_dir.glob("*.xml"))
-        + list(input_dir.glob("*.alto"))
-        + list(input_dir.glob("*.ALTO"))
-    )
+    alto_files = find_alto_files(input_dir)
 
     if not alto_files:
         console.print("[yellow]⚠[/] No ALTO XML files found in input directory")
@@ -725,11 +731,7 @@ def main() -> int:
         return 1
 
     # Count files
-    alto_files = (
-        list(input_dir.glob("*.xml"))
-        + list(input_dir.glob("*.alto"))
-        + list(input_dir.glob("*.ALTO"))
-    )
+    alto_files = find_alto_files(input_dir)
     console.print(f"[cyan]📁[/] Found [bold]{len(alto_files)}[/bold] ALTO XML files to process")
     console.print()
 
