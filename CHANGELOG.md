@@ -9,6 +9,18 @@ the changelog tells stories.
 
 ## Unreleased
 
+### 2026-11-26 — Batch mode for scholarly OCR
+
+- `AI_publication_extraction/02_mistral_blocks_processor.py --batch` sends the
+  selection as one Mistral Batch API job at $2/1000 pages instead of $4, and
+  `--batch-job <id>` collects a job submitted earlier from its manifest in
+  `OCR_Results/batch_jobs/`. The 47-item backlog (10,191 pages) costs about $20
+  this way, $41 direct.
+- `common/mistral_ocr.py`: `submit_batch`, `batch_job`, `collect_batch` and
+  `cleanup_batch` on `MistralOcrClient`. The direct and batch paths share
+  `OCR_REQUEST_OPTIONS` and the page-coverage check (`assemble_result`); a
+  document missing a part or a page is reported, never written.
+
 ### 2026-11-25 — A decision registry for authority curation
 
 - `AI_authority_curation/decisions.csv` and `decision_log.py`: one row per

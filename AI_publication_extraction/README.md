@@ -41,6 +41,7 @@ Omeka S (9 reference classes) → download PDFs → OCR with blocks → .txt + .
 python 01_fetch_publication_pdfs.py --list          # what would be processed
 python 01_fetch_publication_pdfs.py --item-id 5071  # pilot on one document
 python 02_mistral_blocks_processor.py --item-id 5071
+python 02_mistral_blocks_processor.py --batch       # the whole backlog at half price
 python 03_omeka_content_updater.py --item-id 5071 --dry-run
 python 04_extract_citations.py --item-id 5071 --extract-only
 ```
@@ -178,7 +179,33 @@ Measured live on 2026-08-18:
 
 The backlog is 19 theses, 17 books, 6 chapters, 2 edited books and 3 others —
 median 267 pages. At **$4/1000 pages** that is roughly **$50** for the lot, about
-$1 per book. Item 5071 (119 pages) cost $0.48 and took 145 seconds.
+$1 per book. Item 5071 (119 pages) cost $0.48 and took 145 seconds. Counted
+again on 2026-11-26, the same 47 items hold 10,191 pages: about $41 direct, or
+$20 through the Batch API.
+
+### Batch mode
+
+`--batch` sends the whole selection as one Batch API job, at half the list
+price ($2/1000 pages), answered within 24 hours:
+
+```bash
+python 02_mistral_blocks_processor.py --batch            # upload, queue, wait, write
+python 02_mistral_blocks_processor.py --batch-job <id>   # collect a job submitted earlier
+```
+
+Each PDF, or each part of an oversized one, is uploaded once and named in the
+job by file id, so nothing expires while it waits in the queue. The request
+options are the ones the direct path sends (`OCR_REQUEST_OPTIONS`), and the
+output goes through the same block classification, so a batch run writes the
+same `.txt` and `.json` a direct run would; the sidecar adds `batch_job_id`.
+
+The manifest is saved under `OCR_Results/batch_jobs/<job_id>.json` before the
+script starts waiting. Stopping the script does not stop the job; `--batch-job`
+resumes from the manifest. A document is written only when every part came back
+with every page, and only if its PDF still has the hash it had at submission.
+The rest are reported, and a later run selects them again, since their artifact
+was invalidated at submission. Uploaded files are deleted once the job is
+collected.
 
 Note that the count needs every media of an item resolved, not just the first:
 43 items carry a cover image first and the PDF further down, which is why the

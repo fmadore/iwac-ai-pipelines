@@ -20,11 +20,12 @@ as an annotation key; see ``iwac_config`` for that history.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from common.rate_limiter import RateLimiter, QuotaExhaustedError, is_mistral_quota_exhausted
 from common.retry import retry_with_backoff
@@ -67,6 +68,23 @@ APPARATUS_LABELS = frozenset({"references", "aside_text"})
 
 # HTTP statuses worth retrying (transient rate limit / server errors).
 TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+
+#: What every OCR request asks for, direct or batched, so the two paths cannot
+#: drift apart: a batch run must produce what a direct run would.
+OCR_REQUEST_OPTIONS: Dict[str, Any] = {
+    "include_blocks": True,      # OCR 4+: paragraph-level structure
+    "table_format": "html",      # tables survive as markup, not soup
+    "extract_header": True,
+    "extract_footer": True,
+}
+
+#: List price of the OCR endpoint, USD per 1,000 pages (mistral.ai/pricing,
+#: checked 2026-11-26). The Batch API bills half.
+PRICE_PER_1000_PAGES = 4.0
+BATCH_PRICE_PER_1000_PAGES = 2.0
+
+#: Batch job states after which nothing more will happen.
+BATCH_TERMINAL_STATUSES = frozenset({"SUCCESS", "FAILED", "TIMEOUT_EXCEEDED", "CANCELLED"})
 
 
 # --- Markdown -> plain text normalisation ---------------------------------
@@ -522,10 +540,7 @@ class MistralOcrClient:
             response = self.client.ocr.process(
                 model=self.model,
                 document={"type": "document_url", "document_url": signed_url},
-                include_blocks=True,       # OCR 4+: paragraph-level structure
-                table_format="html",       # tables survive as markup, not soup
-                extract_header=True,
-                extract_footer=True,
+                **OCR_REQUEST_OPTIONS,
             )
             if not response.pages:
                 raise RuntimeError("OCR response contained no pages")
@@ -545,27 +560,14 @@ class MistralOcrClient:
                 except Exception:  # best effort — never mask the real error
                     pass
 
-        pages: List[Dict[str, Any]] = []
-        for page in response.pages:
-            data = page.model_dump() if hasattr(page, "model_dump") else dict(page)
-            # Re-base the page index onto the source document, so a split file
-            # still reports the page numbers a reader would see.
-            data["index"] = part.first_page_index + int(data.get("index", 0))
-            pages.append(data)
-        return pages
+        return _rebase_pages(response.pages, part.first_page_index)
 
     # -- public ------------------------------------------------------------
 
     def process_pdf(self, pdf_path: Path) -> OcrResult:
         """OCR a whole PDF, splitting it first when it exceeds the upload cap."""
         parts = split_pdf_for_upload(pdf_path)
-        warnings: List[str] = []
         if len(parts) > 1:
-            warnings.append(
-                f"{pdf_path.stat().st_size / 1e6:.0f} MB exceeds the "
-                f"{MAX_UPLOAD_BYTES // 1024 // 1024} MB upload cap — "
-                f"sent as {len(parts)} parts"
-            )
             self.logger.info("Split %s into %d parts", pdf_path.name, len(parts))
 
         all_pages: List[Dict[str, Any]] = []
@@ -573,15 +575,252 @@ class MistralOcrClient:
             suffix = f"_part{position}" if len(parts) > 1 else ""
             all_pages.extend(self._process_part(part, f"{pdf_path.stem}{suffix}.pdf"))
 
-        all_pages.sort(key=lambda p: p.get("index", 0))
-        expected_indices = [index for part in parts
-                            for index in range(part.first_page_index, part.first_page_index + part.page_count)]
-        if [page.get("index") for page in all_pages] != expected_indices:
-            raise RuntimeError("Incomplete OCR page coverage; refusing to publish a partial document")
-        return OcrResult(
-            pages=all_pages,
-            model=self.model,
-            pages_processed=len(all_pages),
-            parts=len(parts),
-            warnings=warnings,
+        return assemble_result(
+            all_pages, [(p.first_page_index, p.page_count) for p in parts],
+            model=self.model, warnings=_split_warnings(pdf_path, parts),
         )
+
+    # -- batch -------------------------------------------------------------
+    #
+    # The Batch API bills half the list price and answers within 24 hours.
+    # Each PDF (or each part of an oversized one) is uploaded once and named in
+    # the batch by file id rather than by signed URL, so nothing expires while
+    # the job waits in the queue. The manifest ``submit_batch`` returns is all
+    # that collecting the results needs, from another process if need be.
+
+    def _upload(self, name: str, content: bytes, purpose: str) -> str:
+        @retry_with_backoff(max_retries=3, base_delay=5.0, is_retryable=self._is_retryable)
+        def _run() -> str:
+            uploaded = self.client.files.upload(
+                file={"file_name": name, "content": content}, purpose=purpose,
+            )
+            if not uploaded or not uploaded.id:
+                raise RuntimeError("File upload returned no id")
+            return uploaded.id
+
+        return _quota_guard(_run)
+
+    def delete_files(self, file_ids: Iterable[str]) -> None:
+        """Delete uploaded files, best effort: a leftover file costs nothing."""
+        for file_id in file_ids:
+            try:
+                self.client.files.delete(file_id=file_id)
+            except Exception as exc:  # never mask the caller's real outcome
+                self.logger.warning("Could not delete Mistral file %s: %s", file_id, exc)
+
+    def submit_batch(
+        self,
+        documents: Sequence[Dict[str, Any]],
+        *,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Upload documents and queue one batch job that OCRs all of them.
+
+        *documents* are ``{"pdf_path": Path, "source_sha256": str}`` entries.
+        Returns the manifest to save: job id, model, and for every document the
+        parts sent, each with its file id and the page range it covers.
+
+        Raises:
+            QuotaExhaustedError: on a dead quota, after deleting what was uploaded.
+        """
+        manifest_docs: Dict[str, Any] = {}
+        uploaded: List[str] = []
+        lines: List[str] = []
+        try:
+            for doc in documents:
+                pdf_path = Path(doc["pdf_path"])
+                parts = split_pdf_for_upload(pdf_path)
+                entry: Dict[str, Any] = {
+                    "pdf": pdf_path.name,
+                    "source_sha256": doc["source_sha256"],
+                    "pages": sum(p.page_count for p in parts),
+                    "warnings": _split_warnings(pdf_path, parts),
+                    "parts": [],
+                }
+                for position, part in enumerate(parts, start=1):
+                    suffix = f"_part{position}" if len(parts) > 1 else ""
+                    file_id = self._upload(f"{pdf_path.stem}{suffix}.pdf", part.data, "ocr")
+                    uploaded.append(file_id)
+                    custom_id = f"{pdf_path.stem}::{position}"
+                    entry["parts"].append({
+                        "custom_id": custom_id,
+                        "file_id": file_id,
+                        "first_page_index": part.first_page_index,
+                        "page_count": part.page_count,
+                    })
+                    lines.append(json.dumps({
+                        "custom_id": custom_id,
+                        "body": {"document": {"type": "file", "file_id": file_id},
+                                 **OCR_REQUEST_OPTIONS},
+                    }))
+                manifest_docs[pdf_path.stem] = entry
+                self.logger.info("Uploaded %s for batch (%d part(s))", pdf_path.name, len(parts))
+
+            input_id = self._upload("batch_input.jsonl", "\n".join(lines).encode("utf-8"), "batch")
+            uploaded.append(input_id)
+            job = _quota_guard(lambda: self.client.batch.jobs.create(
+                endpoint="/v1/ocr", input_files=[input_id], model=self.model,
+                metadata=metadata or None,
+            ))
+        except BaseException:
+            self.delete_files(uploaded)
+            raise
+
+        return {
+            "job_id": job.id,
+            "model": self.model,
+            "batch_input_file": input_id,
+            "documents": manifest_docs,
+        }
+
+    def batch_job(self, job_id: str):
+        """The current state of a batch job (``status``, request counters…)."""
+        return _quota_guard(lambda: self.client.batch.jobs.get(job_id=job_id))
+
+    def _download_jsonl(self, file_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not file_id:
+            return []
+        response = self.client.files.download(file_id=file_id)
+        raw = response.read() if hasattr(response, "read") else bytes(response)
+        return parse_jsonl(raw.decode("utf-8"))
+
+    def collect_batch(
+        self, manifest: Dict[str, Any], job
+    ) -> Tuple[Dict[str, OcrResult], Dict[str, str]]:
+        """Read a finished job's output into one :class:`OcrResult` per document.
+
+        Returns ``(results, errors)`` keyed by document stem; see
+        :func:`assemble_batch_results`.
+        """
+        outputs = self._download_jsonl(getattr(job, "output_file", None))
+        outputs += self._download_jsonl(getattr(job, "error_file", None))
+        return assemble_batch_results(manifest, outputs)
+
+    def cleanup_batch(self, manifest: Dict[str, Any], job=None) -> None:
+        """Delete every file the batch uploaded or produced."""
+        ids = [part["file_id"] for doc in manifest["documents"].values() for part in doc["parts"]]
+        ids.append(manifest["batch_input_file"])
+        for attr in ("output_file", "error_file"):
+            file_id = getattr(job, attr, None) if job is not None else None
+            if file_id:
+                ids.append(file_id)
+        self.delete_files(ids)
+
+
+# --- Helpers shared by the direct and batch paths ---------------------------
+
+
+def _quota_guard(call):
+    """Run *call*, turning a quota or rate-limit refusal into QuotaExhaustedError."""
+    from mistralai.client.errors import SDKError
+
+    try:
+        return call()
+    except SDKError as exc:
+        if is_mistral_quota_exhausted(exc) or status_code(exc) == 429:
+            raise QuotaExhaustedError(str(exc)) from exc
+        raise
+
+
+def _split_warnings(pdf_path: Path, parts: Sequence[PdfPart]) -> List[str]:
+    if len(parts) <= 1:
+        return []
+    return [
+        f"{pdf_path.stat().st_size / 1e6:.0f} MB exceeds the "
+        f"{MAX_UPLOAD_BYTES // 1024 // 1024} MB upload cap — "
+        f"sent as {len(parts)} parts"
+    ]
+
+
+def _rebase_pages(pages: Iterable[Any], first_page_index: int) -> List[Dict[str, Any]]:
+    """Page dicts with their index re-based onto the source document.
+
+    A split file then still reports the page numbers a reader would see.
+    """
+    out: List[Dict[str, Any]] = []
+    for page in pages:
+        data = page.model_dump() if hasattr(page, "model_dump") else dict(page)
+        data["index"] = first_page_index + int(data.get("index", 0))
+        out.append(data)
+    return out
+
+
+def assemble_result(
+    pages: List[Dict[str, Any]],
+    ranges: Sequence[Tuple[int, int]],
+    *,
+    model: str,
+    warnings: Optional[List[str]] = None,
+) -> OcrResult:
+    """Stitch part pages into one result, refusing anything short of full coverage.
+
+    *ranges* are the ``(first_page_index, page_count)`` of every part sent.
+    """
+    pages = sorted(pages, key=lambda p: p.get("index", 0))
+    expected = [i for first, count in ranges for i in range(first, first + count)]
+    if [page.get("index") for page in pages] != expected:
+        raise RuntimeError("Incomplete OCR page coverage; refusing to publish a partial document")
+    return OcrResult(
+        pages=pages,
+        model=model,
+        pages_processed=len(pages),
+        parts=len(ranges),
+        warnings=list(warnings or []),
+    )
+
+
+def parse_jsonl(text: str) -> List[Dict[str, Any]]:
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _batch_line_error(line: Dict[str, Any]) -> Optional[str]:
+    """Why a batch output line holds no usable OCR response, or None."""
+    if line.get("error"):
+        return str(line["error"])
+    response = line.get("response") or {}
+    code = response.get("status_code")
+    if code is not None and code != 200:
+        return f"HTTP {code}: {response.get('body')}"
+    if not (response.get("body") or {}).get("pages"):
+        return "response contained no pages"
+    return None
+
+
+def assemble_batch_results(
+    manifest: Dict[str, Any], outputs: Iterable[Dict[str, Any]]
+) -> Tuple[Dict[str, OcrResult], Dict[str, str]]:
+    """Match batch output lines to the manifest's documents and stitch them.
+
+    A document lands in *errors*, never in *results*, when any of its parts
+    failed, is missing, or came back without every page — so a partial text is
+    never handed on. Pages go through the SDK's own response model before being
+    dumped, so a batched page is the same dict the direct path builds.
+    """
+    from mistralai.client.models import OCRResponse
+
+    by_id = {line.get("custom_id"): line for line in outputs}
+    results: Dict[str, OcrResult] = {}
+    errors: Dict[str, str] = {}
+    for stem, doc in manifest["documents"].items():
+        pages: List[Dict[str, Any]] = []
+        problem: Optional[str] = None
+        for part in doc["parts"]:
+            line = by_id.get(part["custom_id"])
+            problem = "no output line" if line is None else _batch_line_error(line)
+            if problem:
+                problem = f"{part['custom_id']}: {problem}"
+                break
+            response = OCRResponse.model_validate(line["response"]["body"])
+            pages.extend(_rebase_pages(response.pages, part["first_page_index"]))
+        if problem is None:
+            try:
+                results[stem] = assemble_result(
+                    pages,
+                    [(p["first_page_index"], p["page_count"]) for p in doc["parts"]],
+                    model=manifest["model"], warnings=doc.get("warnings"),
+                )
+                continue
+            except RuntimeError as exc:
+                problem = str(exc)
+        errors[stem] = problem
+    return results, errors

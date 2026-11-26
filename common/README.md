@@ -19,7 +19,7 @@ importable package (`pip install -e .`); pipeline scripts are run directly.
 | `gemini_utils.py` | Gemini client with a finite deadline and the served-model check, Files API upload, text extraction | — |
 | `gemini_page_processor.py` | The page-by-page PDF loop shared by OCR and HTR | [Gemini Page Processor](#gemini-page-processor-gemini_page_processorpy) |
 | `claude_page_processor.py` | The same loop with Claude reading each page; a refused page is recorded as failed, never re-run on another model | — |
-| `mistral_ocr.py` | Mistral Document AI: pinned model id, Markdown to plain text, block classification, splitting of files over 50 MB | — |
+| `mistral_ocr.py` | Mistral Document AI: pinned model id, Markdown to plain text, block classification, splitting of files over 50 MB, Batch API jobs at half price | — |
 | `pdf_utils.py`, `pdf_downloader.py` | Parse a PDF once and serve single pages; the shared Omeka PDF download step | — |
 | `downloader.py` | Streaming download through a `.part` file | [Streaming Downloader](#streaming-downloader-downloaderpy) |
 | `ffmpeg_utils.py` | ffmpeg/ffprobe discovery, conversion, MIME lookup | [FFmpeg Utilities](#ffmpeg-utilities-ffmpeg_utilspy) |

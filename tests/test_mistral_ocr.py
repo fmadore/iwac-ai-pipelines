@@ -332,3 +332,84 @@ def test_an_oversized_pdf_is_split_into_contiguous_parts_covering_every_page(tmp
         assert len(PdfReader(io.BytesIO(part.data)).pages) == part.page_count
         expected_start += part.page_count
     assert expected_start == 10
+
+
+# --- Batch results ---------------------------------------------------------
+
+
+def _ocr_body(n_pages, *, text="corps"):
+    return {
+        "model": MISTRAL_OCR_MODEL,
+        "usage_info": {"pages_processed": n_pages},
+        "pages": [
+            {"index": i, "markdown": f"{text} {i}", "images": [], "dimensions": None,
+             "blocks": [block("text", f"{text} {i}")]}
+            for i in range(n_pages)
+        ],
+    }
+
+
+def _line(custom_id, body=None, *, status=200, error=None):
+    return {"custom_id": custom_id, "error": error,
+            "response": None if error else {"status_code": status, "body": body}}
+
+
+def _manifest():
+    return {
+        "job_id": "job-1",
+        "model": MISTRAL_OCR_MODEL,
+        "batch_input_file": "in",
+        "documents": {
+            "100": {"pdf": "100.pdf", "source_sha256": "a", "pages": 5, "warnings": ["split"],
+                    "parts": [
+                        {"custom_id": "100::1", "file_id": "f1", "first_page_index": 0, "page_count": 3},
+                        {"custom_id": "100::2", "file_id": "f2", "first_page_index": 3, "page_count": 2},
+                    ]},
+            "200": {"pdf": "200.pdf", "source_sha256": "b", "pages": 2, "warnings": [],
+                    "parts": [{"custom_id": "200::1", "file_id": "f3", "first_page_index": 0, "page_count": 2}]},
+        },
+    }
+
+
+def test_batch_parts_are_stitched_with_source_page_numbers():
+    from common.mistral_ocr import assemble_batch_results
+
+    results, errors = assemble_batch_results(_manifest(), [
+        _line("100::2", _ocr_body(2, text="fin")),
+        _line("100::1", _ocr_body(3)),
+        _line("200::1", _ocr_body(2)),
+    ])
+    assert errors == {}
+    doc = results["100"]
+    assert [p["index"] for p in doc.pages] == [0, 1, 2, 3, 4]
+    assert doc.pages[3]["markdown"] == "fin 0"
+    assert doc.parts == 2 and doc.warnings == ["split"]
+    # Same shape the direct path hands to classify_blocks.
+    assert render_plain_text(classify_blocks(doc.pages)).startswith("corps 0")
+
+
+@pytest.mark.parametrize("bad_line", [
+    _line("100::2", error={"message": "boom"}),
+    _line("100::2", {"detail": "nope"}, status=422),
+    _line("100::2", _ocr_body(1)),       # one page short of its range
+    None,                                  # no output at all
+])
+def test_a_document_with_any_failed_part_is_never_returned(bad_line):
+    from common.mistral_ocr import assemble_batch_results
+
+    outputs = [_line("100::1", _ocr_body(3)), _line("200::1", _ocr_body(2))]
+    if bad_line is not None:
+        outputs.append(bad_line)
+    results, errors = assemble_batch_results(_manifest(), outputs)
+    assert "100" not in results and "100" in errors
+    assert "200" in results
+
+
+def test_batch_and_direct_requests_share_one_set_of_options():
+    import inspect
+
+    from common import mistral_ocr
+
+    source = inspect.getsource(mistral_ocr.MistralOcrClient)
+    assert source.count("**OCR_REQUEST_OPTIONS") == 2
+    assert "include_blocks=True" not in source
