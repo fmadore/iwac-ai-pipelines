@@ -94,6 +94,10 @@ class PropertyDef:
     rdf_type: str
     #: Only set for datatype properties.
     range_: Optional[str] = None
+    #: Optional ``rdfs:subPropertyOf`` target (CURIE, e.g. ``iwac:polarite``).
+    super_property: Optional[str] = None
+    #: Emit ``owl:deprecated true`` for retired terms kept for historical data.
+    deprecated: bool = False
 
     @property
     def term(self) -> str:
@@ -103,6 +107,63 @@ class PropertyDef:
 # ---------------------------------------------------------------------------
 # Definitions
 # ---------------------------------------------------------------------------
+
+#: Abstract super-properties connecting each model's six sentiment properties
+#: along the six shared dimensions so RDFS/SPARQL consumers can query across
+#: annotators without enumerating every model prefix.
+SENTIMENT_SUPER_PROPERTIES: List[PropertyDef] = [
+    PropertyDef(
+        local_name="centralite",
+        label_en="Sentiment - Centrality",
+        label_fr="Sentiment - Centralité",
+        comment_en="Abstract super-property for model-keyed centrality ratings of Islam/Muslims",
+        comment_fr="Super-propriété abstraite pour les niveaux de centralité de l'islam/musulmans par modèle",
+        rdf_type="owl:ObjectProperty",
+    ),
+    PropertyDef(
+        local_name="centraliteJustification",
+        label_en="Sentiment - Centrality Justification",
+        label_fr="Sentiment - Justification centralité",
+        comment_en="Abstract super-property for model-keyed explanations of assigned centrality levels",
+        comment_fr="Super-propriété abstraite pour les explications du niveau de centralité attribué par modèle",
+        rdf_type="owl:DatatypeProperty",
+        range_="rdf:langString",
+    ),
+    PropertyDef(
+        local_name="polarite",
+        label_en="Sentiment - Polarity",
+        label_fr="Sentiment - Polarité",
+        comment_en="Abstract super-property for model-keyed sentiment polarity ratings toward Islam/Muslims",
+        comment_fr="Super-propriété abstraite pour les polarités de sentiment envers l'islam/musulmans par modèle",
+        rdf_type="owl:ObjectProperty",
+    ),
+    PropertyDef(
+        local_name="polariteJustification",
+        label_en="Sentiment - Polarity Justification",
+        label_fr="Sentiment - Justification polarité",
+        comment_en="Abstract super-property for model-keyed explanations of assigned polarity ratings",
+        comment_fr="Super-propriété abstraite pour les explications de la polarité attribuée par modèle",
+        rdf_type="owl:DatatypeProperty",
+        range_="rdf:langString",
+    ),
+    PropertyDef(
+        local_name="subjectiviteScore",
+        label_en="Sentiment - Subjectivity Score",
+        label_fr="Sentiment - Score subjectivité",
+        comment_en="Abstract super-property for model-keyed subjectivity ratings",
+        comment_fr="Super-propriété abstraite pour les niveaux de subjectivité par modèle",
+        rdf_type="owl:ObjectProperty",
+    ),
+    PropertyDef(
+        local_name="subjectiviteJustification",
+        label_en="Sentiment - Subjectivity Justification",
+        label_fr="Sentiment - Justification subjectivité",
+        comment_en="Abstract super-property for model-keyed explanations of assigned subjectivity scores",
+        comment_fr="Super-propriété abstraite pour les explications du score de subjectivité par modèle",
+        rdf_type="owl:DatatypeProperty",
+        range_="rdf:langString",
+    ),
+]
 
 #: Per-field wording. ``{label}`` is the model label, ``{model_id}`` the exact
 #: provider id — recording it in the comment is what makes a property
@@ -114,6 +175,7 @@ FIELD_TEMPLATES = {
         "comment_en": "Level of centrality of Islam/Muslims according to {label} ({model_id})",
         "comment_fr": "Niveau de centralité de l'islam/musulmans selon {label} ({model_id})",
         "rdf_type": "owl:ObjectProperty",
+        "super_property": "iwac:centralite",
     },
     "centralite_justification": {
         "label_en": "{label} - Centrality Justification",
@@ -121,7 +183,8 @@ FIELD_TEMPLATES = {
         "comment_en": "{label}'s explanation for the assigned centrality level",
         "comment_fr": "Explication de {label} pour le niveau de centralité attribué",
         "rdf_type": "owl:DatatypeProperty",
-        "range_": "xsd:string",
+        "range_": "rdf:langString",
+        "super_property": "iwac:centraliteJustification",
     },
     "polarite": {
         "label_en": "{label} - Polarity",
@@ -129,6 +192,7 @@ FIELD_TEMPLATES = {
         "comment_en": "Sentiment toward Islam/Muslims according to {label} ({model_id})",
         "comment_fr": "Sentiment envers l'islam/musulmans selon {label} ({model_id})",
         "rdf_type": "owl:ObjectProperty",
+        "super_property": "iwac:polarite",
     },
     "polarite_justification": {
         "label_en": "{label} - Polarity Justification",
@@ -136,7 +200,8 @@ FIELD_TEMPLATES = {
         "comment_en": "{label}'s explanation for the assigned polarity",
         "comment_fr": "Explication de {label} pour la polarité attribuée",
         "rdf_type": "owl:DatatypeProperty",
-        "range_": "xsd:string",
+        "range_": "rdf:langString",
+        "super_property": "iwac:polariteJustification",
     },
     "subjectivite_score": {
         "label_en": "{label} - Subjectivity Score",
@@ -146,6 +211,7 @@ FIELD_TEMPLATES = {
         "comment_fr": "Niveau de subjectivité libellé selon {label} ({model_id}), "
                       "lié à un élément de vocabulaire contrôlé",
         "rdf_type": "owl:ObjectProperty",
+        "super_property": "iwac:subjectiviteScore",
     },
     "subjectivite_justification": {
         "label_en": "{label} - Subjectivity Justification",
@@ -153,7 +219,8 @@ FIELD_TEMPLATES = {
         "comment_en": "{label}'s explanation for the subjectivity score",
         "comment_fr": "Explication de {label} pour le score de subjectivité",
         "rdf_type": "owl:DatatypeProperty",
-        "range_": "xsd:string",
+        "range_": "rdf:langString",
+        "super_property": "iwac:subjectiviteJustification",
     },
 }
 
@@ -170,6 +237,8 @@ SENTIMENT_MODEL_DEF = PropertyDef(
     comment_fr="Ancien lien d'annotation de valeur vers le modèle d'IA ; conservé "
                "pour les données historiques mais non écrit par le panel actuel",
     rdf_type="owl:ObjectProperty",
+    super_property="prov:wasAttributedTo",
+    deprecated=True,
 )
 
 
@@ -191,13 +260,14 @@ def definitions_for(member: PanelMember) -> List[PropertyDef]:
             comment_fr=tpl["comment_fr"].format(label=member.label, model_id=model_id),
             rdf_type=tpl["rdf_type"],
             range_=tpl.get("range_"),
+            super_property=tpl.get("super_property"),
         ))
     return defs
 
 
 def all_definitions() -> List[PropertyDef]:
-    """The retained legacy term first, then six per active panel member."""
-    defs = [SENTIMENT_MODEL_DEF]
+    """The retained legacy term, the six super-properties, then six per active panel member."""
+    defs = [SENTIMENT_MODEL_DEF, *SENTIMENT_SUPER_PROPERTIES]
     for member in PANEL.values():
         defs.extend(definitions_for(member))
     return defs
@@ -213,11 +283,15 @@ def _ttl_block(definition: PropertyDef) -> str:
         f'    rdfs:label "{definition.label_en}"@en ;',
         f'    rdfs:label "{definition.label_fr}"@fr ;',
         f'    rdfs:comment "{definition.comment_en}"@en ;',
+        f'    rdfs:comment "{definition.comment_fr}"@fr ;',
     ]
-    tail = " ;" if definition.range_ else " ."
-    lines.append(f'    rdfs:comment "{definition.comment_fr}"@fr{tail}')
+    if definition.super_property:
+        lines.append(f"    rdfs:subPropertyOf {definition.super_property} ;")
     if definition.range_:
-        lines.append(f"    rdfs:range {definition.range_} .")
+        lines.append(f"    rdfs:range {definition.range_} ;")
+    if definition.deprecated:
+        lines.append("    owl:deprecated true ;")
+    lines.append(f"    rdfs:isDefinedBy {VOCABULARY_PREFIX}: .")
     return "\n".join(lines)
 
 
@@ -250,12 +324,18 @@ def emit_ttl() -> str:
         "# the current pipeline does not write it.",
         "#",
         "# Centralité, polarité and the subjectivité score are links into the",
-        "# controlled vocabulary, so they are ObjectProperties here.",
+        "# controlled vocabulary, so they are ObjectProperties here. Each",
+        "# per-model property is linked to a shared dimension super-property",
+        "# via rdfs:subPropertyOf.",
         "#",
         "# The panel is defined once in AI_sentiment_analysis/sentiment_core.py",
         "# (PANEL); this block is generated from it by 00_setup_properties.py.",
         "",
         _ttl_block(SENTIMENT_MODEL_DEF),
+        "",
+        "# --- Abstract dimension super-properties ---",
+        "",
+        *(_ttl_block(d) + "\n" for d in SENTIMENT_SUPER_PROPERTIES),
     ]
     for member in PANEL.values():
         out.append("")
